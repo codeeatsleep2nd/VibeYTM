@@ -1,0 +1,140 @@
+import { type FC } from 'react';
+
+interface NavItemProps {
+  label: string;
+  icon: string;
+  isActive: boolean;
+  onClick: () => void;
+}
+
+const NavItem: FC<NavItemProps> = ({ label, icon, isActive, onClick }) => (
+  <button
+    onClick={onClick}
+    style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 'var(--space-3)',
+      width: '100%',
+      padding: 'var(--space-2) var(--space-4)',
+      borderRadius: 'var(--radius-md)',
+      background: isActive ? 'var(--color-surface-2)' : 'transparent',
+      color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+      fontSize: 'var(--text-sm)',
+      fontWeight: isActive ? 600 : 400,
+      transition: `background var(--duration-fast) var(--ease-out),
+                   color var(--duration-fast) var(--ease-out)`,
+      cursor: 'pointer',
+      textAlign: 'left',
+    }}
+    onMouseEnter={(e) => {
+      if (!isActive) {
+        e.currentTarget.style.background = 'var(--color-surface-1)';
+        e.currentTarget.style.color = 'var(--color-text-primary)';
+      }
+    }}
+    onMouseLeave={(e) => {
+      if (!isActive) {
+        e.currentTarget.style.background = 'transparent';
+        e.currentTarget.style.color = 'var(--color-text-secondary)';
+      }
+    }}
+  >
+    <span style={{ fontSize: 'var(--text-lg)', width: '20px', textAlign: 'center' }}>
+      {icon}
+    </span>
+    {label}
+  </button>
+);
+
+interface SidebarProps {
+  currentPath: string;
+  onNavigate: (path: string) => void;
+}
+
+const NAV_ITEMS = [
+  { path: 'home', label: 'Home', icon: '⌂' },
+  { path: 'search', label: 'Search', icon: '⌕' },
+  { path: 'explore', label: 'Explore', icon: '✦' },
+];
+
+const LIBRARY_ITEMS = [
+  { path: 'library/playlists', label: 'Playlists', icon: '♫' },
+  { path: 'library/songs', label: 'Songs', icon: '♪' },
+  { path: 'library/albums', label: 'Albums', icon: '◉' },
+  { path: 'library/artists', label: 'Artists', icon: '☆' },
+];
+
+export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => (
+  <aside
+    style={{
+      width: 'var(--sidebar-width)',
+      height: '100%',
+      paddingTop: 'var(--title-bar-height)',
+      background: 'var(--glass-bg)',
+      backdropFilter: `blur(var(--glass-blur))`,
+      WebkitBackdropFilter: `blur(var(--glass-blur))`,
+      borderRight: '1px solid oklch(100% 0 0 / 0.06)',
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+    }}
+  >
+    <nav style={{ padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+      {NAV_ITEMS.map((item) => (
+        <NavItem
+          key={item.path}
+          label={item.label}
+          icon={item.icon}
+          isActive={currentPath === item.path}
+          onClick={() => onNavigate(item.path)}
+        />
+      ))}
+    </nav>
+
+    <div
+      style={{
+        height: '1px',
+        margin: 'var(--space-2) var(--space-4)',
+        background: 'oklch(100% 0 0 / 0.08)',
+      }}
+    />
+
+    <div style={{ padding: 'var(--space-3)' }}>
+      <span
+        style={{
+          display: 'block',
+          padding: '0 var(--space-4)',
+          marginBottom: 'var(--space-2)',
+          fontSize: 'var(--text-xs)',
+          fontWeight: 600,
+          color: 'var(--color-text-tertiary)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+        }}
+      >
+        Library
+      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+        {LIBRARY_ITEMS.map((item) => (
+          <NavItem
+            key={item.path}
+            label={item.label}
+            icon={item.icon}
+            isActive={currentPath === item.path || currentPath === 'library'}
+            onClick={() => onNavigate(item.path)}
+          />
+        ))}
+      </div>
+    </div>
+
+    {/* Settings — pushed to bottom */}
+    <div style={{ marginTop: 'auto', padding: 'var(--space-3)' }}>
+      <NavItem
+        label="Settings"
+        icon={'\u2699'}
+        isActive={currentPath === 'settings'}
+        onClick={() => onNavigate('settings')}
+      />
+    </div>
+  </aside>
+);

@@ -1,0 +1,301 @@
+use std::sync::Arc;
+
+use tauri::{AppHandle, Emitter, State};
+
+use crate::events::bus::EventBus;
+use crate::events::types::AppEvent;
+use crate::state::player::{PlaybackStatus, PlayerState, RepeatMode, SharedPlayerState, TrackInfo};
+
+#[tauri::command]
+pub async fn on_track_changed(
+    track: TrackInfo,
+    state: State<'_, SharedPlayerState>,
+    bus: State<'_, Arc<EventBus>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    {
+        let mut player = state.write().await;
+        player.track = Some(track.clone());
+    }
+
+    bus.emit(AppEvent::TrackChanged(track.clone()));
+    app.emit("player:track-changed", &track)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn on_playback_status_changed(
+    status: PlaybackStatus,
+    state: State<'_, SharedPlayerState>,
+    bus: State<'_, Arc<EventBus>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    {
+        let mut player = state.write().await;
+        player.status = status;
+    }
+
+    bus.emit(AppEvent::PlaybackStatusChanged(status));
+    app.emit("player:status-changed", &status)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn on_position_updated(
+    position: f64,
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let mut player = state.write().await;
+    player.position_secs = position;
+    // Emit to frontend so the progress bar updates
+    let _ = app.emit("player:position", &position);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_player_state(
+    state: State<'_, SharedPlayerState>,
+) -> Result<PlayerState, String> {
+    let player = state.read().await;
+    Ok(player.clone())
+}
+
+// --- Queue management ---
+
+#[tauri::command]
+pub async fn add_to_queue(
+    track: TrackInfo,
+    state: State<'_, SharedPlayerState>,
+) -> Result<(), String> {
+    let mut player = state.write().await;
+    player.queue.push(track);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_from_queue(
+    index: usize,
+    state: State<'_, SharedPlayerState>,
+) -> Result<(), String> {
+    let mut player = state.write().await;
+    if index >= player.queue.len() {
+        return Err(format!(
+            "index {index} out of bounds (queue length: {})",
+            player.queue.len()
+        ));
+    }
+    player.queue.remove(index);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_queue(state: State<'_, SharedPlayerState>) -> Result<(), String> {
+    let mut player = state.write().await;
+    player.queue.clear();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reorder_queue(
+    from: usize,
+    to: usize,
+    state: State<'_, SharedPlayerState>,
+) -> Result<(), String> {
+    let mut player = state.write().await;
+    let len = player.queue.len();
+    if from >= len || to >= len {
+        return Err(format!(
+            "indices out of bounds: from={from}, to={to}, queue length={len}"
+        ));
+    }
+    let item = player.queue.remove(from);
+    player.queue.insert(to, item);
+    Ok(())
+}
+
+// --- Direct playback commands (forwarded to YTM window) ---
+
+fn forward_to_ytm(app: &AppHandle, cmd: &str) {
+    if let Some(window) = crate::webview_bridge::get_ytm_window(app) {
+        if let Err(e) = crate::webview_bridge::exec_playback_command(&window, cmd) {
+            tracing::warn!(command = cmd, error = %e, "failed to forward command to YTM");
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn play(app: AppHandle) -> Result<(), String> {
+    forward_to_ytm(&app, "play");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn pause(app: AppHandle) -> Result<(), String> {
+    forward_to_ytm(&app, "pause");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn toggle_play(app: AppHandle) -> Result<(), String> {
+    forward_to_ytm(&app, "toggle_play");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn next_track(app: AppHandle) -> Result<(), String> {
+    forward_to_ytm(&app, "next");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn previous_track(app: AppHandle) -> Result<(), String> {
+    forward_to_ytm(&app, "previous");
+    Ok(())
+}
+
+// --- Playback controls ---
+
+#[tauri::command]
+pub async fn play_track(
+    video_id: String,
+    state: State<'_, SharedPlayerState>,
+    bus: State<'_, Arc<EventBus>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    // Navigate the YTM window to the track
+    if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
+        crate::webview_bridge::navigate_to_track(&window, &video_id)?;
+    }
+
+    // Create initial track info (will be updated by the JS bridge once page loads)
+    let track = TrackInfo {
+        title: "Loading...".to_string(),
+        artist: String::new(),
+        artist_id: None,
+        album: String::new(),
+        album_id: None,
+        artwork_url: Some(format!(
+            "https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+        )),
+        duration_secs: 0.0,
+        video_id,
+    };
+
+    {
+        let mut player = state.write().await;
+        player.track = Some(track.clone());
+        player.status = PlaybackStatus::Playing;
+        player.position_secs = 0.0;
+    }
+
+    bus.emit(AppEvent::TrackChanged(track.clone()));
+    app.emit("player:track-changed", &track)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_volume(
+    level: f64,
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let clamped = level.clamp(0.0, 1.0);
+    let mut player = state.write().await;
+    player.volume = clamped;
+    // Forward to YTM
+    if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
+        let args = format!("{{\"level\":{}}}", clamped);
+        let _ = crate::webview_bridge::exec_playback_command_with_args(
+            &window,
+            "set_volume",
+            &args,
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn seek(
+    secs: f64,
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let mut player = state.write().await;
+    player.position_secs = secs.max(0.0);
+    // Forward to YTM
+    if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
+        let args = format!("{{\"secs\":{}}}", secs);
+        let _ =
+            crate::webview_bridge::exec_playback_command_with_args(&window, "seek", &args);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn toggle_like(
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let is_liked = {
+        let mut player = state.write().await;
+        player.is_liked = !player.is_liked;
+        player.is_liked
+    };
+
+    app.emit("player:like-changed", &is_liked)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn toggle_shuffle(
+    state: State<'_, SharedPlayerState>,
+) -> Result<(), String> {
+    let mut player = state.write().await;
+    player.is_shuffled = !player.is_shuffled;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_repeat(
+    mode: RepeatMode,
+    state: State<'_, SharedPlayerState>,
+) -> Result<(), String> {
+    let mut player = state.write().await;
+    player.repeat_mode = mode;
+    Ok(())
+}
+
+// --- YTM window management ---
+
+/// Hide the YTM window after login
+#[tauri::command]
+pub async fn hide_ytm(app: AppHandle) -> Result<(), String> {
+    let window = crate::webview_bridge::get_ytm_window(&app)
+        .ok_or("YTM window not found")?;
+    crate::webview_bridge::hide_ytm_window(&window)
+}
+
+/// Show the YTM window (for re-login or debugging)
+#[tauri::command]
+pub async fn show_ytm(app: AppHandle) -> Result<(), String> {
+    let window = crate::webview_bridge::get_ytm_window(&app)
+        .ok_or("YTM window not found")?;
+    crate::webview_bridge::show_ytm_window(&window)
+}
+
+/// Inject the JS bridge into YTM window
+#[tauri::command]
+pub async fn inject_ytm_bridge(app: AppHandle) -> Result<(), String> {
+    let window = crate::webview_bridge::get_ytm_window(&app)
+        .ok_or("YTM window not found")?;
+    crate::webview_bridge::inject_bridge(&window)
+}
