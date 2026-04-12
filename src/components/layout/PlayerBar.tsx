@@ -1,7 +1,21 @@
-import { type FC } from 'react';
+import { type FC, type ReactNode } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { playerApi } from '../../lib/ipc';
 import type { RepeatMode } from '../../lib/types';
+import { CachedImage } from '../CachedImage';
+import { MarqueeText } from '../MarqueeText';
+
+/**
+ * Pick a reliable artwork URL for the player bar. The bridge sometimes
+ * returns yt3.* avatar URLs with a `w\d+-h\d+` chunk rewritten to
+ * `w512-h512`, which can 404. Always fall back to YouTube's thumbnail
+ * service via the videoId, which is stable.
+ */
+function pickArtwork(track: { artworkUrl?: string | null; videoId?: string }): string | undefined {
+  if (track.artworkUrl) return track.artworkUrl;
+  if (track.videoId) return `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
+  return undefined;
+}
 
 interface PlayerBarProps {
   onToggleNowPlaying?: () => void;
@@ -15,15 +29,17 @@ const formatTime = (secs: number): string => {
 };
 
 const TransportButton: FC<{
-  label: string;
+  label: ReactNode;
+  ariaLabel?: string;
   onClick: () => void;
   size?: string;
   isActive?: boolean;
-}> = ({ label, onClick, size = 'var(--text-lg)', isActive = false }) => (
+}> = ({ label, ariaLabel, onClick, size = 'var(--text-lg)', isActive = false }) => (
   <button
     onClick={onClick}
-    aria-label={label}
+    aria-label={ariaLabel ?? (typeof label === 'string' ? label : undefined)}
     style={{
+      position: 'relative',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -48,15 +64,56 @@ const TransportButton: FC<{
   </button>
 );
 
+/**
+ * Repeat-mode glyph that distinguishes all three states:
+ *   none → dim ↻ (no badge)
+ *   all  → accent ↻ (no badge)
+ *   one  → accent ↻ with a small "1" badge
+ * Color is set on the parent button via `isActive`.
+ */
+const RepeatIcon: FC<{ mode: RepeatMode }> = ({ mode }) => (
+  <span
+    style={{
+      position: 'relative',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      lineHeight: 1,
+    }}
+  >
+    {'\u21BB'}
+    {mode === 'one' && (
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          right: -6,
+          bottom: -2,
+          fontSize: '9px',
+          fontWeight: 700,
+          lineHeight: 1,
+          padding: '1px 3px',
+          borderRadius: 'var(--radius-full)',
+          background: 'var(--color-accent)',
+          color: 'oklch(100% 0 0)',
+        }}
+      >
+        1
+      </span>
+    )}
+  </span>
+);
+
+const REPEAT_ARIA: Record<RepeatMode, string> = {
+  none: 'Repeat off',
+  all: 'Repeat all',
+  one: 'Repeat one',
+};
+
 const NEXT_REPEAT_MODE: Record<RepeatMode, RepeatMode> = {
   none: 'all',
   all: 'one',
   one: 'none',
-};
-
-const repeatLabel = (mode: RepeatMode): string => {
-  if (mode === 'one') return '\u21BB1';
-  return '\u21BB';
 };
 
 export const PlayerBar: FC<PlayerBarProps> = ({
@@ -64,8 +121,38 @@ export const PlayerBar: FC<PlayerBarProps> = ({
   nowPlayingOpen = false,
 }) => {
   const state = usePlayerState();
-  const { track, status, positionSecs, volume, isShuffled, repeatMode } = state;
+  const { track, status, positionSecs, volume, isShuffled, repeatMode, isLiked, applyOptimistic } = state;
   const isPlaying = status === 'playing';
+
+  const handleTogglePlay = () => {
+    // Optimistic flip — instant UI feedback. Backend's next event reconciles.
+    applyOptimistic({ status: isPlaying ? 'paused' : 'playing' });
+    playerApi.togglePlay().catch(() => {
+      // Roll back on failure
+      applyOptimistic({ status: isPlaying ? 'playing' : 'paused' });
+    });
+  };
+
+  const handleToggleShuffle = () => {
+    applyOptimistic({ isShuffled: !isShuffled });
+    playerApi.toggleShuffle().catch(() => {
+      applyOptimistic({ isShuffled });
+    });
+  };
+
+  const handleCycleRepeat = () => {
+    applyOptimistic({ repeatMode: NEXT_REPEAT_MODE[repeatMode] });
+    playerApi.cycleRepeat().catch(() => {
+      applyOptimistic({ repeatMode });
+    });
+  };
+
+  const handleToggleLike = () => {
+    applyOptimistic({ isLiked: !isLiked });
+    playerApi.toggleLike().catch(() => {
+      applyOptimistic({ isLiked });
+    });
+  };
   const duration = track?.durationSecs ?? 0;
   const progress = duration > 0 ? positionSecs / duration : 0;
 
@@ -102,29 +189,54 @@ export const PlayerBar: FC<PlayerBarProps> = ({
         />
         {track ? (
           <>
-            <div
+            <button
+              type="button"
+              onClick={onToggleNowPlaying}
+              aria-label={
+                nowPlayingOpen ? 'Close now playing' : 'Open now playing'
+              }
+              aria-pressed={nowPlayingOpen}
               style={{
                 width: '48px',
                 height: '48px',
                 borderRadius: 'var(--radius-sm)',
-                background: track.artworkUrl
-                  ? `url(${track.artworkUrl}) center / cover`
-                  : 'var(--color-surface-3)',
+                background: 'var(--color-surface-3)',
+                overflow: 'hidden',
                 flexShrink: 0,
+                padding: 0,
+                border: nowPlayingOpen
+                  ? '2px solid var(--color-accent)'
+                  : 'none',
+                cursor: 'pointer',
+                transition: 'border var(--duration-fast) var(--ease-out)',
               }}
-            />
-            <div style={{ minWidth: 0 }}>
-              <div
+            >
+              <CachedImage
+                src={pickArtwork(track)}
+                alt={`${track.title} artwork`}
+                width={48}
+                height={48}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                onError={(e) => {
+                  // If the cached/remote URL fails, swap to the YouTube
+                  // thumbnail service as a last resort.
+                  if (track.videoId) {
+                    const fallback = `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
+                    if (e.currentTarget.src !== fallback) {
+                      e.currentTarget.src = fallback;
+                    }
+                  }
+                }}
+              />
+            </button>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <MarqueeText
+                text={track.title}
                 style={{
                   fontSize: 'var(--text-sm)',
                   fontWeight: 500,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
                 }}
-              >
-                {track.title}
-              </div>
+              />
               <div
                 style={{
                   fontSize: 'var(--text-xs)',
@@ -150,13 +262,13 @@ export const PlayerBar: FC<PlayerBarProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
           <TransportButton
             label={'\u21CB'}
-            onClick={() => playerApi.toggleShuffle()}
+            onClick={handleToggleShuffle}
             size="var(--text-base)"
             isActive={isShuffled}
           />
           <TransportButton label={'\u25C4\u25C4'} onClick={() => playerApi.previous()} />
           <button
-            onClick={() => playerApi.togglePlay()}
+            onClick={handleTogglePlay}
             aria-label={isPlaying ? 'Pause' : 'Play'}
             style={{
               display: 'flex',
@@ -181,8 +293,9 @@ export const PlayerBar: FC<PlayerBarProps> = ({
           </button>
           <TransportButton label={'\u25BA\u25BA'} onClick={() => playerApi.next()} />
           <TransportButton
-            label={repeatLabel(repeatMode)}
-            onClick={() => playerApi.setRepeat(NEXT_REPEAT_MODE[repeatMode])}
+            label={<RepeatIcon mode={repeatMode} />}
+            ariaLabel={REPEAT_ARIA[repeatMode]}
+            onClick={handleCycleRepeat}
             size="var(--text-base)"
             isActive={repeatMode !== 'none'}
           />
@@ -217,15 +330,15 @@ export const PlayerBar: FC<PlayerBarProps> = ({
       {/* Right: volume + like + queue toggle */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 'var(--space-3)' }}>
         <button
-          onClick={() => playerApi.toggleLike()}
-          aria-label={state.isLiked ? 'Unlike' : 'Like'}
+          onClick={handleToggleLike}
+          aria-label={isLiked ? 'Unlike' : 'Like'}
           style={{
             fontSize: 'var(--text-lg)',
-            color: state.isLiked ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+            color: isLiked ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
             transition: `color var(--duration-fast) var(--ease-out)`,
           }}
         >
-          {state.isLiked ? '\u2665' : '\u2661'}
+          {isLiked ? '\u2665' : '\u2661'}
         </button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>

@@ -1,85 +1,316 @@
-import { type FC, useState } from 'react';
+import { type FC, useCallback, useEffect, useState } from 'react';
+import type { Shelf } from '../../lib/types';
+import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
+import { ShelfRow } from '../browse/ShelfRow';
+import { AlbumCard } from '../browse/AlbumCard';
+import { SongRow } from '../browse/SongRow';
 
-interface GenreCard {
-  name: string;
-  color: string;
+interface ExplorePageProps {
+  onOpenPlaylist?: (playlistId: string) => void;
+  onAutoPlayPlaylist?: (playlistId: string) => void;
 }
 
-const GENRES: GenreCard[] = [
-  { name: 'Pop', color: 'oklch(62% 0.22 330)' },
-  { name: 'Rock', color: 'oklch(55% 0.18 30)' },
-  { name: 'Hip-Hop', color: 'oklch(58% 0.20 280)' },
-  { name: 'Electronic', color: 'oklch(65% 0.22 190)' },
-  { name: 'R&B', color: 'oklch(50% 0.20 310)' },
-  { name: 'Classical', color: 'oklch(55% 0.12 80)' },
-  { name: 'Jazz', color: 'oklch(60% 0.16 60)' },
-  { name: 'Country', color: 'oklch(58% 0.14 110)' },
-];
+export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
+  const [shelves, setShelves] = useState<Shelf[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-export const ExplorePage: FC = () => (
-  <section
-    style={{
-      padding: 'var(--space-8) var(--space-6)',
-      overflowY: 'auto',
-      height: '100%',
-    }}
-  >
-    <h1
-      style={{
-        fontSize: 'var(--text-2xl)',
-        fontWeight: 700,
-        marginBottom: 'var(--space-6)',
-        letterSpacing: '-0.02em',
-        color: 'var(--color-text-primary)',
-      }}
-    >
-      Explore
-    </h1>
+  const fetchExplore = useCallback(() => {
+    setIsLoading(true);
+    setError(null);
+    browseApi
+      .getExplore()
+      .then((data) => {
+        setShelves(data);
+        setIsLoading(false);
+      })
+      .catch((e) => {
+        setError(String(e));
+        setIsLoading(false);
+      });
+  }, []);
 
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-        gap: 'var(--space-4)',
-      }}
-    >
-      {GENRES.map((genre) => (
-        <GenreCardItem key={genre.name} genre={genre} />
-      ))}
-    </div>
-  </section>
-);
+  useEffect(() => {
+    fetchExplore();
+  }, [fetchExplore]);
 
-const GenreCardItem: FC<{ genre: GenreCard }> = ({ genre }) => {
-  const [isHovered, setIsHovered] = useState(false);
-
-  return (
-    <button
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      style={{
-        height: '120px',
-        background: genre.color,
-        borderRadius: 'var(--radius-lg)',
-        border: 'none',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        filter: isHovered ? 'brightness(1.15)' : 'brightness(1)',
-        transition: `filter var(--duration-fast) var(--ease-out)`,
-      }}
-    >
-      <span
+  if (isLoading) {
+    return (
+      <section
         style={{
-          fontSize: 'var(--text-lg)',
-          fontWeight: 700,
-          color: 'oklch(100% 0 0)',
-          textShadow: '0 1px 3px oklch(0% 0 0 / 0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          color: 'var(--color-text-tertiary)',
+          fontSize: 'var(--text-base)',
         }}
       >
-        {genre.name}
-      </span>
-    </button>
+        Loading...
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          gap: 'var(--space-4)',
+        }}
+      >
+        <p
+          style={{
+            fontSize: 'var(--text-base)',
+            color: 'var(--color-text-tertiary)',
+          }}
+        >
+          Failed to load explore content
+        </p>
+        <button
+          onClick={fetchExplore}
+          style={{
+            background: 'none',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-md)',
+            padding: 'var(--space-1) var(--space-3)',
+            color: 'var(--color-text-tertiary)',
+            cursor: 'pointer',
+            fontSize: 'var(--text-sm)',
+          }}
+        >
+          Retry
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section
+      style={{
+        padding: '0 var(--space-6) var(--space-8)',
+        overflowY: 'auto',
+        height: '100%',
+      }}
+    >
+      <div
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+          background: 'var(--color-surface-1)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingTop: 'var(--space-8)',
+          paddingBottom: 'var(--space-4)',
+          marginBottom: 'var(--space-4)',
+        }}
+      >
+        <h1
+          style={{
+            fontSize: 'var(--text-2xl)',
+            fontWeight: 700,
+            letterSpacing: '-0.02em',
+            color: 'var(--color-text-primary)',
+            margin: 0,
+          }}
+        >
+          Explore
+        </h1>
+        <button
+          onClick={fetchExplore}
+          style={{
+            background: 'none',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-md)',
+            padding: 'var(--space-1) var(--space-3)',
+            color: 'var(--color-text-tertiary)',
+            cursor: 'pointer',
+            fontSize: 'var(--text-sm)',
+          }}
+        >
+          ↻ Refresh
+        </button>
+      </div>
+
+      {shelves.map((shelf) => (
+        <ShelfRow key={shelf.title} title={shelf.title}>
+          {renderShelfContent(shelf, onOpenPlaylist)}
+        </ShelfRow>
+      ))}
+
+      {shelves.length === 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '200px',
+          }}
+        >
+          <p
+            style={{
+              fontSize: 'var(--text-base)',
+              color: 'var(--color-text-tertiary)',
+            }}
+          >
+            No explore content available
+          </p>
+        </div>
+      )}
+    </section>
   );
 };
+
+function renderShelfContent(
+  shelf: Shelf,
+  onOpenPlaylist?: (playlistId: string) => void,
+): React.ReactNode {
+  const { items } = shelf;
+
+  switch (items.kind) {
+    case 'Albums':
+      return (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+            gap: '20px',
+          }}
+        >
+          {items.data.map((album) => (
+            <AlbumCard
+              key={album.browseId}
+              artworkUrl={album.artworkUrl}
+              title={album.title}
+              subtitle={album.artist}
+              onClick={() => {
+                if (album.browseId) {
+                  onOpenPlaylist?.(album.browseId);
+                }
+              }}
+              onPlay={() => {
+                if (album.browseId) {
+                  playFirstFromPlaylist(album.browseId);
+                  onOpenPlaylist?.(album.browseId);
+                }
+              }}
+            />
+          ))}
+        </div>
+      );
+
+    case 'Songs':
+      return (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+            columnGap: 'var(--space-4)',
+            rowGap: 'var(--space-1)',
+          }}
+        >
+          {items.data.map((track, i) => (
+            <SongRow key={track.videoId || `song-${i}`} track={track} />
+          ))}
+        </div>
+      );
+
+    case 'Artists':
+      return (
+        <div
+          style={{
+            display: 'flex',
+            gap: 'var(--space-5)',
+            overflowX: 'auto',
+            paddingBottom: 'var(--space-2)',
+          }}
+        >
+          {items.data.map((artist) => (
+            <div
+              key={artist.channelId}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                flexShrink: 0,
+                width: '120px',
+              }}
+            >
+              <div
+                style={{
+                  width: '100px',
+                  height: '100px',
+                  borderRadius: 'var(--radius-full)',
+                  overflow: 'hidden',
+                  background: 'var(--color-surface-2)',
+                }}
+              >
+                <img
+                  src={artist.avatarUrl}
+                  alt={artist.name}
+                  loading="lazy"
+                  width={100}
+                  height={100}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              </div>
+              <span
+                style={{
+                  fontSize: 'var(--text-xs)',
+                  color: 'var(--color-text-secondary)',
+                  textAlign: 'center',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  width: '100%',
+                }}
+              >
+                {artist.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      );
+
+    case 'Playlists':
+      return (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+            gap: '20px',
+          }}
+        >
+          {items.data.map((playlist) => (
+            <AlbumCard
+              key={playlist.playlistId}
+              artworkUrl={playlist.artworkUrl}
+              title={playlist.title}
+              subtitle={
+                playlist.trackCount !== undefined
+                  ? `${playlist.trackCount} tracks`
+                  : ''
+              }
+              onClick={() => onOpenPlaylist?.(playlist.playlistId)}
+              onPlay={() => {
+                playFirstFromPlaylist(playlist.playlistId);
+                onOpenPlaylist?.(playlist.playlistId);
+              }}
+            />
+          ))}
+        </div>
+      );
+
+    default:
+      return null;
+  }
+}

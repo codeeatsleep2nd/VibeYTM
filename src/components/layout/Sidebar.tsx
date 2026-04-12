@@ -115,12 +115,15 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => (
         Library
       </span>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-        {LIBRARY_ITEMS.map((item) => (
+        {LIBRARY_ITEMS.map((item, idx) => (
           <NavItem
             key={item.path}
             label={item.label}
             icon={item.icon}
-            isActive={currentPath === item.path || currentPath === 'library'}
+            isActive={
+              currentPath === item.path ||
+              (currentPath === 'library' && idx === 0)
+            }
             onClick={() => onNavigate(item.path)}
           />
         ))}

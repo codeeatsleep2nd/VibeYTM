@@ -1,5 +1,35 @@
 # VibeYTM — UI Test Checklist
 
+## MANDATORY PRE-BUILD VERIFICATION
+Before EVERY build, verify these rules are implemented correctly:
+
+### Card Click Rules — ALL PAGES (CRITICAL)
+Apply to: Home, Search (Albums/Artists tabs), Explore, Library, Playlist detail
+- [ ] Every card in every shelf must be clickable (no React key collisions)
+- [ ] Single-video cards (watchEndpoint.videoId only, no browseId) → clicking plays the track directly
+- [ ] Playlist/album cards → clicking opens the detail page (no auto-play)
+- [ ] Clicking play icon on a collection → plays first track
+- [ ] Clicking play icon on a single-track card → plays that track
+- [ ] Parser must detect `musicTwoRowItemRenderer` with watchEndpoint as Song, not Album
+- [ ] React keys use `${id || 'fallback'}-${index}` pattern to prevent collisions
+
+### Playlist Card Click Rules (CRITICAL)
+- [ ] Click anywhere on card (NOT play icon) → opens playlist detail page, NO auto-play
+- [ ] Click play icon on card → opens detail page AND plays first song
+- [ ] If currently playing song is already in the playlist → open detail page but do NOT restart playback
+- [ ] PlaylistDetailPage `autoPlay` prop only triggers play when explicitly requested
+
+### Content Parity with Real YTM (CRITICAL)
+- [ ] Use Playwright/Chrome DevTools MCP to check https://music.youtube.com/ before building
+- [ ] Home page sections must match real YTM: Listen again, Trending community playlists, Music channels you may like, Throwback hits, etc.
+- [ ] Explore page must have: New albums & singles, Trending, New music videos, Moods & genres
+- [ ] Library tabs must load real data (Playlists, Songs, Albums, Artists)
+- [ ] Search category filters must return appropriate results per category
+
+### First Launch Behavior
+- [ ] First time the app is opened in a session → home page must force refresh (don't use cache)
+- [ ] Subsequent navigation → use cache unless > 30 min old OR user clicks refresh button
+
 ## Known Issues Fixed (2026-04-11)
 - **Root cause of all playback issues**: Tauri IPC (`invoke()`) is NOT available for
   external URLs like `music.youtube.com`. The JS bridge was calling `invoke()` which

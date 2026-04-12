@@ -1,5 +1,12 @@
-import { type FC, useState } from 'react';
-import { ytmApi } from '../../lib/ipc';
+import { type FC, useEffect, useState } from 'react';
+import { cacheApi, ytmApi, type CacheStats } from '../../lib/ipc';
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 interface ToggleSwitchProps {
   checked: boolean;
@@ -178,6 +185,29 @@ export const SettingsPage: FC = () => {
   const [closeToTray, setCloseToTray] = useState(false);
   const [backgroundPlayback, setBackgroundPlayback] = useState(true);
   const [desktopNotifications, setDesktopNotifications] = useState(true);
+  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
+  const [isClearingCache, setIsClearingCache] = useState(false);
+
+  const loadCacheStats = () => {
+    cacheApi
+      .stats()
+      .then(setCacheStats)
+      .catch((e) => console.error('cache stats failed', e));
+  };
+
+  useEffect(() => {
+    loadCacheStats();
+  }, []);
+
+  const handleClearCache = async () => {
+    setIsClearingCache(true);
+    try {
+      await cacheApi.clear();
+      loadCacheStats();
+    } finally {
+      setIsClearingCache(false);
+    }
+  };
 
   return (
     <section
@@ -262,6 +292,25 @@ export const SettingsPage: FC = () => {
         <OutlinedButton label="Hide YouTube Music window" onClick={() => ytmApi.hideYtm()} />
         <OutlinedButton label="Re-inject player bridge" onClick={() => ytmApi.injectBridge()} />
       </div>
+      <Divider />
+
+      {/* Cache */}
+      <SectionHeading title="Cache" />
+      <Divider />
+      <SettingRow
+        label="Disk cache"
+        description={
+          cacheStats
+            ? `${formatBytes(cacheStats.total_bytes)} / ${formatBytes(cacheStats.max_bytes)} — ` +
+              `${cacheStats.image_count} images, ${cacheStats.track_count} tracks`
+            : 'Loading…'
+        }
+      >
+        <OutlinedButton
+          label={isClearingCache ? 'Clearing…' : 'Clear cache'}
+          onClick={handleClearCache}
+        />
+      </SettingRow>
       <Divider />
 
       {/* About */}

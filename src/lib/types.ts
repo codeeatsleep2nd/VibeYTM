@@ -46,11 +46,26 @@ export interface PlaylistSummary {
   trackCount?: number;
 }
 
+export interface PlaylistDetail {
+  playlistId: string;
+  title: string;
+  description?: string;
+  artworkUrl: string;
+  trackCount?: number;
+  tracks: TrackInfo[];
+}
+
 export interface SearchResults {
   songs: TrackInfo[];
   albums: AlbumSummary[];
   artists: ArtistSummary[];
   playlists: PlaylistSummary[];
+  /**
+   * First real album surfaced from an unfiltered search response. Used by the
+   * unified search view to render an AlbumCard hero with a 3-track preview.
+   * Null when no album was found or the search was filtered.
+   */
+  topAlbum?: AlbumSummary | null;
 }
 
 export type ShelfContent =

@@ -1,3 +1,4 @@
+mod cache;
 mod commands;
 mod events;
 mod integrations;
@@ -11,6 +12,7 @@ use std::sync::Arc;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+use cache::Cache;
 use events::EventBus;
 use state::player::SharedPlayerState;
 use ytm_api::YtmApi;
@@ -50,15 +52,39 @@ pub fn run() {
             commands::player::toggle_like,
             commands::player::toggle_shuffle,
             commands::player::set_repeat,
+            commands::player::cycle_repeat,
             commands::player::hide_ytm,
             commands::player::show_ytm,
             commands::player::inject_ytm_bridge,
             commands::browse::search,
+            commands::browse::search_suggestions,
             commands::browse::get_home,
+            commands::browse::get_explore,
+            commands::browse::get_playlist,
             commands::browse::get_library_playlists,
+            commands::browse::get_library_songs,
+            commands::browse::get_library_albums,
+            commands::browse::get_library_artists,
+            commands::cache::cache_fetch_image,
+            commands::cache::cache_clear,
+            commands::cache::cache_stats,
+            commands::cache::cache_get_track,
+            commands::cache::cache_put_track,
         ])
         .setup(move |app| {
             tray::setup_tray(app.handle(), bus.clone())?;
+
+            // Initialize disk cache at {app_data}/cache
+            let cache_root = app
+                .path()
+                .app_data_dir()
+                .map(|p| p.join("cache"))
+                .unwrap_or_else(|_| std::env::temp_dir().join("vibeytm-cache"));
+            let cache = Cache::new(cache_root.clone()).map_err(|e| {
+                tracing::error!(error = %e, "failed to init cache");
+                e
+            })?;
+            app.manage(cache);
 
             let integrations = integrations::register_integrations();
             for integration in integrations {

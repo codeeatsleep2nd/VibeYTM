@@ -22,6 +22,22 @@ body {
   background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /*
+   * This app is a desktop music player — there's no legitimate reason to
+   * let the user lasso-select UI chrome. Text selection is only enabled
+   * inside form fields (search input, etc.) via the override below.
+   */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+[contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 ::selection {

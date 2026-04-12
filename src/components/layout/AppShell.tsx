@@ -22,7 +22,9 @@ export const AppShell: FC<AppShellProps> = ({
     style={{
       display: 'grid',
       gridTemplateColumns: 'var(--sidebar-width) 1fr',
-      gridTemplateRows: '1fr var(--player-bar-height)',
+      // PlayerBar is `position: fixed`, so no grid row is reserved for it.
+      // <main> applies its own paddingBottom to keep content above the bar.
+      gridTemplateRows: '1fr',
       height: '100%',
       overflow: 'hidden',
     }}
@@ -49,8 +51,6 @@ export const AppShell: FC<AppShellProps> = ({
         overflow: 'auto',
         paddingTop: 'var(--title-bar-height)',
         paddingBottom: 'var(--player-bar-height)',
-        marginRight: nowPlayingOpen ? 'var(--now-playing-width)' : '0',
-        transition: `margin-right var(--duration-slow) var(--ease-out)`,
       }}
     >
       {children}

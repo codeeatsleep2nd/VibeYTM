@@ -9,6 +9,11 @@ pub struct SearchResults {
     pub albums: Vec<AlbumSummary>,
     pub artists: Vec<ArtistSummary>,
     pub playlists: Vec<PlaylistSummary>,
+    /// First real album surfaced from an unfiltered search response. Used by
+    /// the unified search view to render the "Top result" album hero. None
+    /// when no album was found or when the search was filtered.
+    #[serde(default)]
+    pub top_album: Option<AlbumSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +49,17 @@ pub struct PlaylistSummary {
 pub struct Shelf {
     pub title: String,
     pub items: ShelfContent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistDetail {
+    pub playlist_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub artwork_url: String,
+    pub track_count: Option<u32>,
+    pub tracks: Vec<TrackInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,3 +1,4 @@
+pub mod api;
 pub mod poller;
 
 use tauri::{AppHandle, Manager, WebviewWindow};
@@ -49,11 +50,56 @@ pub fn exec_playback_command_with_args(
     window.eval(&js).map_err(|e| e.to_string())
 }
 
-/// Navigate the YTM window to play a specific video.
+/// Play a specific video in the YTM window.
+/// Uses full SPA navigation via anchor click which YTM's polymer router
+/// intercepts. This is much faster than `window.location.href` (no full
+/// page reload) while still updating the YTM DOM properly.
 pub fn navigate_to_track(window: &WebviewWindow, video_id: &str) -> Result<(), String> {
-    let url = format!("https://music.youtube.com/watch?v={}", video_id);
-    tracing::info!(video_id, "navigating YTM to track");
-    window
-        .eval(&format!("window.location.href = '{}';", url))
-        .map_err(|e| e.to_string())
+    tracing::info!(video_id, "navigate_to_track");
+    let js = format!(
+        r#"(function() {{
+            var vid = '{vid}';
+            // Mark the target so the poller can ignore stale DOM updates
+            window.__VIBEYTM_TARGET_VID__ = vid;
+            var a = document.createElement('a');
+            a.href = '/watch?v=' + vid;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function() {{
+                try {{ document.body.removeChild(a); }} catch(e) {{}}
+            }}, 100);
+            return 'ok';
+        }})();"#,
+        vid = video_id
+    );
+    window.eval(&js).map_err(|e| e.to_string())
+}
+
+/// Play a track in the context of a playlist (for proper queue/next behavior).
+pub fn navigate_to_track_with_playlist(
+    window: &WebviewWindow,
+    video_id: &str,
+    playlist_id: &str,
+) -> Result<(), String> {
+    tracing::info!(video_id, playlist_id, "navigate_to_track_with_playlist");
+    let js = format!(
+        r#"(function() {{
+            var vid = '{vid}';
+            var list = '{list}';
+            window.__VIBEYTM_TARGET_VID__ = vid;
+            var a = document.createElement('a');
+            a.href = '/watch?v=' + vid + '&list=' + list;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function() {{
+                try {{ document.body.removeChild(a); }} catch(e) {{}}
+            }}, 100);
+            return 'ok';
+        }})();"#,
+        vid = video_id,
+        list = playlist_id
+    );
+    window.eval(&js).map_err(|e| e.to_string())
 }

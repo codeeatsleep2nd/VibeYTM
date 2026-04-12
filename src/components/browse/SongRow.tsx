@@ -1,11 +1,14 @@
 import { type FC, useState } from 'react';
 import type { TrackInfo } from '../../lib/types';
 import { playerApi } from '../../lib/ipc';
+import { CachedImage } from '../CachedImage';
+import { MarqueeText } from '../MarqueeText';
 
 interface SongRowProps {
   track: TrackInfo;
   index?: number;
   onClick?: () => void;
+  playlistId?: string;
 }
 
 const formatDuration = (secs: number): string => {
@@ -14,14 +17,14 @@ const formatDuration = (secs: number): string => {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 };
 
-export const SongRow: FC<SongRowProps> = ({ track, index, onClick }) => {
+export const SongRow: FC<SongRowProps> = ({ track, index, onClick, playlistId }) => {
   const [isHovered, setIsHovered] = useState(false);
 
   const handleClick = () => {
     if (onClick) {
       onClick();
-    } else {
-      playerApi.playTrack(track.videoId);
+    } else if (track.videoId) {
+      playerApi.playTrack(track.videoId, playlistId).catch(() => {});
     }
   };
 
@@ -69,7 +72,7 @@ export const SongRow: FC<SongRowProps> = ({ track, index, onClick }) => {
         }}
       >
         {track.artworkUrl && (
-          <img
+          <CachedImage
             src={track.artworkUrl}
             alt={`${track.title} artwork`}
             loading="lazy"
@@ -84,18 +87,15 @@ export const SongRow: FC<SongRowProps> = ({ track, index, onClick }) => {
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div
+        <MarqueeText
+          text={track.title}
+          hovered={isHovered}
           style={{
             fontSize: 'var(--text-sm)',
             fontWeight: 500,
             color: 'var(--color-text-primary)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
           }}
-        >
-          {track.title}
-        </div>
+        />
         <div
           style={{
             fontSize: 'var(--text-xs)',
@@ -109,15 +109,17 @@ export const SongRow: FC<SongRowProps> = ({ track, index, onClick }) => {
         </div>
       </div>
 
-      <span
-        style={{
-          fontSize: 'var(--text-xs)',
-          color: 'var(--color-text-tertiary)',
-          flexShrink: 0,
-        }}
-      >
-        {formatDuration(track.durationSecs)}
-      </span>
+      {track.durationSecs > 0 && (
+        <span
+          style={{
+            fontSize: 'var(--text-xs)',
+            color: 'var(--color-text-tertiary)',
+            flexShrink: 0,
+          }}
+        >
+          {formatDuration(track.durationSecs)}
+        </span>
+      )}
     </button>
   );
 };

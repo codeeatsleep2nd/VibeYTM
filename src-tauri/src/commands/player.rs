@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
 
+use crate::cache::Cache;
 use crate::events::bus::EventBus;
 use crate::events::types::AppEvent;
 use crate::state::player::{PlaybackStatus, PlayerState, RepeatMode, SharedPlayerState, TrackInfo};
@@ -11,8 +12,15 @@ pub async fn on_track_changed(
     track: TrackInfo,
     state: State<'_, SharedPlayerState>,
     bus: State<'_, Arc<EventBus>>,
+    cache: State<'_, Cache>,
     app: AppHandle,
 ) -> Result<(), String> {
+    // Persist duration so home/search shelves (which don't ship durations)
+    // can backfill this track in future responses.
+    if track.duration_secs > 0.0 && !track.video_id.is_empty() {
+        cache.put_track_duration(&track.video_id, track.duration_secs);
+    }
+
     {
         let mut player = state.write().await;
         player.track = Some(track.clone());
@@ -163,13 +171,22 @@ pub async fn previous_track(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn play_track(
     video_id: String,
+    playlist_id: Option<String>,
     state: State<'_, SharedPlayerState>,
     bus: State<'_, Arc<EventBus>>,
     app: AppHandle,
 ) -> Result<(), String> {
-    // Navigate the YTM window to the track
+    tracing::info!(video_id = %video_id, playlist_id = ?playlist_id, "play_track called");
+    if video_id.is_empty() {
+        return Err("video_id is empty".into());
+    }
+    // Navigate the YTM window to the track using the fast (no-reload) path
     if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
-        crate::webview_bridge::navigate_to_track(&window, &video_id)?;
+        if let Some(ref list_id) = playlist_id {
+            crate::webview_bridge::navigate_to_track_with_playlist(&window, &video_id, list_id)?;
+        } else {
+            crate::webview_bridge::navigate_to_track(&window, &video_id)?;
+        }
     }
 
     // Create initial track info (will be updated by the JS bridge once page loads)
@@ -243,11 +260,15 @@ pub async fn toggle_like(
     state: State<'_, SharedPlayerState>,
     app: AppHandle,
 ) -> Result<(), String> {
+    // Optimistic flip; the bridge poller will reconcile with the real
+    // YTM like-status on the next cycle.
     let is_liked = {
         let mut player = state.write().await;
         player.is_liked = !player.is_liked;
         player.is_liked
     };
+
+    forward_to_ytm(&app, "toggle_like");
 
     app.emit("player:like-changed", &is_liked)
         .map_err(|e| e.to_string())?;
@@ -258,19 +279,45 @@ pub async fn toggle_like(
 #[tauri::command]
 pub async fn toggle_shuffle(
     state: State<'_, SharedPlayerState>,
+    app: AppHandle,
 ) -> Result<(), String> {
-    let mut player = state.write().await;
-    player.is_shuffled = !player.is_shuffled;
+    {
+        let mut player = state.write().await;
+        player.is_shuffled = !player.is_shuffled;
+    }
+    forward_to_ytm(&app, "toggle_shuffle");
     Ok(())
 }
 
 #[tauri::command]
+pub async fn cycle_repeat(
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    {
+        let mut player = state.write().await;
+        player.repeat_mode = match player.repeat_mode {
+            RepeatMode::None => RepeatMode::All,
+            RepeatMode::All => RepeatMode::One,
+            RepeatMode::One => RepeatMode::None,
+        };
+    }
+    forward_to_ytm(&app, "cycle_repeat");
+    Ok(())
+}
+
+/// Legacy: kept for compatibility but now also forwards through cycle_repeat.
+#[tauri::command]
 pub async fn set_repeat(
     mode: RepeatMode,
     state: State<'_, SharedPlayerState>,
+    app: AppHandle,
 ) -> Result<(), String> {
-    let mut player = state.write().await;
-    player.repeat_mode = mode;
+    {
+        let mut player = state.write().await;
+        player.repeat_mode = mode;
+    }
+    forward_to_ytm(&app, "cycle_repeat");
     Ok(())
 }
 

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { PlayerState, PlaybackStatus, TrackInfo } from '../lib/types';
+import { useCallback, useEffect, useState } from 'react';
+import type { PlayerState, PlaybackStatus, RepeatMode, TrackInfo } from '../lib/types';
 import { playerApi } from '../lib/ipc';
 import { EVENTS } from '../lib/events';
 import { useTauriEvent } from './useTauriEvent';
@@ -15,7 +15,15 @@ const DEFAULT_STATE: PlayerState = {
   queue: [],
 };
 
-export function usePlayerState(): PlayerState {
+export interface UsePlayerState extends PlayerState {
+  /**
+   * Apply a local optimistic patch (e.g. flip status to "playing" on click)
+   * so the UI updates instantly. The next backend event overwrites it.
+   */
+  applyOptimistic: (patch: Partial<PlayerState>) => void;
+}
+
+export function usePlayerState(): UsePlayerState {
   const [state, setState] = useState<PlayerState>(DEFAULT_STATE);
 
   useEffect(() => {
@@ -46,5 +54,21 @@ export function usePlayerState(): PlayerState {
     setState(newState);
   });
 
-  return state;
+  useTauriEvent<boolean>(EVENTS.SHUFFLE_CHANGED, (isShuffled) => {
+    setState((prev) => ({ ...prev, isShuffled }));
+  });
+
+  useTauriEvent<RepeatMode>(EVENTS.REPEAT_CHANGED, (repeatMode) => {
+    setState((prev) => ({ ...prev, repeatMode }));
+  });
+
+  useTauriEvent<boolean>(EVENTS.LIKE_CHANGED, (isLiked) => {
+    setState((prev) => ({ ...prev, isLiked }));
+  });
+
+  const applyOptimistic = useCallback((patch: Partial<PlayerState>) => {
+    setState((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  return { ...state, applyOptimistic };
 }

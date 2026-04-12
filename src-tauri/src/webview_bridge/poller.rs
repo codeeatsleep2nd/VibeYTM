@@ -1,14 +1,17 @@
 //! Polls the YTM WebView using WKWebView's evaluateJavaScript with callback.
+//! Does NOT block the main thread — uses a static slot for the callback result
+//! and reads it on the polling thread.
 
 use std::sync::Arc;
+use std::sync::{Mutex, OnceLock};
 
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::Mutex;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::events::bus::EventBus;
 use crate::events::types::AppEvent;
-use crate::state::player::{PlaybackStatus, SharedPlayerState, TrackInfo};
+use crate::state::player::{PlaybackStatus, RepeatMode, SharedPlayerState, TrackInfo};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +31,20 @@ struct BridgeState {
     duration_secs: f64,
     #[serde(default)]
     volume: f64,
+    #[serde(default)]
+    is_shuffled: bool,
+    #[serde(default)]
+    repeat_mode: String,
+    #[serde(default)]
+    is_liked: bool,
+}
+
+fn parse_repeat(s: &str) -> RepeatMode {
+    match s {
+        "all" => RepeatMode::All,
+        "one" => RepeatMode::One,
+        _ => RepeatMode::None,
+    }
 }
 
 const READ_STATE_JS: &str = r#"
@@ -38,88 +55,73 @@ const READ_STATE_JS: &str = r#"
 })();
 "#;
 
+/// Static slot for the poller's evaluateJavaScript callback result.
+/// The callback writes here (on main thread), the polling thread reads it.
+static POLLER_RESULT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn get_poller_result() -> &'static Mutex<Option<String>> {
+    POLLER_RESULT.get_or_init(|| Mutex::new(None))
+}
+
 pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<EventBus>) {
-    let last_video_id = Arc::new(Mutex::new(String::new()));
-    let last_status = Arc::new(Mutex::new(String::new()));
+    let last_video_id = Arc::new(TokioMutex::new(String::new()));
+    let last_status = Arc::new(TokioMutex::new(String::new()));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
+    // Polling thread: schedules eval on main thread, reads result from static
     let app_clone = app.clone();
     std::thread::spawn(move || {
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            // 150ms keeps perceived latency under 300ms for play/pause without
+            // significant CPU cost. Reads also happen one cycle after the eval
+            // is scheduled, so the effective lag is ~2 * sleep.
+            std::thread::sleep(std::time::Duration::from_millis(150));
 
-            let tx = tx.clone();
-            let app = app_clone.clone();
-            let app2 = app.clone();
+            // Read result from PREVIOUS cycle's callback
+            if let Ok(mut guard) = get_poller_result().lock() {
+                if let Some(s) = guard.take() {
+                    let _ = tx.send(s);
+                }
+            }
 
-            let _ = app.run_on_main_thread(move || {
+            // Schedule next eval on main thread (non-blocking)
+            let app2 = app_clone.clone();
+            let _ = app_clone.run_on_main_thread(move || {
                 let Some(window) = app2.get_webview_window("ytm") else {
                     return;
                 };
-
-                tracing::info!("poller: calling with_webview");
-                let wv_result = window.with_webview(move |platform_wv| {
+                let _ = window.with_webview(move |platform_wv| {
                     #[cfg(target_os = "macos")]
-                    {
-                        let wk_ptr = platform_wv.inner();
-                        let tx = tx.clone();
+                    unsafe {
+                        let wk: &objc2_web_kit::WKWebView =
+                            &*(platform_wv.inner() as *const objc2_web_kit::WKWebView);
+                        let js = objc2_foundation::NSString::from_str(READ_STATE_JS);
 
-                        unsafe {
-                            let wk: &objc2_web_kit::WKWebView =
-                                &*(wk_ptr as *const objc2_web_kit::WKWebView);
-                            let js = objc2_foundation::NSString::from_str(READ_STATE_JS);
-
-                            // Use RcBlock with no captures that writes to a static
-                            use std::sync::atomic::{AtomicPtr, Ordering};
-                            use std::sync::OnceLock;
-
-                            static RESULT: OnceLock<std::sync::Mutex<Option<String>>> = OnceLock::new();
-                            RESULT.get_or_init(|| std::sync::Mutex::new(None));
-
-                            let block = block2::RcBlock::new(
-                                |result: *mut objc2::runtime::AnyObject,
-                                 _error: *mut objc2_foundation::NSError| {
-                                    if result.is_null() {
-                                        return;
-                                    }
-                                    let desc: *mut objc2_foundation::NSString = objc2::msg_send![
-                                        result, description
-                                    ];
-                                    if !desc.is_null() {
-                                        let s = (*desc).to_string();
-                                        if let Some(lock) = RESULT.get() {
-                                            if let Ok(mut guard) = lock.lock() {
-                                                *guard = Some(s);
-                                            }
-                                        }
-                                    }
-                                },
-                            );
-
-                            tracing::info!("poller: calling evaluateJavaScript");
-                            wk.evaluateJavaScript_completionHandler(&js, Some(&block));
-
-                            // Wait a bit then read the result
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                            if let Some(lock) = RESULT.get() {
-                                if let Ok(mut guard) = lock.lock() {
-                                    if let Some(s) = guard.take() {
-                                        tracing::info!(result = %s, "got JS result!");
-                                        let _ = tx.send(s);
+                        let block = block2::RcBlock::new(
+                            |result: *mut objc2::runtime::AnyObject,
+                             _error: *mut objc2_foundation::NSError| {
+                                if result.is_null() {
+                                    return;
+                                }
+                                let desc: *mut objc2_foundation::NSString =
+                                    objc2::msg_send![result, description];
+                                if !desc.is_null() {
+                                    let s = (*desc).to_string();
+                                    if let Ok(mut guard) = get_poller_result().lock() {
+                                        *guard = Some(s);
                                     }
                                 }
-                            }
-                        }
+                            },
+                        );
+
+                        wk.evaluateJavaScript_completionHandler(&js, Some(&block));
                     }
                 });
-                match wv_result {
-                    Ok(_) => tracing::info!("poller: with_webview OK"),
-                    Err(e) => tracing::warn!(error = %e, "poller: with_webview failed"),
-                }
             });
         }
     });
 
+    // Async task processes results from the polling thread
     tauri::async_runtime::spawn(async move {
         tracing::info!("bridge poller started");
 
@@ -131,10 +133,7 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
 
             let bs: BridgeState = match serde_json::from_str(json_str) {
                 Ok(s) => s,
-                Err(e) => {
-                    tracing::debug!(error = %e, raw = %raw, "parse failed");
-                    continue;
-                }
+                Err(_) => continue,
             };
 
             if bs.title.is_empty() {
@@ -148,7 +147,6 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 _ => PlaybackStatus::Idle,
             };
 
-            // Use videoId if available, otherwise use title as track identity
             let track_key = if !bs.video_id.is_empty() {
                 bs.video_id.clone()
             } else {
@@ -167,13 +165,17 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                     artist_id: None,
                     album: bs.album.clone(),
                     album_id: None,
-                    artwork_url: if bs.artwork_url.is_empty() {
-                        None
-                    } else {
-                        Some(bs.artwork_url.clone())
-                    },
+                    artwork_url: if bs.artwork_url.is_empty() { None } else { Some(bs.artwork_url.clone()) },
                     duration_secs: bs.duration_secs,
                 };
+
+                // Persist duration in the side-cache so future list responses
+                // can backfill it even when YTM doesn't return the length.
+                if let Some(cache) = app.try_state::<crate::cache::Cache>() {
+                    if track.duration_secs > 0.0 && !track.video_id.is_empty() {
+                        cache.put_track_duration(&track.video_id, track.duration_secs);
+                    }
+                }
 
                 {
                     let mut ps = player_state.write().await;
@@ -183,7 +185,6 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 bus.emit(AppEvent::TrackChanged(track.clone()));
                 let _ = app.emit("player:track-changed", &track);
                 let _ = app.emit("player:status-changed", &status);
-                tracing::info!(title = %bs.title, artist = %bs.artist, "track changed");
             } else {
                 drop(last_vid);
             }
@@ -202,13 +203,30 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 drop(last_st);
             }
 
+            let new_repeat = parse_repeat(&bs.repeat_mode);
+            let (prev_shuffled, prev_repeat, prev_liked) = {
+                let ps = player_state.read().await;
+                (ps.is_shuffled, ps.repeat_mode, ps.is_liked)
+            };
             {
                 let mut ps = player_state.write().await;
                 ps.position_secs = bs.position_secs;
                 ps.volume = bs.volume;
+                ps.is_shuffled = bs.is_shuffled;
+                ps.repeat_mode = new_repeat;
+                ps.is_liked = bs.is_liked;
             }
             let _ = app.emit("player:position", &bs.position_secs);
             let _ = app.emit("player:volume", &bs.volume);
+            if prev_shuffled != bs.is_shuffled {
+                let _ = app.emit("player:shuffle-changed", &bs.is_shuffled);
+            }
+            if prev_repeat != new_repeat {
+                let _ = app.emit("player:repeat-changed", &new_repeat);
+            }
+            if prev_liked != bs.is_liked {
+                let _ = app.emit("player:like-changed", &bs.is_liked);
+            }
         }
     });
 }
