@@ -1,0 +1,37 @@
+[package]
+name = "vibeytm"
+version = "0.1.0"
+description = "An Apple Music-style YouTube Music desktop app"
+authors = ["dongli"]
+edition = "2021"
+
+[lib]
+name = "vibeytm_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
+reqwest = { version = "0.12", features = ["json", "cookies"] }
+anyhow = "1"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-deep-link = "2"
+open = "5"
+tokio-tungstenite = "0.29.0"
+futures-util = "0.3.32"
+objc2 = "0.6.4"
+objc2-foundation = "0.3.2"
+objc2-web-kit = "0.3.2"
+block2 = "0.6.2"
+sha2 = "0.10"
+hex = "0.4"
