@@ -884,6 +884,146 @@ Integrations: `media_controls`, `notifications`, `global_shortcuts` — each lis
 
 ---
 
+## 12a. Future Roadmap
+
+Post-1.0 feature roadmap. Ordered roughly by user value × implementation cost.
+All features must preserve the single-source-of-truth invariant: `PlayerState`
+in Rust remains the only authoritative playback state; new surfaces subscribe
+to the existing event bus rather than polling the YTM WebView independently.
+
+### Tier 1 — Requested (commit)
+
+#### Login Optimization (M)
+
+The current flow (§11) requires the user to click "Show YouTube Music",
+log in inside the raw YTM window, then click "Done" to tell the app they're
+finished. That manual handshake is the single roughest edge on first run and
+on cookie expiry.
+
+- **Auto-detect login:** Poll `document.cookie` / check for the `SAPISID`
+  cookie on the YTM WebView from Rust. As soon as the authenticated cookie
+  set appears, fire a `auth:logged_in` event on the bus and auto-hide the
+  YTM window. The "Done" button disappears entirely.
+- **Direct navigation:** Open the hidden window straight to
+  `https://accounts.google.com/ServiceLogin?service=youtube&continue=https://music.youtube.com`
+  instead of `music.youtube.com` + manual click-through. Saves 2–3 clicks.
+- **Session restore:** On launch, probe YTM headless first. Only surface the
+  login UI if the probe returns unauthenticated. Today every launch shows
+  the login page briefly until state hydrates — this removes that flicker.
+- **Graceful re-auth:** When cookies expire mid-session, surface a toast
+  ("Your YouTube Music session expired — sign in to continue") that opens
+  the YTM window inline instead of bouncing the user back to the full login
+  page and losing scroll position / queue context.
+- **Guest / browse-only mode:** Allow browsing public YTM content (search,
+  explore) without logging in. Library / playback stays gated but the app
+  becomes usable immediately on first launch for the "just trying it" path.
+- **Secure storage hardening:** Today auth is persisted via
+  `tauri-plugin-store`. Migrate the sensitive cookie blob to the macOS
+  Keychain (`security-framework` crate) so it's not plaintext on disk.
+
+Success metric: first-launch time from app open to "I can play a song"
+drops below 15 seconds for a user with an existing Google session in
+Safari/Chrome.
+
+#### Themes (L)
+
+Pluggable visual themes on top of the existing design tokens (§9). Ship with
+Light, Dark (default), and a "Dynamic" mode that extracts accent from current
+artwork.
+
+- **Token layer:** All color usage already routes through CSS custom
+  properties in §9. A theme is just a `:root[data-theme="…"]` override block.
+- **Storage:** `app_settings.theme: "light" | "dark" | "dynamic" | "<custom>"`
+  persisted via `tauri-plugin-store`. Settings page exposes a picker.
+- **Dynamic mode:** Reuse the album-art color extraction planned for §12
+  Phase 3; apply extracted hue to `--color-accent` on track change with a
+  300ms crossfade.
+- **Custom themes:** User-authored JSON in `~/Library/Application Support/VibeYTM/themes/*.json`.
+  A theme declares only token overrides — never arbitrary CSS — so the
+  attack surface stays zero.
+- **System sync:** `prefers-color-scheme` listener toggles between the user's
+  chosen light and dark themes when "System" is selected.
+
+#### Focus Mode (M)
+
+A Pomodoro-style countdown timer embedded in the NowPlaying page, inspired by
+the Focus app on macOS. Used for study / deep-work sessions.
+
+- **UI:** Circular progress ring overlaid on the album art on NowPlaying.
+  Presets: 25/50/90 min, plus custom. Start/pause/reset controls under the
+  playback transport.
+- **Behavior:**
+  - Countdown runs in Rust (`tokio::time::interval`) so the UI can close
+    without losing state.
+  - On expiry: pause playback, show a non-intrusive notification, optionally
+    play a soft chime (separate `<audio>` element in the React window — not
+    routed through the YTM engine).
+  - Optional "strict mode": disables tab switching (sidebar click handlers
+    gated) and mutes notifications until the timer ends.
+- **State:** New `FocusSession { started_at, duration_ms, status }` in Rust,
+  emitted on the event bus as `focus:tick` / `focus:complete`. Does not touch
+  `PlayerState`.
+- **Stats:** Persist completed sessions to SQLite for a future "focus history"
+  view. Defer the history UI until someone asks.
+
+#### Lyrics (M)
+
+Synced lyrics display on the NowPlaying page and as an optional overlay on
+the PlayerBar.
+
+- **Source order:**
+  1. YTM's own lyrics endpoint (`browse` with lyrics tab param) — already
+     accessible via `ytm_api`, no new auth.
+  2. LRCLIB (free, open, synced `.lrc` format) as fallback.
+  3. Musixmatch / Genius — deferred; licensing friction.
+- **Format:** Normalize to `Vec<LyricLine { time_ms, text }>`; if the source
+  is unsynced, fall back to scrolling plain text.
+- **Sync:** The existing 250ms `player:tick` event drives the active-line
+  highlight. No new polling.
+- **Cache:** Reuse the disk cache (§ `cache` module) keyed by `video_id`, 30-day
+  TTL. Image cache and lyric cache share eviction logic.
+- **Translate:** Optional "show translation" toggle (English → user locale)
+  via a local on-device model is a deferred stretch goal.
+
+### Tier 2 — High ROI follow-ups
+
+Researched against th-ch/youtube-music, Cider, Feishin, Spotify, and Apple
+Music. All are clean fits for the wrapper architecture (we don't own the
+catalog or audio engine, so features that require either are Tier 3).
+
+| # | Feature | Difficulty | Value | Notes |
+|---|---------|------------|-------|-------|
+| 1 | Discord Rich Presence | L | High | `discord-rich-presence` Rust crate, subscribe to `player:track` events. Toggle in settings. |
+| 2 | Last.fm / ListenBrainz scrobbling | L | High | HTTP POST on track-change; OAuth handled in a Tauri window. Core power-user feature. |
+| 3 | macOS Now Playing / media keys | M | Critical | Already planned Phase 4. Bumped to roadmap because without it the app doesn't feel native. MediaRemote framework via `objc2`. |
+| 4 | SponsorBlock for music | M | High | Hidden-WebView JS injection seeks past non-music segments. Most-praised th-ch/youtube-music plugin. Requires content warning in settings. |
+| 5 | Mini player window | L | High | Second Tauri window, subset of React UI, reuses existing event bus. Always-on-top floating player. |
+| 6 | Customizable keyboard shortcuts | L | Medium | `tauri-plugin-global-shortcut` + settings UI. Basic shortcuts planned Phase 3; customization is the delta. |
+| 7 | Playback history (local) | L | Medium | `rusqlite`, SQLite in app data dir. Track plays independently of YTM's own history. Enables the Focus stats view and future smart queue. |
+| 8 | Sleep timer | L | Medium | Sibling of Focus Mode — pause-after-N-minutes with optional fade-out. Shares timer infrastructure. |
+| 9 | Play on launch / resume | L | Medium | Restore queue + position on app start. Requires persisting `PlayerState` snapshot on graceful shutdown. |
+| 10 | Cross-fade between tracks | H | Medium | Deferred: we don't own the audio engine. Would require dual hidden WebViews or WebAudio interception. Prototype only. |
+
+### Tier 3 — Deferred / uncertain
+
+- **Audio EQ + loudness normalization:** WebAudio injection into hidden YTM
+  view; YTM actively resists tampering. High risk, high maintenance.
+- **Offline download cache (yt-dlp sidecar):** Legally gray, platform TOS
+  friction. Reconsider only if VibeYTM goes fully self-hosted.
+- **Plugin system:** Only worth building once ≥3 real integrations exist and
+  are stable. Premature abstraction otherwise.
+- **Lyric translation (on-device):** Waits for a small enough model to ship
+  without bloating the DMG past 150 MB.
+
+### Sequencing principle
+
+Every roadmap item must either (a) subscribe to the existing event bus, or
+(b) introduce new Rust state that is orthogonal to `PlayerState`. No feature
+is allowed to poll the YTM WebView directly — the bridge is the sole reader.
+This keeps the architecture invariants from §1 intact as the surface grows.
+
+---
+
 ## 13. Debuggability
 
 ### Structured Logging

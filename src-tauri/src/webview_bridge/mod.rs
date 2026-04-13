@@ -8,6 +8,26 @@ pub fn get_ytm_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window("ytm")
 }
 
+/// Validate that a string contains only characters safe for YTM IDs
+/// (alphanumerics, `_`, `-`) and does not exceed `max_len`.
+///
+/// YouTube video IDs are always 11 chars of `[A-Za-z0-9_-]`; playlist IDs
+/// share the same alphabet but can be longer. Enforcing this before any
+/// `format!`-based JS interpolation eliminates the injection vector in
+/// `navigate_to_track` / `navigate_to_track_with_playlist`.
+fn validate_ytm_id(id: &str, max_len: usize, field: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > max_len {
+        return Err(format!("invalid {field}: length out of range"));
+    }
+    if !id
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(format!("invalid {field}: illegal characters"));
+    }
+    Ok(())
+}
+
 /// Manually inject the player bridge (for re-injection/debugging).
 pub fn inject_bridge(window: &WebviewWindow) -> Result<(), String> {
     tracing::info!("manually re-injecting player bridge");
@@ -56,6 +76,7 @@ pub fn exec_playback_command_with_args(
 /// page reload) while still updating the YTM DOM properly.
 pub fn navigate_to_track(window: &WebviewWindow, video_id: &str) -> Result<(), String> {
     tracing::info!(video_id, "navigate_to_track");
+    validate_ytm_id(video_id, 20, "video_id")?;
     let js = format!(
         r#"(function() {{
             var vid = '{vid}';
@@ -83,6 +104,8 @@ pub fn navigate_to_track_with_playlist(
     playlist_id: &str,
 ) -> Result<(), String> {
     tracing::info!(video_id, playlist_id, "navigate_to_track_with_playlist");
+    validate_ytm_id(video_id, 20, "video_id")?;
+    validate_ytm_id(playlist_id, 100, "playlist_id")?;
     let js = format!(
         r#"(function() {{
             var vid = '{vid}';
@@ -102,4 +125,40 @@ pub fn navigate_to_track_with_playlist(
         list = playlist_id
     );
     window.eval(&js).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_ytm_id;
+
+    #[test]
+    fn accepts_valid_video_id() {
+        assert!(validate_ytm_id("dQw4w9WgXcQ", 20, "video_id").is_ok());
+    }
+
+    #[test]
+    fn accepts_valid_playlist_id() {
+        assert!(validate_ytm_id("PL-abc_123XYZ", 100, "playlist_id").is_ok());
+    }
+
+    #[test]
+    fn rejects_single_quote_injection() {
+        assert!(validate_ytm_id("a';alert(1);//", 20, "video_id").is_err());
+    }
+
+    #[test]
+    fn rejects_angle_brackets() {
+        assert!(validate_ytm_id("<script>", 20, "video_id").is_err());
+    }
+
+    #[test]
+    fn rejects_empty() {
+        assert!(validate_ytm_id("", 20, "video_id").is_err());
+    }
+
+    #[test]
+    fn rejects_too_long() {
+        let long = "a".repeat(21);
+        assert!(validate_ytm_id(&long, 20, "video_id").is_err());
+    }
 }
