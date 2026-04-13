@@ -1421,3 +1421,196 @@ fn parse_playlist_from_two_row(two_row: &Value) -> Option<PlaylistSummary> {
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ---- parse_duration_text ----------------------------------------------
+
+    #[test]
+    fn parse_duration_text_mm_ss() {
+        assert_eq!(parse_duration_text("3:45"), 225.0);
+    }
+
+    #[test]
+    fn parse_duration_text_hh_mm_ss() {
+        assert_eq!(parse_duration_text("1:02:03"), 3723.0);
+    }
+
+    #[test]
+    fn parse_duration_text_pads_single_digit_seconds() {
+        assert_eq!(parse_duration_text("0:07"), 7.0);
+    }
+
+    #[test]
+    fn parse_duration_text_handles_leading_whitespace() {
+        assert_eq!(parse_duration_text("  4:20  "), 260.0);
+    }
+
+    #[test]
+    fn parse_duration_text_returns_zero_for_malformed() {
+        assert_eq!(parse_duration_text(""), 0.0);
+        assert_eq!(parse_duration_text("abc"), 0.0);
+        assert_eq!(parse_duration_text("1:2:3:4"), 0.0); // too many parts
+    }
+
+    // ---- runs_text --------------------------------------------------------
+
+    #[test]
+    fn runs_text_concatenates_text_fields() {
+        let v = json!([
+            { "text": "Hello" },
+            { "text": ", " },
+            { "text": "world" },
+        ]);
+        assert_eq!(runs_text(&v), "Hello, world");
+    }
+
+    #[test]
+    fn runs_text_skips_missing_text() {
+        let v = json!([
+            { "text": "A" },
+            { "notText": "B" },
+            { "text": "C" },
+        ]);
+        assert_eq!(runs_text(&v), "AC");
+    }
+
+    #[test]
+    fn runs_text_returns_empty_for_non_array() {
+        assert_eq!(runs_text(&json!("not an array")), "");
+        assert_eq!(runs_text(&json!(null)), "");
+    }
+
+    // ---- best_thumbnail ---------------------------------------------------
+
+    #[test]
+    fn best_thumbnail_picks_last_entry() {
+        // YTM returns thumbnails smallest-first, so the last one is highest-res.
+        let v = json!([
+            { "url": "https://i.ytimg.com/vi/x/default.jpg", "width": 120 },
+            { "url": "https://i.ytimg.com/vi/x/mqdefault.jpg", "width": 320 },
+            { "url": "https://i.ytimg.com/vi/x/hqdefault.jpg", "width": 480 },
+        ]);
+        assert_eq!(best_thumbnail(&v), "https://i.ytimg.com/vi/x/hqdefault.jpg");
+    }
+
+    #[test]
+    fn best_thumbnail_returns_empty_for_missing() {
+        assert_eq!(best_thumbnail(&json!([])), "");
+        assert_eq!(best_thumbnail(&json!(null)), "");
+    }
+
+    // ---- extract_video_id -------------------------------------------------
+
+    #[test]
+    fn extract_video_id_from_playlist_item_data() {
+        let renderer = json!({
+            "playlistItemData": { "videoId": "dQw4w9WgXcQ" }
+        });
+        assert_eq!(extract_video_id(&renderer), "dQw4w9WgXcQ");
+    }
+
+    #[test]
+    fn extract_video_id_from_overlay_play_button() {
+        let renderer = json!({
+            "overlay": {
+                "musicItemThumbnailOverlayRenderer": {
+                    "content": {
+                        "musicPlayButtonRenderer": {
+                            "playNavigationEndpoint": {
+                                "watchEndpoint": { "videoId": "overlay_vid" }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        assert_eq!(extract_video_id(&renderer), "overlay_vid");
+    }
+
+    #[test]
+    fn extract_video_id_from_flex_column_runs() {
+        let renderer = json!({
+            "flexColumns": [{
+                "musicResponsiveListItemFlexColumnRenderer": {
+                    "text": {
+                        "runs": [{
+                            "text": "Song Name",
+                            "navigationEndpoint": {
+                                "watchEndpoint": { "videoId": "flex_vid" }
+                            }
+                        }]
+                    }
+                }
+            }]
+        });
+        assert_eq!(extract_video_id(&renderer), "flex_vid");
+    }
+
+    #[test]
+    fn extract_video_id_returns_empty_when_absent() {
+        assert_eq!(extract_video_id(&json!({})), "");
+    }
+
+    #[test]
+    fn extract_video_id_prefers_playlist_item_data() {
+        // When multiple paths are present, the preferred source wins.
+        let renderer = json!({
+            "playlistItemData": { "videoId": "PRIMARY" },
+            "overlay": {
+                "musicItemThumbnailOverlayRenderer": {
+                    "content": {
+                        "musicPlayButtonRenderer": {
+                            "playNavigationEndpoint": {
+                                "watchEndpoint": { "videoId": "SECONDARY" }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        assert_eq!(extract_video_id(&renderer), "PRIMARY");
+    }
+
+    // ---- parse_search_suggestions ----------------------------------------
+
+    #[test]
+    fn parse_search_suggestions_extracts_runs_text() {
+        // Based on the actual YTM suggestions response shape.
+        let data = json!({
+            "contents": [{
+                "searchSuggestionsSectionRenderer": {
+                    "contents": [
+                        {
+                            "searchSuggestionRenderer": {
+                                "suggestion": {
+                                    "runs": [
+                                        { "text": "rick " },
+                                        { "text": "astley" }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "searchSuggestionRenderer": {
+                                "suggestion": {
+                                    "runs": [{ "text": "rickroll" }]
+                                }
+                            }
+                        }
+                    ]
+                }
+            }]
+        });
+        let suggestions = parse_search_suggestions(&data);
+        assert_eq!(suggestions, vec!["rick astley", "rickroll"]);
+    }
+
+    #[test]
+    fn parse_search_suggestions_empty_for_bad_shape() {
+        assert!(parse_search_suggestions(&json!({})).is_empty());
+        assert!(parse_search_suggestions(&json!(null)).is_empty());
+    }
+}

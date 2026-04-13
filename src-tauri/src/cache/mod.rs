@@ -261,3 +261,133 @@ fn touch(path: &Path) -> Result<()> {
     f.set_times(times)
         .map_err(|e| anyhow!("set_times {}: {e}", path.display()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Build an isolated temp dir for each test. We don't pull in `tempfile`
+    /// to keep dev-deps minimal — nanos + a monotonic counter is collision-free
+    /// for a single test binary.
+    fn test_root() -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("vibeytm-cache-test-{}-{}", nanos, n));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn make_cache() -> (Cache, PathBuf) {
+        let root = test_root();
+        let cache = Cache::new(root.clone()).expect("cache::new");
+        (cache, root)
+    }
+
+    #[test]
+    fn image_path_is_deterministic_for_same_url() {
+        let (cache, _root) = make_cache();
+        let (p1, h1) = cache.image_path("https://i.ytimg.com/vi/abc/hq.jpg");
+        let (p2, h2) = cache.image_path("https://i.ytimg.com/vi/abc/hq.jpg");
+        assert_eq!(p1, p2);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn image_path_differs_for_different_urls() {
+        let (cache, _root) = make_cache();
+        let (p1, h1) = cache.image_path("https://i.ytimg.com/vi/abc/hq.jpg");
+        let (p2, h2) = cache.image_path("https://i.ytimg.com/vi/xyz/hq.jpg");
+        assert_ne!(p1, p2);
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn ttl_jitter_is_within_window() {
+        // Jitter must always fall in [BASE_TTL, BASE_TTL + MAX_JITTER).
+        let h = [0u8; 32];
+        let t = ttl_for(&h);
+        assert!(t >= BASE_TTL_SECS);
+        assert!(t < BASE_TTL_SECS + MAX_JITTER_SECS);
+
+        let h2 = [0xff, 0xff];
+        let t2 = ttl_for(&h2);
+        assert!(t2 >= BASE_TTL_SECS);
+        assert!(t2 < BASE_TTL_SECS + MAX_JITTER_SECS);
+    }
+
+    #[test]
+    fn ttl_jitter_is_stable_for_same_hash() {
+        // Must be deterministic so an entry doesn't flip to expired mid-run.
+        let h = [0x42, 0x13, 0x37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(ttl_for(&h), ttl_for(&h));
+    }
+
+    #[test]
+    fn track_roundtrip() {
+        let (cache, _root) = make_cache();
+        cache.put_track("dQw4w9WgXcQ", r#"{"title":"x"}"#).unwrap();
+        let got = cache.get_track("dQw4w9WgXcQ").unwrap();
+        assert_eq!(got, Some(r#"{"title":"x"}"#.to_string()));
+    }
+
+    #[test]
+    fn track_missing_returns_none() {
+        let (cache, _root) = make_cache();
+        assert_eq!(cache.get_track("nope").unwrap(), None);
+    }
+
+    #[test]
+    fn put_get_track_duration_roundtrip() {
+        let (cache, _root) = make_cache();
+        cache.put_track_duration("abc123", 214.5);
+        assert_eq!(cache.get_track_duration("abc123"), Some(214.5));
+    }
+
+    #[test]
+    fn put_track_duration_rejects_empty_id_and_non_positive() {
+        let (cache, _root) = make_cache();
+        cache.put_track_duration("", 10.0);
+        cache.put_track_duration("abc", 0.0);
+        cache.put_track_duration("abc", -5.0);
+        assert_eq!(cache.get_track_duration(""), None);
+        assert_eq!(cache.get_track_duration("abc"), None);
+    }
+
+    #[test]
+    fn stats_reflect_writes() {
+        let (cache, _root) = make_cache();
+        cache.put_track("a", r#"{"x":1}"#).unwrap();
+        cache.put_track("b", r#"{"y":2}"#).unwrap();
+        let stats = cache.stats().unwrap();
+        assert_eq!(stats.track_count, 2);
+        assert!(stats.track_bytes > 0);
+        assert_eq!(stats.image_count, 0);
+        assert_eq!(stats.max_bytes, MAX_IMAGE_CACHE_BYTES);
+    }
+
+    #[tokio::test]
+    async fn clear_removes_tracks_and_returns_freed_bytes() {
+        let (cache, _root) = make_cache();
+        cache.put_track("a", r#"{"x":1}"#).unwrap();
+        cache.put_track("b", r#"{"y":2}"#).unwrap();
+        let before = cache.stats().unwrap().total_bytes;
+        let freed = cache.clear().await.unwrap();
+        assert_eq!(freed, before);
+        let after = cache.stats().unwrap();
+        assert_eq!(after.track_count, 0);
+        assert_eq!(after.total_bytes, 0);
+    }
+
+    #[test]
+    fn is_expired_true_for_missing_file() {
+        let missing = std::env::temp_dir().join("vibeytm-definitely-missing-xyz");
+        let _ = fs::remove_file(&missing);
+        assert!(Cache::is_expired(&missing, &[0u8; 32]));
+    }
+}
