@@ -20,12 +20,14 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
   // If we already have cached data, skip the loading spinner on remount —
   // render the cache immediately.
   const [isLoading, setIsLoading] = useState(exploreCache === null);
+  // Separate flag for explicit user-triggered refreshes so the button can
+  // show feedback (spin + disabled) without swapping out the whole page.
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchExplore = useCallback(() => {
-    // Only show the loader when we have nothing to display — otherwise
-    // refresh silently and swap in the new data when it arrives.
+  const fetchExplore = useCallback((userInitiated = false) => {
     if (exploreCache === null) setIsLoading(true);
+    if (userInitiated) setIsRefreshing(true);
     setError(null);
     browseApi
       .getExplore()
@@ -33,10 +35,12 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
         exploreCache = data;
         setShelves(data);
         setIsLoading(false);
+        setIsRefreshing(false);
       })
       .catch((e) => {
         setError(String(e));
         setIsLoading(false);
+        setIsRefreshing(false);
       });
   }, []);
 
@@ -84,7 +88,7 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
           Failed to load explore content
         </p>
         <button
-          onClick={fetchExplore}
+          onClick={() => fetchExplore()}
           style={{
             background: 'none',
             border: '1px solid var(--color-border)',
@@ -137,18 +141,41 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
           Explore
         </h1>
         <button
-          onClick={fetchExplore}
+          onClick={() => {
+            if (isRefreshing) return;
+            // Drop the cache so the fetch can't short-circuit against a
+            // stale payload, and force a fresh request.
+            exploreCache = null;
+            fetchExplore(true);
+          }}
+          disabled={isRefreshing}
+          aria-busy={isRefreshing}
           style={{
             background: 'none',
             border: '1px solid var(--color-border)',
             borderRadius: 'var(--radius-md)',
             padding: 'var(--space-1) var(--space-3)',
             color: 'var(--color-text-tertiary)',
-            cursor: 'pointer',
+            cursor: isRefreshing ? 'wait' : 'pointer',
             fontSize: 'var(--text-sm)',
+            opacity: isRefreshing ? 0.6 : 1,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--space-1)',
           }}
         >
-          ↻ Refresh
+          <span
+            style={{
+              display: 'inline-block',
+              transition: 'transform var(--duration-normal) var(--ease-out)',
+              animation: isRefreshing
+                ? 'vibeytm-spin 0.9s linear infinite'
+                : undefined,
+            }}
+          >
+            ↻
+          </span>
+          {isRefreshing ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
 
