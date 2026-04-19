@@ -1,3 +1,13 @@
+<p align="center">
+  <img src="docs/screenshot-home.png" alt="VibeYTM" width="800">
+</p>
+
+<p align="center">
+  <a href="https://github.com/codeeatsleep2nd/VibeYTM/releases/latest"><img src="https://img.shields.io/github/v/release/codeeatsleep2nd/VibeYTM?style=flat-square&color=red" alt="Release"></a>
+  <img src="https://img.shields.io/badge/platform-macOS-lightgrey?style=flat-square" alt="Platform">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/codeeatsleep2nd/VibeYTM?style=flat-square" alt="License"></a>
+</p>
+
 # VibeYTM
 
 An Apple Music-style YouTube Music desktop app built with Tauri, React, and Rust.
