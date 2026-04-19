@@ -12,15 +12,14 @@ const MIN_SUGGEST_LENGTH = 3;
 const MAX_SUGGESTIONS = 5;
 const PREVIEW_TRACK_COUNT = 3;
 
-const CATEGORY_TABS = ['Songs', 'Albums', 'Artists', 'Videos', 'Playlists'] as const;
+const CATEGORY_TABS = ['Songs', 'Albums', 'Artists', 'Playlists'] as const;
 type CategoryTab = (typeof CATEGORY_TABS)[number];
 
 const CATEGORY_PARAMS: Record<CategoryTab, string | undefined> = {
   Songs: 'EgWKAQIIAWoSEA4QCRAKEAUQBBADEBUQEBAR',
   Albums: 'EgWKAQIYAWoSEA4QCRAKEAUQBBADEBUQEBAR',
   Artists: 'EgWKAQIgAWoSEA4QCRAKEAUQBBADEBUQEBAR',
-  Videos: 'EgWKAQIQAWoSEA4QCRAKEAUQBBADEBUQEBAR',
-  Playlists: undefined,
+  Playlists: 'EgWKAQIoAWoSEA4QCRAKEAUQBBADEBUQEBAR',
 };
 
 interface SearchPageProps {
@@ -687,13 +686,6 @@ export const SearchPage: FC<SearchPageProps> = ({
         </>
       )}
 
-      {!isLoading && results && activeCategory === 'Videos' && (
-        <ComingSoon label="Video search" />
-      )}
-
-      {!isLoading && results && activeCategory === 'Playlists' && (
-        <ComingSoon label="Playlist search" />
-      )}
     </section>
   );
 };
