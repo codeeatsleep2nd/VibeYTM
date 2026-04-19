@@ -16,8 +16,11 @@ use crate::state::player::{PlaybackStatus, RepeatMode, SharedPlayerState, TrackI
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BridgeState {
+    #[serde(default)]
     status: String,
+    #[serde(default)]
     title: String,
+    #[serde(default)]
     artist: String,
     #[serde(default)]
     album: String,
@@ -37,6 +40,14 @@ struct BridgeState {
     repeat_mode: String,
     #[serde(default)]
     is_liked: bool,
+    /// Only present once the sign-in state is determined. Tri-state:
+    /// Some(true) = signed in, Some(false) = signed out, None = unknown.
+    #[serde(default)]
+    logged_in: Option<bool>,
+    /// True when the bridge had only the login bit to report (no player DOM
+    /// yet). We skip track/position processing in that case.
+    #[serde(default)]
+    login_only: bool,
 }
 
 fn parse_repeat(s: &str) -> RepeatMode {
@@ -50,7 +61,11 @@ fn parse_repeat(s: &str) -> RepeatMode {
 const READ_STATE_JS: &str = r#"
 (function(){
   var s = window.__VIBEYTM_STATE__;
-  if (s) { return JSON.stringify(s); }
+  var li = window.__VIBEYTM_LOGGED_IN__;
+  // loggedIn is tracked even when the player DOM is absent (e.g. during
+  // the Google sign-in redirect), so always wrap it through.
+  if (s) { return JSON.stringify(Object.assign({}, s, { loggedIn: li })); }
+  if (li === true || li === false) { return JSON.stringify({ loginOnly: true, loggedIn: li }); }
   return "null";
 })();
 "#;
@@ -66,6 +81,7 @@ fn get_poller_result() -> &'static Mutex<Option<String>> {
 pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<EventBus>) {
     let last_video_id = Arc::new(TokioMutex::new(String::new()));
     let last_status = Arc::new(TokioMutex::new(String::new()));
+    let last_logged_in = Arc::new(TokioMutex::new(Option::<bool>::None));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Polling thread: schedules eval on main thread, reads result from static
@@ -136,7 +152,20 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 Err(_) => continue,
             };
 
-            if bs.title.is_empty() {
+            // Login-state emission is always attempted, even on the login-only
+            // frame, because that frame is the whole point of the check (player
+            // DOM doesn't exist yet on the sign-in page).
+            if let Some(cur) = bs.logged_in {
+                let mut last_li = last_logged_in.lock().await;
+                if *last_li != Some(cur) {
+                    *last_li = Some(cur);
+                    drop(last_li);
+                    let _ = app.emit("player:login-changed", &cur);
+                }
+            }
+
+            // Login-only frames carry no track data — skip the rest.
+            if bs.login_only || bs.title.is_empty() {
                 continue;
             }
 

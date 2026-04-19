@@ -1,5 +1,6 @@
-import { type FC, useState } from 'react';
+import { type FC, useEffect, useRef, useState } from 'react';
 import { ytmApi } from '../../lib/ipc';
+import { useTauriEvent } from '../../hooks/useTauriEvent';
 
 interface LoginPageProps {
   onLoggedIn: () => void;
@@ -7,6 +8,31 @@ interface LoginPageProps {
 
 export const LoginPage: FC<LoginPageProps> = ({ onLoggedIn }) => {
   const [error, setError] = useState<string | null>(null);
+
+  // Latch so repeated events (the poller re-emits on each value transition)
+  // only trigger the handoff once.
+  const handedOffRef = useRef(false);
+
+  const autoAdvance = () => {
+    if (handedOffRef.current) return;
+    handedOffRef.current = true;
+    ytmApi.hideYtm().catch(() => {
+      // If hiding fails, proceed anyway — the user can close it manually.
+    });
+    onLoggedIn();
+  };
+
+  useTauriEvent<boolean>('player:login-changed', (isLoggedIn) => {
+    if (isLoggedIn) autoAdvance();
+  });
+
+  // Also nudge the bridge to re-check quickly so a user who is already
+  // signed in (returning user) isn't forced to wait for the next poll cycle.
+  useEffect(() => {
+    ytmApi.injectBridge().catch(() => {
+      // Bridge was already injected via Tauri init script — safe to ignore.
+    });
+  }, []);
 
   const handleShowYtm = async () => {
     setError(null);

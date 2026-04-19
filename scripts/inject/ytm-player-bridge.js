@@ -7,6 +7,10 @@
 
   window.__VIBEYTM_STATE__ = null;
   window.__VIBEYTM_DEBUG__ = [];
+  // Tri-state: true = signed in, false = signed out, null = undetermined.
+  // Tracked independently of __VIBEYTM_STATE__ because we need it before the
+  // music player DOM exists (on the sign-in page there is no player yet).
+  window.__VIBEYTM_LOGGED_IN__ = null;
 
   function log(msg) {
     window.__VIBEYTM_DEBUG__.push(new Date().toISOString() + ': ' + msg);
@@ -263,10 +267,35 @@
     }
   }
 
+  /**
+   * Detect YouTube Music sign-in state from the nav bar. Runs on a 1.5s
+   * interval regardless of player presence because on the sign-in flow the
+   * music player DOM hasn't been constructed yet.
+   */
+  function checkLoginStatus() {
+    try {
+      var avatar = document.querySelector(
+        'ytmusic-nav-bar #avatar-btn, ytmusic-nav-bar ytmusic-settings-button img'
+      );
+      var signIn = document.querySelector(
+        'ytmusic-nav-bar a[href*="accounts.google.com"], ytmusic-nav-bar a[aria-label*="Sign in" i]'
+      );
+      if (avatar) {
+        window.__VIBEYTM_LOGGED_IN__ = true;
+      } else if (signIn) {
+        window.__VIBEYTM_LOGGED_IN__ = false;
+      }
+    } catch (e) {
+      // Leave last-known value in place on transient DOM errors.
+    }
+  }
+
   if (window.location.hostname === 'music.youtube.com') {
     log('bridge loaded on ' + window.location.href);
     log('__TAURI__ available: ' + (typeof window.__TAURI__ !== 'undefined'));
     log('__TAURI_INTERNALS__ available: ' + (typeof window.__TAURI_INTERNALS__ !== 'undefined'));
     waitForPlayer();
+    setInterval(checkLoginStatus, 1500);
+    checkLoginStatus();
   }
 })();
