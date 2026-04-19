@@ -312,7 +312,14 @@ export const PlayerBar: FC<PlayerBarProps> = ({
             min={0}
             max={duration || 1}
             value={safePosition}
-            onChange={(e) => playerApi.seek(Number(e.target.value))}
+            onChange={(e) => {
+              // Optimistic local update so the thumb tracks the cursor without
+              // waiting for the backend round-trip. The next POSITION_UPDATED
+              // event will reconcile with authoritative time.
+              const next = Number(e.target.value);
+              applyOptimistic({ positionSecs: next });
+              playerApi.seek(next);
+            }}
             style={{
               flex: 1,
               height: '4px',
