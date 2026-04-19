@@ -268,7 +268,11 @@ export const PlayerBar: FC<PlayerBarProps> = ({
             size="var(--text-base)"
             isActive={isShuffled}
           />
-          <TransportButton label={'\u25C4\u25C4'} onClick={() => playerApi.previous()} />
+          <TransportButton
+            label={'\u23EE'}
+            ariaLabel="Previous"
+            onClick={() => playerApi.previous()}
+          />
           <button
             onClick={handleTogglePlay}
             aria-label={isPlaying ? 'Pause' : 'Play'}
@@ -293,7 +297,11 @@ export const PlayerBar: FC<PlayerBarProps> = ({
           >
             {isPlaying ? '\u275A\u275A' : '\u25B6'}
           </button>
-          <TransportButton label={'\u25BA\u25BA'} onClick={() => playerApi.next()} />
+          <TransportButton
+            label={'\u23ED'}
+            ariaLabel="Next"
+            onClick={() => playerApi.next()}
+          />
           <TransportButton
             label={<RepeatIcon mode={repeatMode} />}
             ariaLabel={REPEAT_ARIA[repeatMode]}
