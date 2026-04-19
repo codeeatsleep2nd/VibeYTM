@@ -385,3 +385,70 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bridge_state_parses_account_camel_case() {
+        // The JS side serializes with `avatarUrl` (camelCase). Rust must
+        // accept that shape via the struct-level rename_all.
+        let json = r#"{
+            "title": "Song",
+            "videoId": "abc12345678",
+            "loggedIn": true,
+            "account": { "name": "Jane", "avatarUrl": "https://x/a.jpg" }
+        }"#;
+        let bs: BridgeState = serde_json::from_str(json).unwrap();
+        let acc = bs.account.expect("account should be present");
+        assert_eq!(acc.name, "Jane");
+        assert_eq!(acc.avatar_url, "https://x/a.jpg");
+    }
+
+    #[test]
+    fn bridge_state_parses_without_account() {
+        // Login-only frame: no account yet. Must still deserialize cleanly.
+        let json = r#"{"loginOnly": true, "loggedIn": false}"#;
+        let bs: BridgeState = serde_json::from_str(json).unwrap();
+        assert!(bs.account.is_none());
+        assert!(bs.login_only);
+        assert_eq!(bs.logged_in, Some(false));
+    }
+
+    #[test]
+    fn bridge_account_missing_fields_default_to_empty() {
+        let json = r#"{"account": {}}"#;
+        let bs: BridgeState = serde_json::from_str(json).unwrap();
+        let acc = bs.account.unwrap();
+        assert_eq!(acc.name, "");
+        assert_eq!(acc.avatar_url, "");
+    }
+
+    #[test]
+    fn bridge_account_equality_drives_change_detection() {
+        // Poller compares last_account to current to decide whether to emit.
+        let a = BridgeAccount { name: "A".into(), avatar_url: "u".into() };
+        let b = BridgeAccount { name: "A".into(), avatar_url: "u".into() };
+        let c = BridgeAccount { name: "A".into(), avatar_url: "v".into() };
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn parse_repeat_handles_all_modes() {
+        assert_eq!(parse_repeat("all"), RepeatMode::All);
+        assert_eq!(parse_repeat("one"), RepeatMode::One);
+        assert_eq!(parse_repeat("none"), RepeatMode::None);
+        // Unknown/empty strings fall through to None (safe default).
+        assert_eq!(parse_repeat(""), RepeatMode::None);
+        assert_eq!(parse_repeat("garbage"), RepeatMode::None);
+    }
+
+    #[test]
+    fn bridge_state_parses_debug_vec() {
+        let json = r#"{"debug": ["one","two"]}"#;
+        let bs: BridgeState = serde_json::from_str(json).unwrap();
+        assert_eq!(bs.debug, vec!["one", "two"]);
+    }
+}
