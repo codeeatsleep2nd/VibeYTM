@@ -20,6 +20,8 @@ const App: FC = () => {
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
+  // Remembered so "Settings → Settings" toggles back to where the user was.
+  const previousPathRef = useRef<string>('home');
 
   // Lock out rapid second toggles within the animation window so a stray
   // double-click never makes the overlay flash open-and-close.
@@ -101,6 +103,18 @@ const App: FC = () => {
       onNavigate={(path) => {
         setViewingPlaylist(null);
         setIsNowPlayingOpen(false);
+        // Settings tab toggles: clicking it while open returns to the
+        // previous view instead of re-rendering the same page.
+        if (path === 'settings' && currentPath === 'settings') {
+          const fallback = previousPathRef.current === 'settings'
+            ? 'home'
+            : previousPathRef.current;
+          setCurrentPath(fallback);
+          return;
+        }
+        if (path !== currentPath) {
+          previousPathRef.current = currentPath;
+        }
         setCurrentPath(path);
       }}
       nowPlayingOpen={isNowPlayingOpen}
