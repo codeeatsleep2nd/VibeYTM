@@ -154,7 +154,11 @@ export const PlayerBar: FC<PlayerBarProps> = ({
     });
   };
   const duration = track?.durationSecs ?? 0;
-  const progress = duration > 0 ? positionSecs / duration : 0;
+  // Clamp position so a momentary bridge/track mismatch can't pin the bar at
+  // 100% (see usePlayerState: we also zero position on track-change, but the
+  // clamp is the last line of defense).
+  const safePosition = duration > 0 ? Math.min(positionSecs, duration) : positionSecs;
+  const progress = duration > 0 ? Math.min(1, Math.max(0, safePosition / duration)) : 0;
 
   return (
     <footer
@@ -301,13 +305,13 @@ export const PlayerBar: FC<PlayerBarProps> = ({
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', width: '100%', maxWidth: '480px' }}>
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', minWidth: '36px', textAlign: 'right' }}>
-            {formatTime(positionSecs)}
+            {formatTime(safePosition)}
           </span>
           <input
             type="range"
             min={0}
             max={duration || 1}
-            value={positionSecs}
+            value={safePosition}
             onChange={(e) => playerApi.seek(Number(e.target.value))}
             style={{
               flex: 1,

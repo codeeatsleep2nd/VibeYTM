@@ -35,7 +35,11 @@ export function usePlayerState(): UsePlayerState {
   }, []);
 
   useTauriEvent<TrackInfo>(EVENTS.TRACK_CHANGED, (track) => {
-    setState((prev) => ({ ...prev, track }));
+    // Reset position alongside the track swap. The bridge emits TRACK_CHANGED
+    // and POSITION_UPDATED from separate cycles, so without this the progress
+    // bar briefly renders with the old position over the new (shorter)
+    // duration — which pins it visually at 100%.
+    setState((prev) => ({ ...prev, track, positionSecs: 0 }));
   });
 
   useTauriEvent<PlaybackStatus>(EVENTS.STATUS_CHANGED, (status) => {
