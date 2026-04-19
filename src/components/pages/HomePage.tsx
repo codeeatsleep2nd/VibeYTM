@@ -32,6 +32,12 @@ const MOOD_TABS = [
 
 type MoodTab = (typeof MOOD_TABS)[number];
 
+// Module-level so the mood selection survives tab-switch remounts — users
+// expect returning to Home to land them back on the tab they were browsing,
+// not snap-reset to "All".
+let lastActiveMood: MoodTab = 'All';
+let cachedMoodSongs: { mood: MoodTab; songs: TrackInfo[] } | null = null;
+
 const SONGS_FILTER = 'EgWKAQIIAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 
 const getGreeting = (): string => {
@@ -44,9 +50,18 @@ const getGreeting = (): string => {
 export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist }) => {
   const [shelves, setShelves] = useState<Shelf[]>(cachedShelves ?? []);
   const [isLoading, setIsLoading] = useState(!cachedShelves);
-  const [activeMood, setActiveMood] = useState<MoodTab>('All');
-  const [moodSongs, setMoodSongs] = useState<TrackInfo[]>([]);
+  const [activeMood, setActiveMood] = useState<MoodTab>(lastActiveMood);
+  const [moodSongs, setMoodSongs] = useState<TrackInfo[]>(
+    cachedMoodSongs && cachedMoodSongs.mood === lastActiveMood
+      ? cachedMoodSongs.songs
+      : [],
+  );
   const [isMoodLoading, setIsMoodLoading] = useState(false);
+
+  const selectMood = useCallback((mood: MoodTab) => {
+    lastActiveMood = mood;
+    setActiveMood(mood);
+  }, []);
 
   const fetchHome = useCallback((force = false) => {
     // Always force on the very first load of the app session
@@ -83,6 +98,14 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist }) => {
       return;
     }
 
+    // If we still have the same mood's songs cached from a previous visit,
+    // render them immediately and skip the fetch.
+    if (cachedMoodSongs && cachedMoodSongs.mood === activeMood) {
+      setMoodSongs(cachedMoodSongs.songs);
+      setIsMoodLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setIsMoodLoading(true);
 
@@ -90,6 +113,7 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist }) => {
       .search(activeMood, SONGS_FILTER)
       .then((results) => {
         if (!cancelled) {
+          cachedMoodSongs = { mood: activeMood, songs: results.songs };
           setMoodSongs(results.songs);
           setIsMoodLoading(false);
         }
@@ -194,7 +218,7 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist }) => {
           return (
             <button
               key={tab}
-              onClick={() => setActiveMood(tab)}
+              onClick={() => selectMood(tab)}
               style={{
                 flexShrink: 0,
                 padding: 'var(--space-2) var(--space-4)',
