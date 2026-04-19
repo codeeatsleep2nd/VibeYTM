@@ -9,6 +9,13 @@ import { useTauriEvent } from './useTauriEvent';
 // values from the YTM bridge poller.
 const VOLUME_ECHO_WINDOW_MS = 500;
 
+// After a manual seek, POSITION_UPDATED events emitted before YTM finished
+// seeking carry pre-seek timestamps that would visually bounce the thumb
+// back to the old position. Drop those within this reconciliation window
+// ONLY if they are far from the seek target.
+const SEEK_RECONCILE_WINDOW_MS = 800;
+const SEEK_TOLERANCE_SECS = 2;
+
 const DEFAULT_STATE: PlayerState = {
   status: 'idle',
   track: null,
@@ -27,11 +34,18 @@ export interface UsePlayerState extends PlayerState {
    * so the UI updates instantly. The next backend event overwrites it.
    */
   applyOptimistic: (patch: Partial<PlayerState>) => void;
+  /**
+   * Record a user-initiated seek target. Lets the POSITION_UPDATED handler
+   * discard stale pre-seek echoes that would otherwise bounce the thumb.
+   */
+  markSeek: (target: number) => void;
 }
 
 export function usePlayerState(): UsePlayerState {
   const [state, setState] = useState<PlayerState>(DEFAULT_STATE);
   const lastLocalVolumeAtRef = useRef(0);
+  const lastSeekAtRef = useRef(0);
+  const seekTargetRef = useRef(0);
 
   useEffect(() => {
     playerApi.getState().then((s) => {
@@ -54,6 +68,17 @@ export function usePlayerState(): UsePlayerState {
   });
 
   useTauriEvent<number>(EVENTS.POSITION_UPDATED, (positionSecs) => {
+    // Reject pre-seek stragglers: if a position event arrives right after
+    // a manual seek and is still far from the seek target, it's stale data
+    // from before YTM actually seeked. The next event that lands near the
+    // target (or after the reconcile window) will resume normal flow.
+    const sinceSeek = Date.now() - lastSeekAtRef.current;
+    if (
+      sinceSeek < SEEK_RECONCILE_WINDOW_MS &&
+      Math.abs(positionSecs - seekTargetRef.current) > SEEK_TOLERANCE_SECS
+    ) {
+      return;
+    }
     setState((prev) => ({ ...prev, positionSecs }));
   });
 
@@ -90,5 +115,10 @@ export function usePlayerState(): UsePlayerState {
     setState((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  return { ...state, applyOptimistic };
+  const markSeek = useCallback((target: number) => {
+    lastSeekAtRef.current = Date.now();
+    seekTargetRef.current = target;
+  }, []);
+
+  return { ...state, applyOptimistic, markSeek };
 }

@@ -119,7 +119,7 @@ export const PlayerBar: FC<PlayerBarProps> = ({
   nowPlayingOpen = false,
 }) => {
   const state = usePlayerState();
-  const { track, status, positionSecs, volume, isShuffled, repeatMode, isLiked, applyOptimistic } = state;
+  const { track, status, positionSecs, volume, isShuffled, repeatMode, isLiked, applyOptimistic, markSeek } = state;
   const isPlaying = status === 'playing';
 
   const handleTogglePlay = () => {
@@ -327,9 +327,11 @@ export const PlayerBar: FC<PlayerBarProps> = ({
             value={duration > 0 ? safePosition : 0}
             onChange={(e) => {
               // Optimistic local update so the thumb tracks the cursor without
-              // waiting for the backend round-trip. The next POSITION_UPDATED
-              // event will reconcile with authoritative time.
+              // waiting for the backend round-trip. markSeek lets the hook
+              // discard stale pre-seek position echoes from the bridge poller
+              // that would otherwise bounce the thumb back to the old spot.
               const next = Number(e.target.value);
+              markSeek(next);
               applyOptimistic({ positionSecs: next });
               playerApi.seek(next);
             }}
