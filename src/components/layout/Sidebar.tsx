@@ -70,6 +70,9 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => (
       width: 'var(--sidebar-width)',
       height: '100%',
       paddingTop: 'var(--title-bar-height)',
+      // PlayerBar is position: fixed at the bottom and otherwise occludes
+      // the Settings row that marginTop: auto pushes to the sidebar floor.
+      paddingBottom: 'var(--player-bar-height)',
       background: 'var(--glass-bg)',
       backdropFilter: `blur(var(--glass-blur))`,
       WebkitBackdropFilter: `blur(var(--glass-blur))`,
