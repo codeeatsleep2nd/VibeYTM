@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use tauri::AppHandle;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::events::bus::EventBus;
 use crate::events::types::{AppEvent, PlaybackCommand};
@@ -34,7 +34,13 @@ impl Integration for GlobalShortcutsIntegration {
         let register = |chord: &str, cmd: PlaybackCommand, bus: Arc<EventBus>| {
             let res = app
                 .global_shortcut()
-                .on_shortcut(chord, move |_app, _shortcut, _event| {
+                .on_shortcut(chord, move |_app, _shortcut, event| {
+                    // Fires on both Pressed and Released — without this guard
+                    // toggle_play ran twice per keypress and users saw
+                    // pause-then-play in one keystroke.
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
                     bus.emit(AppEvent::PlaybackCommand(cmd));
                 });
             match res {
