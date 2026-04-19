@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PlayerState, PlaybackStatus, RepeatMode, TrackInfo } from '../lib/types';
 import { playerApi } from '../lib/ipc';
 import { EVENTS } from '../lib/events';
 import { useTauriEvent } from './useTauriEvent';
+
+// Drop VOLUME_CHANGED echoes that arrive within this window of a local
+// optimistic set, so fast drags aren't overwritten by stale intermediate
+// values from the YTM bridge poller.
+const VOLUME_ECHO_WINDOW_MS = 500;
 
 const DEFAULT_STATE: PlayerState = {
   status: 'idle',
@@ -26,6 +31,7 @@ export interface UsePlayerState extends PlayerState {
 
 export function usePlayerState(): UsePlayerState {
   const [state, setState] = useState<PlayerState>(DEFAULT_STATE);
+  const lastLocalVolumeAtRef = useRef(0);
 
   useEffect(() => {
     playerApi.getState().then((s) => {
@@ -52,6 +58,12 @@ export function usePlayerState(): UsePlayerState {
   });
 
   useTauriEvent<number>(EVENTS.VOLUME_CHANGED, (volume) => {
+    // During a local drag, the bridge poller can emit intermediate values
+    // from before the latest set_volume took effect. Those echoes would
+    // overwrite the fresh optimistic state and the thumb would jitter.
+    if (Date.now() - lastLocalVolumeAtRef.current < VOLUME_ECHO_WINDOW_MS) {
+      return;
+    }
     setState((prev) => ({ ...prev, volume }));
   });
 
@@ -72,6 +84,9 @@ export function usePlayerState(): UsePlayerState {
   });
 
   const applyOptimistic = useCallback((patch: Partial<PlayerState>) => {
+    if (patch.volume !== undefined) {
+      lastLocalVolumeAtRef.current = Date.now();
+    }
     setState((prev) => ({ ...prev, ...patch }));
   }, []);
 
