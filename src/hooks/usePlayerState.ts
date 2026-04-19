@@ -16,6 +16,12 @@ const VOLUME_ECHO_WINDOW_MS = 500;
 const SEEK_RECONCILE_WINDOW_MS = 800;
 const SEEK_TOLERANCE_SECS = 2;
 
+// After a track change, the bridge poller can still emit one or two
+// POSITION_UPDATED events from the OLD track. If the new track is shorter
+// than the old position, the clamp in PlayerBar pins the thumb at 100%
+// for a frame before normal updates arrive. Drop those stragglers.
+const TRACK_CHANGE_RECONCILE_WINDOW_MS = 1000;
+
 const DEFAULT_STATE: PlayerState = {
   status: 'idle',
   track: null,
@@ -46,6 +52,7 @@ export function usePlayerState(): UsePlayerState {
   const lastLocalVolumeAtRef = useRef(0);
   const lastSeekAtRef = useRef(0);
   const seekTargetRef = useRef(0);
+  const lastTrackChangeAtRef = useRef(0);
 
   useEffect(() => {
     playerApi.getState().then((s) => {
@@ -60,6 +67,7 @@ export function usePlayerState(): UsePlayerState {
     // and POSITION_UPDATED from separate cycles, so without this the progress
     // bar briefly renders with the old position over the new (shorter)
     // duration — which pins it visually at 100%.
+    lastTrackChangeAtRef.current = Date.now();
     setState((prev) => ({ ...prev, track, positionSecs: 0 }));
   });
 
@@ -68,15 +76,29 @@ export function usePlayerState(): UsePlayerState {
   });
 
   useTauriEvent<number>(EVENTS.POSITION_UPDATED, (positionSecs) => {
+    const now = Date.now();
     // Reject pre-seek stragglers: if a position event arrives right after
     // a manual seek and is still far from the seek target, it's stale data
     // from before YTM actually seeked. The next event that lands near the
     // target (or after the reconcile window) will resume normal flow.
-    const sinceSeek = Date.now() - lastSeekAtRef.current;
     if (
-      sinceSeek < SEEK_RECONCILE_WINDOW_MS &&
+      now - lastSeekAtRef.current < SEEK_RECONCILE_WINDOW_MS &&
       Math.abs(positionSecs - seekTargetRef.current) > SEEK_TOLERANCE_SECS
     ) {
+      return;
+    }
+    // Reject old-track stragglers: right after TRACK_CHANGED, drop any
+    // POSITION_UPDATED whose value exceeds the new track's duration — those
+    // timestamps belong to the previous song and cause the "jump to 100%
+    // then back to 0" flash on track switches.
+    if (now - lastTrackChangeAtRef.current < TRACK_CHANGE_RECONCILE_WINDOW_MS) {
+      setState((prev) => {
+        const duration = prev.track?.durationSecs ?? 0;
+        if (duration > 0 && positionSecs > duration) {
+          return prev;
+        }
+        return { ...prev, positionSecs };
+      });
       return;
     }
     setState((prev) => ({ ...prev, positionSecs }));
