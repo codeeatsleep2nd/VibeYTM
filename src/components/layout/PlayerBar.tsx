@@ -378,7 +378,14 @@ export const PlayerBar: FC<PlayerBarProps> = ({
             min={0}
             max={100}
             value={Math.round(volume * 100)}
-            onChange={(e) => playerApi.setVolume(Number(e.target.value) / 100)}
+            onChange={(e) => {
+              // Optimistic local update so the thumb and gradient track the
+              // cursor on click/drag instead of waiting for the backend →
+              // YTM → VOLUME_CHANGED round-trip.
+              const next = Number(e.target.value) / 100;
+              applyOptimistic({ volume: next });
+              playerApi.setVolume(next);
+            }}
             style={{
               width: '80px',
               height: '4px',
