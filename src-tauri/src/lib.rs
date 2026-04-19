@@ -99,6 +99,17 @@ pub fn run() {
             })?;
             app.manage(cache);
 
+            // Restore last session (track + position + volume) so the
+            // bottom player shows where the user left off. No autoplay —
+            // status stays idle until the user hits Play.
+            if let Some(session) = state::persistence::load(app.handle()) {
+                let state_for_restore = player_state.clone();
+                tauri::async_runtime::spawn(async move {
+                    state::persistence::apply(&state_for_restore, session).await;
+                });
+            }
+            state::persistence::spawn_saver(app.handle().clone(), player_state.clone());
+
             let integrations = integrations::register_integrations();
             for integration in integrations {
                 let bus = bus.clone();
