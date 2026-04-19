@@ -334,6 +334,14 @@ export const PlayerBar: FC<PlayerBarProps> = ({
               markSeek(next);
               applyOptimistic({ positionSecs: next });
               playerApi.seek(next);
+              // If the user scrubs while paused, treat the click as "resume
+              // here" — standard behavior across music players.
+              if (!isPlaying) {
+                applyOptimistic({ status: 'playing' });
+                playerApi.play().catch(() => {
+                  applyOptimistic({ status: 'paused' });
+                });
+              }
             }}
             style={{
               flex: 1,
