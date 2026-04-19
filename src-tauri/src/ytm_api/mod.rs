@@ -197,6 +197,7 @@ const FILTER_ALBUMS: &str = "EgWKAQIYAWoSEA4QCRAKEAUQBBADEBUQEBAR";
 const FILTER_ARTISTS: &str = "EgWKAQIgAWoSEA4QCRAKEAUQBBADEBUQEBAR";
 #[allow(dead_code)]
 const FILTER_VIDEOS: &str = "EgWKAQIQAWoSEA4QCRAKEAUQBBADEBUQEBAR";
+const FILTER_PLAYLISTS: &str = "EgWKAQIoAWoSEA4QCRAKEAUQBBADEBUQEBAR";
 
 /// Extract autocomplete suggestion strings from a `music/get_search_suggestions`
 /// response. The response wraps each suggestion in a `searchSuggestionRenderer`
@@ -229,7 +230,7 @@ fn parse_search_results(data: &Value, filter: Option<&str>) -> SearchResults {
     let mut songs = Vec::new();
     let mut albums = Vec::new();
     let mut artists = Vec::new();
-    let playlists = Vec::new();
+    let mut playlists = Vec::new();
     let mut top_album: Option<AlbumSummary> = None;
 
     let tabs = &data["contents"]["tabbedSearchResultsRenderer"]["tabs"];
@@ -289,6 +290,11 @@ fn parse_search_results(data: &Value, filter: Option<&str>) -> SearchResults {
                         Some(FILTER_ARTISTS) => {
                             if let Some(artist) = parse_artist_from_list_item(renderer) {
                                 artists.push(artist);
+                            }
+                        }
+                        Some(FILTER_PLAYLISTS) => {
+                            if let Some(pl) = parse_playlist_from_list_item(renderer) {
+                                playlists.push(pl);
                             }
                         }
                         _ => {
@@ -997,6 +1003,63 @@ fn parse_artist_from_list_item(renderer: &Value) -> Option<ArtistSummary> {
         name,
         avatar_url,
         subscriber_count,
+    })
+}
+
+/// Parse a playlist from a `musicResponsiveListItemRenderer` in filtered search results.
+fn parse_playlist_from_list_item(renderer: &Value) -> Option<PlaylistSummary> {
+    let flex_columns = renderer["flexColumns"].as_array()?;
+
+    let title = flex_columns
+        .first()
+        .map(|col| runs_text(&col["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"]))
+        .unwrap_or_default();
+
+    if title.is_empty() {
+        return None;
+    }
+
+    // browseId carries a VL-prefixed playlist ID in the renderer-level
+    // navigationEndpoint; the overlay play button exposes the raw playlistId.
+    let raw_browse = renderer["navigationEndpoint"]["browseEndpoint"]["browseId"]
+        .as_str()
+        .unwrap_or_default();
+    let overlay_playlist = renderer["overlay"]["musicItemThumbnailOverlayRenderer"]["content"]
+        ["musicPlayButtonRenderer"]["playNavigationEndpoint"]["watchPlaylistEndpoint"]["playlistId"]
+        .as_str()
+        .unwrap_or_default();
+
+    let playlist_id = if !overlay_playlist.is_empty() {
+        overlay_playlist.to_string()
+    } else if let Some(stripped) = raw_browse.strip_prefix("VL") {
+        stripped.to_string()
+    } else if !raw_browse.is_empty() {
+        raw_browse.to_string()
+    } else {
+        return None;
+    };
+
+    // Track count — secondary column often reads "Playlist • Author • N songs".
+    let subtitle = flex_columns
+        .get(1)
+        .map(|col| runs_text(&col["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"]))
+        .unwrap_or_default();
+    let track_count = subtitle.split(" \u{2022} ").find_map(|part| {
+        part.trim()
+            .split_whitespace()
+            .next()
+            .and_then(|n| n.parse::<u32>().ok())
+    });
+
+    let artwork_url = best_thumbnail(
+        &renderer["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
+    );
+
+    Some(PlaylistSummary {
+        playlist_id,
+        title,
+        artwork_url,
+        track_count,
     })
 }
 

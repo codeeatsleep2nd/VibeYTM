@@ -605,6 +605,42 @@ export const SearchPage: FC<SearchPageProps> = ({
         </>
       )}
 
+      {!isLoading && results && activeCategory === 'Playlists' && (
+        <>
+          {results.playlists.length > 0 ? (
+            <ShelfRow title="Playlists">
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                  gap: '20px',
+                }}
+              >
+                {results.playlists.map((playlist) => (
+                  <AlbumCard
+                    key={playlist.playlistId}
+                    artworkUrl={playlist.artworkUrl}
+                    title={playlist.title}
+                    subtitle={
+                      playlist.trackCount !== undefined
+                        ? `${playlist.trackCount} tracks`
+                        : ''
+                    }
+                    onClick={() => onOpenPlaylist?.(playlist.playlistId)}
+                    onPlay={() => {
+                      playFirstFromPlaylist(playlist.playlistId);
+                      onOpenPlaylist?.(playlist.playlistId);
+                    }}
+                  />
+                ))}
+              </div>
+            </ShelfRow>
+          ) : (
+            <EmptyCategory label="playlists" />
+          )}
+        </>
+      )}
+
       {!isLoading && results && activeCategory === 'Artists' && (
         <>
           {results.artists.length > 0 ? (
@@ -794,22 +830,3 @@ const EmptyCategory: FC<{ label: string }> = ({ label }) => (
   </div>
 );
 
-const ComingSoon: FC<{ label: string }> = ({ label }) => (
-  <div
-    style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: '200px',
-    }}
-  >
-    <p
-      style={{
-        fontSize: 'var(--text-base)',
-        color: 'var(--color-text-tertiary)',
-      }}
-    >
-      {label} coming soon
-    </p>
-  </div>
-);
