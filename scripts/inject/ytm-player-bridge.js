@@ -405,7 +405,7 @@
         var avatar = (thumbs && thumbs.length) ? thumbs[thumbs.length - 1].url : '';
         if (!name) { log('fetchAccount: empty name'); return; }
         applyAccountInfo({ name: name, avatarUrl: avatar });
-        log('fetchAccount: name="' + name + '"');
+        log('fetchAccount: resolved');
       })
       .catch(function (e) {
         fetchInflight = false;

@@ -98,6 +98,7 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
     let last_status = Arc::new(TokioMutex::new(String::new()));
     let last_logged_in = Arc::new(TokioMutex::new(Option::<bool>::None));
     let last_account = Arc::new(TokioMutex::new(Option::<BridgeAccount>::None));
+    #[cfg(debug_assertions)]
     let last_debug_len = Arc::new(TokioMutex::new(0usize));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
@@ -169,14 +170,16 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 Err(_) => continue,
             };
 
-            // Surface bridge-side debug lines to the Rust log (deduplicated so
-            // we don't spam each cycle).
+            // Surface bridge-side debug lines to the Rust log. Gated behind
+            // debug_assertions so release builds don't write diagnostic
+            // strings (which can occasionally include account-adjacent data)
+            // to on-disk log files.
+            #[cfg(debug_assertions)]
             if !bs.debug.is_empty() {
                 let mut seen = last_debug_len.lock().await;
                 let new_lines = if bs.debug.len() > *seen {
                     bs.debug[*seen..].to_vec()
                 } else if bs.debug.len() < *seen {
-                    // Debug ring rotated — reset.
                     bs.debug.clone()
                 } else {
                     Vec::new()
@@ -187,6 +190,8 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                     tracing::info!(bridge = %line, "bridge debug");
                 }
             }
+            #[cfg(not(debug_assertions))]
+            let _ = &bs.debug;
 
             // Login-state emission is always attempted, even on the login-only
             // frame, because that frame is the whole point of the check (player
@@ -208,8 +213,10 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 if last_acc.as_ref() != Some(acc) {
                     *last_acc = Some(acc.clone());
                     drop(last_acc);
+                    // Log metadata only — never the account name itself,
+                    // which ends up on disk in production log files.
                     tracing::info!(
-                        name = %acc.name,
+                        has_name = !acc.name.is_empty(),
                         has_avatar = !acc.avatar_url.is_empty(),
                         "account info updated"
                     );
