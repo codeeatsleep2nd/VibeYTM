@@ -21,6 +21,10 @@ Apple Music-style YouTube Music desktop app.
 - Plugin-based integrations: each implements `Integration` trait
 - PlayerState (Rust) is the single source of truth
 
+## Versioning
+- Bump the patch version (last number) in both `package.json` and `src-tauri/tauri.conf.json` with every commit
+- Example: 0.5.0 → 0.5.1 → 0.5.2 → ... → 0.5.10 → 0.5.11
+
 ## Release Process
 - When creating a new GitHub release, always build the DMG first with `pnpm tauri build`
 - Attach the DMG (`src-tauri/target/release/bundle/dmg/VibeYTM_*.dmg`) to the release
