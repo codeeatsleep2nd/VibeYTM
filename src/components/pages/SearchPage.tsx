@@ -355,9 +355,10 @@ export const SearchPage: FC<SearchPageProps> = ({
       <div
         style={{
           display: 'flex',
-          gap: 'var(--space-1)',
+          gap: 'var(--space-2)',
           marginBottom: 'var(--space-6)',
-          borderBottom: '1px solid oklch(100% 0 0 / 0.08)',
+          overflowX: 'auto',
+          scrollbarWidth: 'none',
         }}
       >
         {CATEGORY_TABS.map((tab) => {
@@ -367,21 +368,20 @@ export const SearchPage: FC<SearchPageProps> = ({
               key={tab}
               onClick={() => handleTabClick(tab)}
               style={{
+                flexShrink: 0,
                 padding: 'var(--space-2) var(--space-4)',
                 fontSize: 'var(--text-sm)',
-                fontWeight: isActive ? 600 : 400,
+                fontWeight: 500,
+                borderRadius: 'var(--radius-full)',
+                border: isActive ? 'none' : '1px solid var(--color-border)',
+                background: isActive ? 'var(--color-accent)' : 'transparent',
                 color: isActive
-                  ? 'var(--color-text-primary)'
+                  ? 'oklch(100% 0 0)'
                   : 'var(--color-text-secondary)',
-                marginBottom: '-1px',
-                background: 'none',
-                border: 'none',
-                borderBottomWidth: '2px',
-                borderBottomStyle: 'solid',
-                borderBottomColor: isActive ? 'var(--color-accent)' : 'transparent',
                 cursor: 'pointer',
-                transition: `color var(--duration-fast) var(--ease-out),
-                             border-color var(--duration-fast) var(--ease-out)`,
+                transition: `background var(--duration-fast) var(--ease-out),
+                             color var(--duration-fast) var(--ease-out)`,
+                whiteSpace: 'nowrap',
               }}
             >
               {tab}
