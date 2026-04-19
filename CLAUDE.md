@@ -22,7 +22,8 @@ Apple Music-style YouTube Music desktop app.
 - PlayerState (Rust) is the single source of truth
 
 ## Versioning
-- Bump the patch version (last number) in both `package.json` and `src-tauri/tauri.conf.json` with every commit
+- Bump the patch version (last number) in both `package.json` and `src-tauri/tauri.conf.json` with every commit that includes code changes
+- Do NOT bump for docs-only commits (e.g. changes to .md files only)
 - Example: 0.5.0 → 0.5.1 → 0.5.2 → ... → 0.5.10 → 0.5.11
 
 ## Release Process
