@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use tauri::AppHandle;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::events::bus::EventBus;
 use crate::events::types::{AppEvent, PlaybackCommand};
@@ -25,32 +25,46 @@ impl Integration for GlobalShortcutsIntegration {
         _state: SharedPlayerState,
         app: AppHandle,
     ) -> Result<()> {
-        let bus_play = bus.clone();
-        let bus_next = bus.clone();
-        let bus_prev = bus.clone();
+        // Chord choices:
+        // - Play/pause: Cmd+Shift+Space (safe globally on macOS/Windows/Linux)
+        // - Next: Cmd+Alt+Right (avoids Ctrl+Right → macOS Mission Control spaces)
+        // - Prev: Cmd+Alt+Left  (avoids Ctrl+Left  → macOS Mission Control spaces)
+        // Some system-reserved chords silently fail to register on macOS, so
+        // log the outcome per-shortcut instead of aborting the whole set.
+        let register = |chord: &str, cmd: PlaybackCommand, bus: Arc<EventBus>| {
+            let res = app
+                .global_shortcut()
+                .on_shortcut(chord, move |_app, _shortcut, event| {
+                    // Fires on both Pressed and Released — without this guard
+                    // toggle_play ran twice per keypress and users saw
+                    // pause-then-play in one keystroke.
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    bus.emit(AppEvent::PlaybackCommand(cmd));
+                });
+            match res {
+                Ok(_) => tracing::info!(chord, ?cmd, "global shortcut registered"),
+                Err(e) => tracing::warn!(chord, ?cmd, error = %e, "failed to register shortcut"),
+            }
+        };
 
-        app.global_shortcut().on_shortcut(
+        register(
             "CommandOrControl+Shift+Space",
-            move |_app, _shortcut, _event| {
-                bus_play.emit(AppEvent::PlaybackCommand(PlaybackCommand::TogglePlay));
-            },
-        )?;
+            PlaybackCommand::TogglePlay,
+            bus.clone(),
+        );
+        register(
+            "CommandOrControl+Alt+Right",
+            PlaybackCommand::Next,
+            bus.clone(),
+        );
+        register(
+            "CommandOrControl+Alt+Left",
+            PlaybackCommand::Previous,
+            bus.clone(),
+        );
 
-        app.global_shortcut().on_shortcut(
-            "CommandOrControl+Shift+Right",
-            move |_app, _shortcut, _event| {
-                bus_next.emit(AppEvent::PlaybackCommand(PlaybackCommand::Next));
-            },
-        )?;
-
-        app.global_shortcut().on_shortcut(
-            "CommandOrControl+Shift+Left",
-            move |_app, _shortcut, _event| {
-                bus_prev.emit(AppEvent::PlaybackCommand(PlaybackCommand::Previous));
-            },
-        )?;
-
-        tracing::info!("global shortcuts registered");
         Ok(())
     }
 

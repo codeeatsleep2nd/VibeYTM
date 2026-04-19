@@ -119,7 +119,7 @@ export const PlayerBar: FC<PlayerBarProps> = ({
   nowPlayingOpen = false,
 }) => {
   const state = usePlayerState();
-  const { track, status, positionSecs, volume, isShuffled, repeatMode, isLiked, applyOptimistic } = state;
+  const { track, status, positionSecs, volume, isShuffled, repeatMode, isLiked, applyOptimistic, markSeek } = state;
   const isPlaying = status === 'playing';
 
   const handleTogglePlay = () => {
@@ -327,11 +327,21 @@ export const PlayerBar: FC<PlayerBarProps> = ({
             value={duration > 0 ? safePosition : 0}
             onChange={(e) => {
               // Optimistic local update so the thumb tracks the cursor without
-              // waiting for the backend round-trip. The next POSITION_UPDATED
-              // event will reconcile with authoritative time.
+              // waiting for the backend round-trip. markSeek lets the hook
+              // discard stale pre-seek position echoes from the bridge poller
+              // that would otherwise bounce the thumb back to the old spot.
               const next = Number(e.target.value);
+              markSeek(next);
               applyOptimistic({ positionSecs: next });
               playerApi.seek(next);
+              // If the user scrubs while paused, treat the click as "resume
+              // here" — standard behavior across music players.
+              if (!isPlaying) {
+                applyOptimistic({ status: 'playing' });
+                playerApi.play().catch(() => {
+                  applyOptimistic({ status: 'paused' });
+                });
+              }
             }}
             style={{
               flex: 1,
@@ -378,7 +388,14 @@ export const PlayerBar: FC<PlayerBarProps> = ({
             min={0}
             max={100}
             value={Math.round(volume * 100)}
-            onChange={(e) => playerApi.setVolume(Number(e.target.value) / 100)}
+            onChange={(e) => {
+              // Optimistic local update so the thumb and gradient track the
+              // cursor on click/drag instead of waiting for the backend →
+              // YTM → VOLUME_CHANGED round-trip.
+              const next = Number(e.target.value) / 100;
+              applyOptimistic({ volume: next });
+              playerApi.setVolume(next);
+            }}
             style={{
               width: '80px',
               height: '4px',
