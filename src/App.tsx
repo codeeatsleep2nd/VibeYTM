@@ -19,6 +19,7 @@ const App: FC = () => {
   const [currentPath, setCurrentPath] = useState('home');
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
+  const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
 
   // Lock out rapid second toggles within the animation window so a stray
   // double-click never makes the overlay flash open-and-close.
@@ -38,6 +39,13 @@ const App: FC = () => {
     setViewingPlaylist({ id: playlistId, autoPlay: true });
   }, []);
 
+  const searchForArtist = useCallback((name: string) => {
+    setViewingPlaylist(null);
+    setIsNowPlayingOpen(false);
+    setPendingSearchQuery(name);
+    setCurrentPath('search');
+  }, []);
+
   if (!isLoggedIn) {
     return <LoginPage onLoggedIn={() => setIsLoggedIn(true)} />;
   }
@@ -48,6 +56,8 @@ const App: FC = () => {
         <SearchPage
           onOpenPlaylist={openPlaylistDetail}
           onAutoPlayPlaylist={openPlaylistAutoPlay}
+          pendingQuery={pendingSearchQuery}
+          onPendingQueryConsumed={() => setPendingSearchQuery(null)}
         />
       );
     }
@@ -73,6 +83,7 @@ const App: FC = () => {
           activeTab={sub ?? 'playlists'}
           onOpenPlaylist={openPlaylistDetail}
           onAutoPlayPlaylist={openPlaylistAutoPlay}
+          onSearchArtist={searchForArtist}
         />
       );
     }
