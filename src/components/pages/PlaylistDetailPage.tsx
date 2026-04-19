@@ -117,6 +117,71 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     return null;
   }
 
+  // Shows ('Your shows' / 'Shows for You' on home) surface through the same
+  // onOpenPlaylist callback as albums/playlists, but their browseIds don't
+  // resolve to a track-bearing playlist. Detect the empty-shell response
+  // (no title AND no tracks) and render a friendly coming-soon placeholder
+  // instead of a confusing blank page.
+  if (playlist.tracks.length === 0 && !playlist.title) {
+    return (
+      <section
+        style={{
+          padding: 'var(--space-6) var(--space-6) var(--space-8)',
+          height: '100%',
+          overflowY: 'auto',
+        }}
+      >
+        <button
+          onClick={onBack}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: 'var(--color-text-secondary)',
+            cursor: 'pointer',
+            fontSize: 'var(--text-sm)',
+            padding: 'var(--space-1) 0',
+            marginBottom: 'var(--space-6)',
+          }}
+        >
+          &larr; Back
+        </button>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 'var(--space-2)',
+            minHeight: '50vh',
+            textAlign: 'center',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 'var(--text-2xl)',
+              fontWeight: 700,
+              color: 'var(--color-text-primary)',
+              letterSpacing: '-0.02em',
+            }}
+          >
+            Shows coming soon
+          </div>
+          <p
+            style={{
+              fontSize: 'var(--text-sm)',
+              color: 'var(--color-text-tertiary)',
+              maxWidth: '360px',
+              lineHeight: 1.5,
+            }}
+          >
+            Podcast and show playback isn't available in VibeYTM yet.
+            We're working on it.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section
       style={{
