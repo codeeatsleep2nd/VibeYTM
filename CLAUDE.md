@@ -29,6 +29,7 @@ Apple Music-style YouTube Music desktop app.
 ## Release Process
 - When creating a new GitHub release, always build the DMG first with `pnpm tauri build`
 - Attach the DMG (`src-tauri/target/release/bundle/dmg/VibeYTM_*.dmg`) to the release
+- Always include the macOS Gatekeeper notice at the top of release notes (the app is unsigned, so users must run `xattr -cr /Applications/VibeYTM.app` after installing)
 
 ## Key Patterns
 - IPC: Frontend calls Rust via `invoke()`, Rust emits events via `app.emit()`
