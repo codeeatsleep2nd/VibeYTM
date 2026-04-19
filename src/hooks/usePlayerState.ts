@@ -13,6 +13,7 @@ const DEFAULT_STATE: PlayerState = {
   repeatMode: 'none',
   isShuffled: false,
   queue: [],
+  account: null,
 };
 
 export interface UsePlayerState extends PlayerState {

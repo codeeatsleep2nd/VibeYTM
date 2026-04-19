@@ -13,6 +13,11 @@ export type PlaybackStatus = 'playing' | 'paused' | 'buffering' | 'idle';
 
 export type RepeatMode = 'none' | 'one' | 'all';
 
+export interface AccountInfo {
+  name: string;
+  avatarUrl: string;
+}
+
 export interface PlayerState {
   status: PlaybackStatus;
   track: TrackInfo | null;
@@ -22,6 +27,7 @@ export interface PlayerState {
   repeatMode: RepeatMode;
   isShuffled: boolean;
   queue: TrackInfo[];
+  account: AccountInfo | null;
 }
 
 export interface AlbumSummary {

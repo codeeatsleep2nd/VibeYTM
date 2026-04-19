@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import type { PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary } from './types';
+import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary } from './types';
 import type { RepeatMode } from './types';
 
 export interface CacheStats {
@@ -27,6 +27,7 @@ export const playerApi = {
   seek: (secs: number) => invoke('seek', { secs }),
   setVolume: (level: number) => invoke('set_volume', { level }),
   getState: () => invoke<PlayerState>('get_player_state'),
+  getAccountInfo: () => invoke<AccountInfo | null>('get_account_info'),
   playTrack: (videoId: string, playlistId?: string) => invoke('play_track', { videoId, playlistId: playlistId ?? null }),
   addToQueue: (track: TrackInfo) => invoke('add_to_queue', { track }),
   removeFromQueue: (index: number) => invoke('remove_from_queue', { index }),

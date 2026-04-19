@@ -52,11 +52,9 @@ const TransportButton: FC<{
                    transform var(--duration-fast) var(--ease-out)`,
     }}
     onMouseEnter={(e) => {
-      e.currentTarget.style.opacity = '0.8';
-      e.currentTarget.style.transform = 'scale(1.08)';
+      e.currentTarget.style.transform = 'scale(1.15)';
     }}
     onMouseLeave={(e) => {
-      e.currentTarget.style.opacity = '1';
       e.currentTarget.style.transform = 'scale(1)';
     }}
   >
@@ -165,7 +163,7 @@ export const PlayerBar: FC<PlayerBarProps> = ({
       style={{
         position: 'fixed',
         bottom: 0,
-        left: 0,
+        left: 'var(--sidebar-width)',
         right: 0,
         height: 'var(--player-bar-height)',
         background: 'var(--color-surface-1)',
@@ -211,6 +209,13 @@ export const PlayerBar: FC<PlayerBarProps> = ({
                 border: 'none',
                 outline: 'none',
                 cursor: 'pointer',
+                transition: `transform var(--duration-fast) var(--ease-out)`,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'scale(1.06)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
               }}
             >
               <CachedImage
@@ -319,7 +324,7 @@ export const PlayerBar: FC<PlayerBarProps> = ({
             type="range"
             min={0}
             max={duration || 1}
-            value={safePosition}
+            value={duration > 0 ? safePosition : 0}
             onChange={(e) => {
               // Optimistic local update so the thumb tracks the cursor without
               // waiting for the backend round-trip. The next POSITION_UPDATED
@@ -352,7 +357,15 @@ export const PlayerBar: FC<PlayerBarProps> = ({
           style={{
             fontSize: 'var(--text-lg)',
             color: isLiked ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
-            transition: `color var(--duration-fast) var(--ease-out)`,
+            cursor: 'pointer',
+            transition: `color var(--duration-fast) var(--ease-out),
+                         transform var(--duration-fast) var(--ease-out)`,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'scale(1.12)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'scale(1)';
           }}
         >
           {isLiked ? '\u2665' : '\u2661'}
@@ -387,15 +400,18 @@ export const PlayerBar: FC<PlayerBarProps> = ({
               color: nowPlayingOpen ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
               padding: 'var(--space-1) var(--space-2)',
               borderRadius: 'var(--radius-sm)',
-              transition: `color var(--duration-fast) var(--ease-out)`,
+              transition: `color var(--duration-fast) var(--ease-out),
+                           transform var(--duration-fast) var(--ease-out)`,
               cursor: 'pointer',
             }}
             onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'scale(1.1)';
               if (!nowPlayingOpen) {
                 e.currentTarget.style.color = 'var(--color-text-primary)';
               }
             }}
             onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
               if (!nowPlayingOpen) {
                 e.currentTarget.style.color = 'var(--color-text-tertiary)';
               }

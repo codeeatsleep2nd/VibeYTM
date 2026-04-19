@@ -34,6 +34,13 @@ pub enum RepeatMode {
     All,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountInfo {
+    pub name: String,
+    pub avatar_url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerState {
@@ -45,6 +52,7 @@ pub struct PlayerState {
     pub repeat_mode: RepeatMode,
     pub is_shuffled: bool,
     pub queue: Vec<TrackInfo>,
+    pub account: Option<AccountInfo>,
 }
 
 impl Default for PlayerState {
@@ -58,6 +66,7 @@ impl Default for PlayerState {
             repeat_mode: RepeatMode::None,
             is_shuffled: false,
             queue: Vec::new(),
+            account: None,
         }
     }
 }
