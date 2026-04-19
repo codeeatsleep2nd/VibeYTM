@@ -370,7 +370,7 @@ export const PlayerBar: FC<PlayerBarProps> = ({
               width: '80px',
               height: '4px',
               appearance: 'none',
-              background: `linear-gradient(to right, var(--color-text-secondary) ${volume * 100}%, var(--color-surface-3) ${volume * 100}%)`,
+              background: `linear-gradient(to right, var(--color-accent) ${volume * 100}%, var(--color-surface-3) ${volume * 100}%)`,
               borderRadius: 'var(--radius-full)',
               cursor: 'pointer',
               outline: 'none',
