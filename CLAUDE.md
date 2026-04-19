@@ -31,6 +31,12 @@ Apple Music-style YouTube Music desktop app.
 - Attach the DMG (`src-tauri/target/release/bundle/dmg/VibeYTM_*.dmg`) to the release
 - Always include the macOS Gatekeeper notice at the top of release notes (the app is unsigned, so users must run `xattr -cr /Applications/VibeYTM.app` after installing)
 
+## Screenshots
+- Screenshots are taken via `screencapture -l <windowID>` (use Swift/CoreGraphics to find the VibeYTM window ID)
+- The user's profile picture and name are in the sidebar bottom-left at approximately x:65-265, y:1543-1618 (at 2536x1736 resolution)
+- Always blur (never solid-cover) the profile area: crop the region, apply heavy Gaussian blur in isolation, paste back
+- The blur must not cross into the rounded window corners or desktop area — blur the cropped region independently to prevent color bleed
+
 ## Key Patterns
 - IPC: Frontend calls Rust via `invoke()`, Rust emits events via `app.emit()`
 - State: `Arc<RwLock<PlayerState>>` managed by Tauri
