@@ -1140,3 +1140,116 @@ This is a real frontend application, not a settings panel. React + TypeScript gi
 - No arbitrary JS execution from user input
 - All IPC commands explicitly allowlisted in capabilities
 - No file system access from frontend
+- Account display name is never written to Rust log files; the bridge→Rust
+  debug pipe is gated behind `#[cfg(debug_assertions)]` so release builds
+  never surface diagnostic strings to disk
+
+---
+
+## 18. Changes Since v0.1.0
+
+Running history of design-affecting changes delivered after the initial release.
+Minor bug fixes that don't alter the contracts documented above are omitted —
+see `git log` for the exhaustive list.
+
+### v0.2.0 — Stability & UX fixes
+
+- **Disk-backed cache** (`src-tauri/src/cache`) for images and track duration
+  metadata so scrolling the library doesn't re-hit the YTM CDN and so durations
+  survive across shelves that don't ship them.
+- **Search flow rework**: suggestions are debounced, results are cached per
+  query, album top-hit previews are lazy-fetched from the playlist endpoint.
+- **Now Playing page** with queue, shuffle/repeat controls, and artwork-derived
+  accent color.
+- **Security hardening + test suite**: Tauri capability allowlist tightened,
+  YTM-ID validation for navigation commands, first batch of `cargo test`
+  coverage over `ytm_api`, `cache`, and `webview_bridge`.
+- **v0.2.0 issue-fix pass** (13 open issues) landed assorted UX polish:
+  shortcut handling, home-tab state retention, explore reload on first open,
+  search-tab sub-tab completeness.
+- **Release process**: builds now always produce a macOS DMG, attached to the
+  GitHub release. Documented in `CLAUDE.md`.
+
+### Post-0.2.0 — Player bar alignment & sidebar account (this branch)
+
+- **Player bar alignment**: `PlayerBar` is no longer full-width. It starts at
+  `left: var(--sidebar-width)` so it sits under the main content area only.
+  The sidebar continues to occupy its full height, which in turn allows a
+  bottom-of-sidebar surface for user account info.
+
+- **Sidebar account card**: A new row at the bottom of the sidebar shows the
+  signed-in account's display name and profile picture. Implementation:
+
+  ```
+  scripts/inject/ytm-player-bridge.js
+    ├── readAvatarFromDom()       — nav-bar img.src → 96px thumbnail URL
+    ├── readSapisidCookie()       — pulls __Secure-3PAPISID / SAPISID
+    ├── sapisidHash(sapisid, origin)
+    │     SAPISIDHASH <ts>_<sha1(ts + " " + sapisid + " " + origin)>
+    │   (reverse-engineered by ytmusicapi; YouTube's own frontend protocol)
+    └── fetchAccountFromApi()
+          POST /youtubei/v1/account/account_menu?key=<INNERTUBE_API_KEY>
+          headers:  Authorization: SAPISIDHASH ...
+                    X-Origin: https://music.youtube.com
+                    X-Goog-AuthUser: 0
+          body:     { "context": INNERTUBE_CONTEXT }
+          Walks actions[0].openPopupAction.popup.multiPageMenuRenderer
+                   .header.activeAccountHeaderRenderer for accountName.runs +
+                   accountPhoto.thumbnails
+  ```
+
+  Rust-side flow mirrors the existing poller pattern:
+
+  1. `BridgeState.account: Option<BridgeAccount>` added to the poller's
+     eval payload.
+  2. Poller diffs against `last_account`; on change, emits
+     `player:account-changed` and writes `AccountInfo` into `PlayerState`.
+  3. Frontend hook `useAccountInfo()` reads initial state via a new
+     `get_account_info` IPC command and subscribes to the event for live
+     updates.
+
+  **Why the SAPISIDHASH header matters**: without it, YTM's `account_menu`
+  response collapses to generic `compactLinkRenderer` entries (Settings,
+  Premium, Help) and omits `activeAccountHeaderRenderer` entirely. This was
+  the blocker that forced experimentation with the avatar DOM and a
+  click-and-scrape fallback before arriving at the documented API call.
+
+- **Progress bar resilience**: YTM occasionally reports `duration = 0` during
+  the first poll cycles of a new track. The old code locked the slider value
+  against `max = duration || 1` with an unclamped `value = positionSecs`,
+  which pinned the thumb at 100% until the next track change. Fixes:
+  - Poller re-emits the track via `player:track-changed` when duration
+    becomes non-zero on a subsequent cycle, even if the video ID hasn't
+    changed.
+  - `PlayerBar` clamps `value` to `0` while `duration === 0` so the thumb
+    stays at the start regardless of backend lag.
+
+- **Hover affordances** in the player bar: transport buttons (shuffle, prev,
+  play, next, repeat), album thumbnail, like button, and now-playing toggle
+  all scale up on `mouseenter` and return to 1× on `mouseleave`. Kept via
+  inline `onMouseEnter`/`onMouseLeave` (current codebase convention — see
+  §10 PlayerBar sketch) rather than adding a global `:hover` rule.
+
+- **Data-model additions**:
+  - `AccountInfo { name: String, avatar_url: String }` — serialized as
+    camelCase (`avatarUrl`) to match the frontend type.
+  - `PlayerState.account: Option<AccountInfo>`.
+  - Frontend `AccountInfo` interface in `src/lib/types.ts` mirrors the Rust
+    struct 1:1.
+
+- **Security**:
+  - `tracing::info!` for account updates logs `has_name=bool` /
+    `has_avatar=bool` — never the display name itself.
+  - The entire bridge→Rust debug pipe (ring of recent `log()` lines from
+    the bridge script) is gated behind `#[cfg(debug_assertions)]`. Release
+    builds drop the code paths entirely.
+
+- **Test additions**:
+  - Unit: `state::player::tests` (4 tests) — `AccountInfo` camelCase serde,
+    equality, `PlayerState` default, serialization with account.
+  - Unit: `webview_bridge::poller::tests` (6 tests) — `BridgeState`
+    parses with/without account, missing-field defaults, account equality
+    for change detection, `parse_repeat` fallthrough, debug vec parsing.
+  - Integration: `src-tauri/tests/account_info_integration.rs` (3 tests) —
+    locks the wire contract between the bridge JS, Rust poller, and
+    frontend `AccountInfo` type.

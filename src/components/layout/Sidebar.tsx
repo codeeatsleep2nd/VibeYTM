@@ -1,4 +1,6 @@
 import { type FC } from 'react';
+import { useAccountInfo } from '../../hooks/useAccountInfo';
+import { CachedImage } from '../CachedImage';
 
 interface NavItemProps {
   label: string;
@@ -64,15 +66,15 @@ const LIBRARY_ITEMS = [
   { path: 'library/artists', label: 'Artists', icon: '☆' },
 ];
 
-export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => (
+export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
+  const account = useAccountInfo();
+
+  return (
   <aside
     style={{
       width: 'var(--sidebar-width)',
       height: '100%',
       paddingTop: 'var(--title-bar-height)',
-      // PlayerBar is position: fixed at the bottom and otherwise occludes
-      // the Settings row that marginTop: auto pushes to the sidebar floor.
-      paddingBottom: 'var(--player-bar-height)',
       background: 'var(--glass-bg)',
       backdropFilter: `blur(var(--glass-blur))`,
       WebkitBackdropFilter: `blur(var(--glass-blur))`,
@@ -142,5 +144,71 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => (
         onClick={() => onNavigate('settings')}
       />
     </div>
+
+    {/* Account — locked to the very bottom of the sidebar */}
+    <div style={{ padding: 'var(--space-3)' }}>
+      <AccountCard account={account} />
+    </div>
   </aside>
+  );
+};
+
+interface AccountCardProps {
+  account: { name: string; avatarUrl: string } | null;
+}
+
+const AccountCard: FC<AccountCardProps> = ({ account }) => (
+  <div
+    style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 'var(--space-3)',
+      padding: 'var(--space-2) var(--space-4)',
+      borderRadius: 'var(--radius-md)',
+      minWidth: 0,
+    }}
+    title={account?.name || 'Signed in'}
+  >
+    <div
+      style={{
+        width: '32px',
+        height: '32px',
+        borderRadius: 'var(--radius-full)',
+        background: 'var(--color-surface-3)',
+        overflow: 'hidden',
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 'var(--text-sm)',
+        color: 'var(--color-text-secondary)',
+      }}
+    >
+      {account?.avatarUrl ? (
+        <CachedImage
+          src={account.avatarUrl}
+          alt={account.name || 'Account avatar'}
+          width={32}
+          height={32}
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+      ) : (
+        '\u25CB'
+      )}
+    </div>
+    <div style={{ minWidth: 0, flex: 1 }}>
+      <div
+        style={{
+          fontSize: 'var(--text-sm)',
+          fontWeight: 500,
+          color: 'var(--color-text-primary)',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {account?.name || 'Signed in'}
+      </div>
+    </div>
+  </div>
 );

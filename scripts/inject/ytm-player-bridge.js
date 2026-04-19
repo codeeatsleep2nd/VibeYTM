@@ -11,6 +11,8 @@
   // Tracked independently of __VIBEYTM_STATE__ because we need it before the
   // music player DOM exists (on the sign-in page there is no player yet).
   window.__VIBEYTM_LOGGED_IN__ = null;
+  // { name: string, avatarUrl: string } once the nav-bar avatar is rendered.
+  window.__VIBEYTM_ACCOUNT__ = null;
 
   function log(msg) {
     window.__VIBEYTM_DEBUG__.push(new Date().toISOString() + ': ' + msg);
@@ -290,6 +292,176 @@
     }
   }
 
+  /**
+   * Read avatar URL from the nav-bar avatar button. The button's aria-label
+   * is usually the generic "Account menu" string, so for the real display
+   * name we query YTM's internal accounts_list endpoint (see fetchAccountFromApi).
+   */
+  function readAvatarFromDom() {
+    try {
+      var btn = document.querySelector('ytmusic-nav-bar #avatar-btn')
+        || document.querySelector('ytmusic-nav-bar tp-yt-paper-icon-button[aria-label*="Account" i]')
+        || document.querySelector('ytmusic-nav-bar ytmusic-settings-button');
+      if (!btn) return '';
+      var img = btn.querySelector('img')
+        || document.querySelector('ytmusic-nav-bar yt-img-shadow img, ytmusic-nav-bar img.yt-img-shadow');
+      if (!img) return '';
+      var src = img.src || img.getAttribute('src') || img.getAttribute('data-src') || '';
+      return src.replace(/=s\d+(-.+)?$/, '=s96-c');
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /**
+   * Call /youtubei/v1/account/account_menu with a SAPISIDHASH Authorization
+   * header so YouTube returns the full response containing
+   * `activeAccountHeaderRenderer` (which has the account name and photo).
+   *
+   * Authorization format — reverse-engineered and documented by the
+   * ytmusicapi python library:
+   *   SAPISIDHASH <ts>_<sha1(ts + " " + SAPISID + " " + origin)>
+   * The SAPISID value lives in the __Secure-3PAPISID cookie (same-origin,
+   * not HttpOnly for YouTube properties).
+   */
+  var fetchInflight = false;
+  var fetchAttempts = 0;
+
+  function readSapisidCookie() {
+    var parts = document.cookie.split('; ');
+    for (var i = 0; i < parts.length; i += 1) {
+      var eq = parts[i].indexOf('=');
+      if (eq < 0) continue;
+      var k = parts[i].substring(0, eq);
+      if (k === '__Secure-3PAPISID' || k === 'SAPISID') {
+        return parts[i].substring(eq + 1);
+      }
+    }
+    return null;
+  }
+
+  async function sapisidHash(sapisid, origin) {
+    var ts = Math.floor(Date.now() / 1000);
+    var payload = ts + ' ' + sapisid + ' ' + origin;
+    var bytes = new TextEncoder().encode(payload);
+    var buf = await crypto.subtle.digest('SHA-1', bytes);
+    var hex = '';
+    var arr = new Uint8Array(buf);
+    for (var i = 0; i < arr.length; i += 1) {
+      var h = arr[i].toString(16);
+      hex += h.length === 1 ? '0' + h : h;
+    }
+    return 'SAPISIDHASH ' + ts + '_' + hex;
+  }
+
+  function fetchAccountFromApi() {
+    if (fetchInflight) return;
+    if (window.__VIBEYTM_ACCOUNT__ && window.__VIBEYTM_ACCOUNT__.name) return;
+    if (fetchAttempts > 8) return;
+    var cfg = window.ytcfg;
+    var apiKey = cfg && (cfg.get ? cfg.get('INNERTUBE_API_KEY') : cfg.data_ && cfg.data_.INNERTUBE_API_KEY);
+    var context = cfg && (cfg.get ? cfg.get('INNERTUBE_CONTEXT') : cfg.data_ && cfg.data_.INNERTUBE_CONTEXT);
+    if (!apiKey || !context) {
+      log('fetchAccount: ytcfg not ready');
+      return;
+    }
+    var sapisid = readSapisidCookie();
+    if (!sapisid) {
+      log('fetchAccount: no SAPISID cookie (not signed in?)');
+      return;
+    }
+    fetchInflight = true;
+    fetchAttempts += 1;
+
+    var origin = 'https://music.youtube.com';
+    sapisidHash(sapisid, origin).then(function (auth) {
+      var url = '/youtubei/v1/account/account_menu?prettyPrint=false&key=' + encodeURIComponent(apiKey);
+      return fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': auth,
+          'X-Origin': origin,
+          'X-Goog-AuthUser': '0',
+        },
+        body: JSON.stringify({ context: context }),
+      });
+    })
+      .then(function (r) {
+        log('fetchAccount: status=' + r.status);
+        return r.ok ? r.json() : null;
+      })
+      .then(function (data) {
+        fetchInflight = false;
+        if (!data) return;
+        var header = findActiveAccountHeader(data);
+        if (!header) {
+          log('fetchAccount: no activeAccountHeaderRenderer');
+          return;
+        }
+        var name = runsText(header.accountName) || simpleTextOf(header.accountName);
+        var thumbs = header.accountPhoto && header.accountPhoto.thumbnails;
+        var avatar = (thumbs && thumbs.length) ? thumbs[thumbs.length - 1].url : '';
+        if (!name) { log('fetchAccount: empty name'); return; }
+        applyAccountInfo({ name: name, avatarUrl: avatar });
+        log('fetchAccount: resolved');
+      })
+      .catch(function (e) {
+        fetchInflight = false;
+        log('fetchAccount error: ' + (e && e.message));
+      });
+  }
+
+  function findActiveAccountHeader(data) {
+    var found = null;
+    (function visit(node) {
+      if (found || !node || typeof node !== 'object') return;
+      if (node.activeAccountHeaderRenderer) { found = node.activeAccountHeaderRenderer; return; }
+      for (var k in node) {
+        if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
+        var v = node[k];
+        if (Array.isArray(v)) v.forEach(visit);
+        else if (v && typeof v === 'object') visit(v);
+      }
+    })(data);
+    return found;
+  }
+
+  function runsText(node) {
+    if (!node || !node.runs) return '';
+    return node.runs.map(function (r) { return r.text || ''; }).join('');
+  }
+
+  function simpleTextOf(node) {
+    return (node && node.simpleText) || '';
+  }
+
+  function applyAccountInfo(info) {
+    var prevAvatar = (window.__VIBEYTM_ACCOUNT__ && window.__VIBEYTM_ACCOUNT__.avatarUrl) || '';
+    window.__VIBEYTM_ACCOUNT__ = {
+      name: info.name,
+      avatarUrl: info.avatarUrl || prevAvatar || readAvatarFromDom(),
+    };
+  }
+
+  function checkAccountInfo() {
+    // Populate the avatar from the nav bar immediately so the sidebar has
+    // something to show. The display name requires opening the account menu
+    // (scrapeAccountViaMenu), which we defer until the avatar is present.
+    var avatar = readAvatarFromDom();
+    if (!avatar) return;
+    var prev = window.__VIBEYTM_ACCOUNT__;
+    if (!prev) {
+      window.__VIBEYTM_ACCOUNT__ = { name: '', avatarUrl: avatar };
+    } else if (!prev.avatarUrl) {
+      window.__VIBEYTM_ACCOUNT__ = { name: prev.name || '', avatarUrl: avatar };
+    }
+    if (!window.__VIBEYTM_ACCOUNT__.name) {
+      fetchAccountFromApi();
+    }
+  }
+
   if (window.location.hostname === 'music.youtube.com') {
     log('bridge loaded on ' + window.location.href);
     log('__TAURI__ available: ' + (typeof window.__TAURI__ !== 'undefined'));
@@ -297,5 +469,7 @@
     waitForPlayer();
     setInterval(checkLoginStatus, 1500);
     checkLoginStatus();
+    setInterval(checkAccountInfo, 2000);
+    checkAccountInfo();
   }
 })();

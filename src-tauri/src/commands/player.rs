@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::cache::Cache;
 use crate::events::bus::EventBus;
 use crate::events::types::AppEvent;
-use crate::state::player::{PlaybackStatus, PlayerState, RepeatMode, SharedPlayerState, TrackInfo};
+use crate::state::player::{AccountInfo, PlaybackStatus, PlayerState, RepeatMode, SharedPlayerState, TrackInfo};
 
 #[tauri::command]
 pub async fn on_track_changed(
@@ -71,6 +71,14 @@ pub async fn get_player_state(
 ) -> Result<PlayerState, String> {
     let player = state.read().await;
     Ok(player.clone())
+}
+
+#[tauri::command]
+pub async fn get_account_info(
+    state: State<'_, SharedPlayerState>,
+) -> Result<Option<AccountInfo>, String> {
+    let player = state.read().await;
+    Ok(player.account.clone())
 }
 
 // --- Queue management ---

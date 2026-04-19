@@ -1550,4 +1550,187 @@ typecheck` and `cargo check` (both must stay green).
 
 ---
 
+## 14. Changes since v0.1.0
+
+This section captures the spec deltas that landed after the initial release.
+When re-running this spec from scratch, apply the sections below after the
+rest of the build finishes — they build on top of the §3 architecture and
+don't replace it.
+
+### 14.1 Sidebar account row (v0.2+)
+
+**Goal.** At the bottom of the sidebar, show the signed-in account's display
+name and profile picture. Reuse the existing `CachedImage` + `MarqueeText`
+primitives; no new layout primitives needed.
+
+**Data model.**
+```rust
+// src-tauri/src/state/player.rs
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountInfo {
+    pub name: String,
+    pub avatar_url: String,
+}
+
+pub struct PlayerState {
+    // ...existing fields...
+    pub account: Option<AccountInfo>,
+}
+```
+```typescript
+// src/lib/types.ts
+export interface AccountInfo { name: string; avatarUrl: string; }
+export interface PlayerState { /* ... */ account: AccountInfo | null; }
+```
+
+**Wire protocol.** The bridge must hit YTM's authenticated Innertube endpoint.
+Unauthenticated calls return a stripped-down menu with only `compactLinkRenderer`
+nodes (Premium / Settings / Help) — the display name is NOT in that response.
+
+1. Read `__Secure-3PAPISID` (or `SAPISID`) from `document.cookie`. These
+   cookies are same-origin-readable on YTM and YouTube.
+2. Compute `SAPISIDHASH <ts>_<sha1(ts + " " + SAPISID + " " + origin)>`
+   where `origin = "https://music.youtube.com"` and `ts` is seconds since
+   epoch. Use `crypto.subtle.digest('SHA-1', ...)`.
+3. `POST /youtubei/v1/account/account_menu?prettyPrint=false&key={INNERTUBE_API_KEY}`
+   with headers:
+   - `Authorization: <SAPISIDHASH>`
+   - `X-Origin: https://music.youtube.com`
+   - `X-Goog-AuthUser: 0`
+   - `Content-Type: application/json`
+   - `credentials: 'include'`
+4. Body: `{ "context": INNERTUBE_CONTEXT }` — pull both `INNERTUBE_API_KEY`
+   and `INNERTUBE_CONTEXT` from `window.ytcfg`.
+5. Walk the response for `activeAccountHeaderRenderer`. Extract:
+   - `accountName.runs[0].text` (or fall back to `simpleText`)
+   - `accountPhoto.thumbnails[last].url`
+6. Publish to `window.__VIBEYTM_ACCOUNT__ = { name, avatarUrl }`.
+
+The Rust poller's eval script (`READ_STATE_JS`) already wraps
+`window.__VIBEYTM_ACCOUNT__` alongside `__VIBEYTM_STATE__` and
+`__VIBEYTM_LOGGED_IN__`, so no new eval plumbing is needed — just extend
+`BridgeState` to deserialize an optional `account` field.
+
+**Poller diff + emit.** Mirror the existing login-state branch:
+```rust
+let last_account = Arc::new(TokioMutex::new(Option::<BridgeAccount>::None));
+// inside loop:
+if let Some(ref acc) = bs.account {
+    let mut last = last_account.lock().await;
+    if last.as_ref() != Some(acc) {
+        *last = Some(acc.clone());
+        drop(last);
+        let _ = app.emit("player:account-changed", &json!({
+            "name": acc.name, "avatarUrl": acc.avatar_url
+        }));
+        player_state.write().await.account = Some(AccountInfo {
+            name: acc.name.clone(),
+            avatar_url: acc.avatar_url.clone(),
+        });
+    }
+}
+```
+
+**IPC additions.**
+- New command: `get_account_info(): Option<AccountInfo>` — reads from
+  `SharedPlayerState`.
+- New event: `player:account-changed` → `AccountInfo` payload (camelCase).
+
+**Frontend hook.**
+```tsx
+// src/hooks/useAccountInfo.ts
+export function useAccountInfo(): AccountInfo | null {
+  const [account, setAccount] = useState<AccountInfo | null>(null);
+  useEffect(() => { playerApi.getAccountInfo().then(setAccount).catch(() => {}); }, []);
+  useTauriEvent<AccountInfo>('player:account-changed', setAccount);
+  return account;
+}
+```
+
+**Sidebar placement.** The account card sits in its own section below the
+Settings row, pushed to the bottom of the sidebar via `marginTop: 'auto'`
+on the Settings section. No divider between Settings and the card — they
+read as one footer cluster.
+
+### 14.2 Player bar alignment to content
+
+`PlayerBar` is `position: fixed; left: var(--sidebar-width); right: 0`
+(instead of `left: 0`). It spans the main content area only. The sidebar
+occupies its full height independently, giving the account row a home at
+`bottom: 0` inside the sidebar column without collision with the player bar.
+
+Remove the `paddingBottom: var(--player-bar-height)` from the `<aside>` —
+the player bar no longer overlaps the sidebar footer.
+
+### 14.3 Progress bar resilience
+
+YTM sometimes reports `duration = 0` during the first poll cycles of a new
+track (the `<video>` element hasn't finished buffering). The naive range
+input — `<input type="range" max={duration || 1} value={safePosition}>` —
+then pins the thumb at 100% until the next track change.
+
+**Fix.** Two-sided:
+
+1. **Poller**: when the track hasn't changed but `bs.duration_secs > 0` and
+   the cached track's duration is still `0`, re-emit `player:track-changed`
+   with the updated duration. Also push into the duration side-cache.
+2. **Frontend**: `value={duration > 0 ? safePosition : 0}` so the thumb
+   never drifts past 0 while duration is unknown.
+
+### 14.4 Player bar hover affordances
+
+All clickable surfaces in `PlayerBar` scale up on hover:
+
+| Element | Scale |
+|---|---|
+| Album thumbnail button | 1.06 |
+| Play / pause (prominent round button) | 1.06 (existing) |
+| Transport buttons (shuffle, prev, next, repeat) | 1.15 |
+| Like button | 1.12 |
+| Now-playing toggle | 1.10 |
+
+Implementation via inline `onMouseEnter` / `onMouseLeave` setting
+`currentTarget.style.transform`, matching the rest of the codebase.
+The prior transport-button hover dimmed opacity to `0.8` — removed, the
+scale alone reads better.
+
+### 14.5 Release process
+
+Every GitHub release must ship a macOS DMG built via `pnpm tauri build`.
+The DMG lives at `src-tauri/target/release/bundle/dmg/VibeYTM_*.dmg` and
+is attached to the release artifacts. Automate via the same CI pipeline
+that tags v0.2.0 and later.
+
+### 14.6 Security & logging
+
+- The Rust poller logs `has_name=bool, has_avatar=bool` when `AccountInfo`
+  updates — **never** the display name itself. Release builds must not
+  write the user's name to on-disk log files.
+- The bridge's `__VIBEYTM_DEBUG__` ring is piped to Rust `tracing::info!`
+  only under `#[cfg(debug_assertions)]`. Release builds drop the pipe
+  entirely.
+- `SAPISID` is read from `document.cookie`, hashed with a timestamp and
+  origin into `SAPISIDHASH`, and sent only in the `Authorization` header
+  of the same-origin fetch. The raw value never crosses the Tauri IPC
+  boundary or reaches Rust.
+
+### 14.7 Test coverage added
+
+- `src-tauri/src/state/player.rs` `#[cfg(test)] mod tests`:
+  `AccountInfo` camelCase serde + equality, `PlayerState::default()`
+  has no account, `PlayerState` serializes `account` when present.
+- `src-tauri/src/webview_bridge/poller.rs` `#[cfg(test)] mod tests`:
+  `BridgeState` parses with/without account, missing-field defaults,
+  `BridgeAccount` equality, `parse_repeat` fallthrough, debug vec.
+- `src-tauri/tests/account_info_integration.rs`: locks the wire contract
+  between bridge JS → Rust poller → frontend `AccountInfo` type.
+  Uses a minimal mirror struct so the test doesn't depend on crate-private
+  modules.
+
+Run all with `cargo test --manifest-path src-tauri/Cargo.toml`. Expect
+51 lib tests + 3 integration tests, all green.
+
+---
+
 END OF SPEC.

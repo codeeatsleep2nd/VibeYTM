@@ -48,6 +48,19 @@ struct BridgeState {
     /// yet). We skip track/position processing in that case.
     #[serde(default)]
     login_only: bool,
+    #[serde(default)]
+    account: Option<BridgeAccount>,
+    #[serde(default)]
+    debug: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct BridgeAccount {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    avatar_url: String,
 }
 
 fn parse_repeat(s: &str) -> RepeatMode {
@@ -62,10 +75,12 @@ const READ_STATE_JS: &str = r#"
 (function(){
   var s = window.__VIBEYTM_STATE__;
   var li = window.__VIBEYTM_LOGGED_IN__;
-  // loggedIn is tracked even when the player DOM is absent (e.g. during
-  // the Google sign-in redirect), so always wrap it through.
-  if (s) { return JSON.stringify(Object.assign({}, s, { loggedIn: li })); }
-  if (li === true || li === false) { return JSON.stringify({ loginOnly: true, loggedIn: li }); }
+  var acc = window.__VIBEYTM_ACCOUNT__ || null;
+  var dbg = (window.__VIBEYTM_DEBUG__ || []).slice(-20);
+  // loggedIn / account are tracked even when the player DOM is absent
+  // (e.g. during the Google sign-in redirect), so always wrap them through.
+  if (s) { return JSON.stringify(Object.assign({}, s, { loggedIn: li, account: acc, debug: dbg })); }
+  if (li === true || li === false) { return JSON.stringify({ loginOnly: true, loggedIn: li, account: acc, debug: dbg }); }
   return "null";
 })();
 "#;
@@ -82,6 +97,9 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
     let last_video_id = Arc::new(TokioMutex::new(String::new()));
     let last_status = Arc::new(TokioMutex::new(String::new()));
     let last_logged_in = Arc::new(TokioMutex::new(Option::<bool>::None));
+    let last_account = Arc::new(TokioMutex::new(Option::<BridgeAccount>::None));
+    #[cfg(debug_assertions)]
+    let last_debug_len = Arc::new(TokioMutex::new(0usize));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Polling thread: schedules eval on main thread, reads result from static
@@ -152,6 +170,29 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 Err(_) => continue,
             };
 
+            // Surface bridge-side debug lines to the Rust log. Gated behind
+            // debug_assertions so release builds don't write diagnostic
+            // strings (which can occasionally include account-adjacent data)
+            // to on-disk log files.
+            #[cfg(debug_assertions)]
+            if !bs.debug.is_empty() {
+                let mut seen = last_debug_len.lock().await;
+                let new_lines = if bs.debug.len() > *seen {
+                    bs.debug[*seen..].to_vec()
+                } else if bs.debug.len() < *seen {
+                    bs.debug.clone()
+                } else {
+                    Vec::new()
+                };
+                *seen = bs.debug.len();
+                drop(seen);
+                for line in new_lines {
+                    tracing::info!(bridge = %line, "bridge debug");
+                }
+            }
+            #[cfg(not(debug_assertions))]
+            let _ = &bs.debug;
+
             // Login-state emission is always attempted, even on the login-only
             // frame, because that frame is the whole point of the check (player
             // DOM doesn't exist yet on the sign-in page).
@@ -161,6 +202,34 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                     *last_li = Some(cur);
                     drop(last_li);
                     let _ = app.emit("player:login-changed", &cur);
+                }
+            }
+
+            // Account info: diff and emit on change. Kept alongside the
+            // login-state check so the sidebar can render the avatar even
+            // before any track has played.
+            if let Some(ref acc) = bs.account {
+                let mut last_acc = last_account.lock().await;
+                if last_acc.as_ref() != Some(acc) {
+                    *last_acc = Some(acc.clone());
+                    drop(last_acc);
+                    // Log metadata only — never the account name itself,
+                    // which ends up on disk in production log files.
+                    tracing::info!(
+                        has_name = !acc.name.is_empty(),
+                        has_avatar = !acc.avatar_url.is_empty(),
+                        "account info updated"
+                    );
+                    let payload = serde_json::json!({
+                        "name": acc.name,
+                        "avatarUrl": acc.avatar_url,
+                    });
+                    let _ = app.emit("player:account-changed", &payload);
+                    let mut ps = player_state.write().await;
+                    ps.account = Some(crate::state::player::AccountInfo {
+                        name: acc.name.clone(),
+                        avatar_url: acc.avatar_url.clone(),
+                    });
                 }
             }
 
@@ -217,6 +286,39 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 let _ = app.emit("player:status-changed", &status);
             } else {
                 drop(last_vid);
+
+                // Same track, but duration may have just become available
+                // (YTM occasionally reports 0 for the first few cycles while
+                // the <video> element buffers). Re-emit so the progress bar
+                // doesn't pin at the end.
+                if bs.duration_secs > 0.0 {
+                    let needs_update = {
+                        let ps = player_state.read().await;
+                        ps.track
+                            .as_ref()
+                            .map(|t| t.duration_secs <= 0.0)
+                            .unwrap_or(false)
+                    };
+                    if needs_update {
+                        let updated = {
+                            let mut ps = player_state.write().await;
+                            if let Some(ref mut t) = ps.track {
+                                t.duration_secs = bs.duration_secs;
+                                Some(t.clone())
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(track) = updated {
+                            if let Some(cache) = app.try_state::<crate::cache::Cache>() {
+                                if !track.video_id.is_empty() {
+                                    cache.put_track_duration(&track.video_id, track.duration_secs);
+                                }
+                            }
+                            let _ = app.emit("player:track-changed", &track);
+                        }
+                    }
+                }
             }
 
             let mut last_st = last_status.lock().await;
@@ -282,4 +384,71 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bridge_state_parses_account_camel_case() {
+        // The JS side serializes with `avatarUrl` (camelCase). Rust must
+        // accept that shape via the struct-level rename_all.
+        let json = r#"{
+            "title": "Song",
+            "videoId": "abc12345678",
+            "loggedIn": true,
+            "account": { "name": "Jane", "avatarUrl": "https://x/a.jpg" }
+        }"#;
+        let bs: BridgeState = serde_json::from_str(json).unwrap();
+        let acc = bs.account.expect("account should be present");
+        assert_eq!(acc.name, "Jane");
+        assert_eq!(acc.avatar_url, "https://x/a.jpg");
+    }
+
+    #[test]
+    fn bridge_state_parses_without_account() {
+        // Login-only frame: no account yet. Must still deserialize cleanly.
+        let json = r#"{"loginOnly": true, "loggedIn": false}"#;
+        let bs: BridgeState = serde_json::from_str(json).unwrap();
+        assert!(bs.account.is_none());
+        assert!(bs.login_only);
+        assert_eq!(bs.logged_in, Some(false));
+    }
+
+    #[test]
+    fn bridge_account_missing_fields_default_to_empty() {
+        let json = r#"{"account": {}}"#;
+        let bs: BridgeState = serde_json::from_str(json).unwrap();
+        let acc = bs.account.unwrap();
+        assert_eq!(acc.name, "");
+        assert_eq!(acc.avatar_url, "");
+    }
+
+    #[test]
+    fn bridge_account_equality_drives_change_detection() {
+        // Poller compares last_account to current to decide whether to emit.
+        let a = BridgeAccount { name: "A".into(), avatar_url: "u".into() };
+        let b = BridgeAccount { name: "A".into(), avatar_url: "u".into() };
+        let c = BridgeAccount { name: "A".into(), avatar_url: "v".into() };
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn parse_repeat_handles_all_modes() {
+        assert_eq!(parse_repeat("all"), RepeatMode::All);
+        assert_eq!(parse_repeat("one"), RepeatMode::One);
+        assert_eq!(parse_repeat("none"), RepeatMode::None);
+        // Unknown/empty strings fall through to None (safe default).
+        assert_eq!(parse_repeat(""), RepeatMode::None);
+        assert_eq!(parse_repeat("garbage"), RepeatMode::None);
+    }
+
+    #[test]
+    fn bridge_state_parses_debug_vec() {
+        let json = r#"{"debug": ["one","two"]}"#;
+        let bs: BridgeState = serde_json::from_str(json).unwrap();
+        assert_eq!(bs.debug, vec!["one", "two"]);
+    }
 }

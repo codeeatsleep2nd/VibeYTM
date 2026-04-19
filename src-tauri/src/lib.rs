@@ -49,6 +49,7 @@ pub fn run() {
             commands::on_playback_status_changed,
             commands::on_position_updated,
             commands::get_player_state,
+            commands::player::get_account_info,
             commands::player::play,
             commands::player::pause,
             commands::player::toggle_play,
