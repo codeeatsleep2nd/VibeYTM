@@ -16,8 +16,11 @@ use crate::state::player::{PlaybackStatus, RepeatMode, SharedPlayerState, TrackI
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BridgeState {
+    #[serde(default)]
     status: String,
+    #[serde(default)]
     title: String,
+    #[serde(default)]
     artist: String,
     #[serde(default)]
     album: String,
@@ -37,6 +40,14 @@ struct BridgeState {
     repeat_mode: String,
     #[serde(default)]
     is_liked: bool,
+    /// Only present once the sign-in state is determined. Tri-state:
+    /// Some(true) = signed in, Some(false) = signed out, None = unknown.
+    #[serde(default)]
+    logged_in: Option<bool>,
+    /// True when the bridge had only the login bit to report (no player DOM
+    /// yet). We skip track/position processing in that case.
+    #[serde(default)]
+    login_only: bool,
 }
 
 fn parse_repeat(s: &str) -> RepeatMode {
@@ -50,7 +61,11 @@ fn parse_repeat(s: &str) -> RepeatMode {
 const READ_STATE_JS: &str = r#"
 (function(){
   var s = window.__VIBEYTM_STATE__;
-  if (s) { return JSON.stringify(s); }
+  var li = window.__VIBEYTM_LOGGED_IN__;
+  // loggedIn is tracked even when the player DOM is absent (e.g. during
+  // the Google sign-in redirect), so always wrap it through.
+  if (s) { return JSON.stringify(Object.assign({}, s, { loggedIn: li })); }
+  if (li === true || li === false) { return JSON.stringify({ loginOnly: true, loggedIn: li }); }
   return "null";
 })();
 "#;
@@ -66,6 +81,7 @@ fn get_poller_result() -> &'static Mutex<Option<String>> {
 pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<EventBus>) {
     let last_video_id = Arc::new(TokioMutex::new(String::new()));
     let last_status = Arc::new(TokioMutex::new(String::new()));
+    let last_logged_in = Arc::new(TokioMutex::new(Option::<bool>::None));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Polling thread: schedules eval on main thread, reads result from static
@@ -136,7 +152,20 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 Err(_) => continue,
             };
 
-            if bs.title.is_empty() {
+            // Login-state emission is always attempted, even on the login-only
+            // frame, because that frame is the whole point of the check (player
+            // DOM doesn't exist yet on the sign-in page).
+            if let Some(cur) = bs.logged_in {
+                let mut last_li = last_logged_in.lock().await;
+                if *last_li != Some(cur) {
+                    *last_li = Some(cur);
+                    drop(last_li);
+                    let _ = app.emit("player:login-changed", &cur);
+                }
+            }
+
+            // Login-only frames carry no track data — skip the rest.
+            if bs.login_only || bs.title.is_empty() {
                 continue;
             }
 
@@ -154,7 +183,8 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             };
 
             let mut last_vid = last_video_id.lock().await;
-            if track_key != *last_vid {
+            let track_changed = track_key != *last_vid;
+            if track_changed {
                 *last_vid = track_key;
                 drop(last_vid);
 
@@ -204,20 +234,43 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             }
 
             let new_repeat = parse_repeat(&bs.repeat_mode);
-            let (prev_shuffled, prev_repeat, prev_liked) = {
+            let (prev_shuffled, prev_repeat, prev_liked, stored_volume) = {
                 let ps = player_state.read().await;
-                (ps.is_shuffled, ps.repeat_mode, ps.is_liked)
+                (ps.is_shuffled, ps.repeat_mode, ps.is_liked, ps.volume)
             };
+
+            // YTM occasionally resets volume across track transitions (the
+            // <video> element loses attribute state when the src changes).
+            // On the cycle that reports a new track, refuse to overwrite our
+            // stored volume and push it back to YTM instead. Outside of that
+            // window we accept bs.volume as truth so tweaks made directly in
+            // the YTM UI are still reflected.
+            let effective_volume = if track_changed
+                && (bs.volume - stored_volume).abs() > 0.01
+            {
+                if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
+                    let args = format!("{{\"level\":{}}}", stored_volume);
+                    let _ = crate::webview_bridge::exec_playback_command_with_args(
+                        &window,
+                        "set_volume",
+                        &args,
+                    );
+                }
+                stored_volume
+            } else {
+                bs.volume
+            };
+
             {
                 let mut ps = player_state.write().await;
                 ps.position_secs = bs.position_secs;
-                ps.volume = bs.volume;
+                ps.volume = effective_volume;
                 ps.is_shuffled = bs.is_shuffled;
                 ps.repeat_mode = new_repeat;
                 ps.is_liked = bs.is_liked;
             }
             let _ = app.emit("player:position", &bs.position_secs);
-            let _ = app.emit("player:volume", &bs.volume);
+            let _ = app.emit("player:volume", &effective_volume);
             if prev_shuffled != bs.is_shuffled {
                 let _ = app.emit("player:shuffle-changed", &bs.is_shuffled);
             }

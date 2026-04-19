@@ -15,6 +15,7 @@ interface LibraryPageProps {
   activeTab: LibraryTab;
   onOpenPlaylist?: (playlistId: string) => void;
   onAutoPlayPlaylist?: (playlistId: string) => void;
+  onSearchArtist?: (name: string) => void;
 }
 
 const TAB_TITLES: Record<LibraryTab, string> = {
@@ -27,6 +28,7 @@ const TAB_TITLES: Record<LibraryTab, string> = {
 export const LibraryPage: FC<LibraryPageProps> = ({
   activeTab,
   onOpenPlaylist,
+  onSearchArtist,
 }) => {
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [songs, setSongs] = useState<TrackInfo[]>([]);
@@ -198,14 +200,21 @@ export const LibraryPage: FC<LibraryPageProps> = ({
               }}
             >
               {artists.map((artist) => (
-                <div
+                <button
                   key={artist.channelId}
+                  type="button"
+                  onClick={() => onSearchArtist?.(artist.name)}
+                  aria-label={`Search for ${artist.name}`}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
                     gap: 'var(--space-2)',
                     width: '120px',
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    cursor: 'pointer',
                   }}
                 >
                   <div
@@ -245,7 +254,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
                   >
                     {artist.name}
                   </span>
-                </div>
+                </button>
               ))}
             </div>
           ) : (

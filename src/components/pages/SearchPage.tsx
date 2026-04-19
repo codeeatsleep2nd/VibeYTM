@@ -26,12 +26,18 @@ const CATEGORY_PARAMS: Record<CategoryTab, string | undefined> = {
 interface SearchPageProps {
   onOpenPlaylist?: (playlistId: string) => void;
   onAutoPlayPlaylist?: (playlistId: string) => void;
+  pendingQuery?: string | null;
+  onPendingQueryConsumed?: () => void;
 }
 
 const cacheKey = (q: string, cat: CategoryTab | null): string =>
   `${q.trim().toLowerCase()}|${cat ?? 'all'}`;
 
-export const SearchPage: FC<SearchPageProps> = ({ onOpenPlaylist }) => {
+export const SearchPage: FC<SearchPageProps> = ({
+  onOpenPlaylist,
+  pendingQuery,
+  onPendingQueryConsumed,
+}) => {
   // `query` = current text in the input. `submittedQuery` = last query the
   // user actually committed (Enter or clicked a suggestion). Searches fire
   // off the latter only.
@@ -183,6 +189,15 @@ export const SearchPage: FC<SearchPageProps> = ({ onOpenPlaylist }) => {
     setShowSuggestions(false);
     setSuggestions([]);
   };
+
+  // When the app routes us here with a pending query (e.g. from Library →
+  // Artist click), submit it once and clear the latch so we don't loop.
+  useEffect(() => {
+    if (!pendingQuery) return;
+    submitQuery(pendingQuery);
+    setActiveCategory(null);
+    onPendingQueryConsumed?.();
+  }, [pendingQuery, onPendingQueryConsumed]);
 
   const handleTabClick = (tab: CategoryTab) => {
     // Click the active tab again to deselect → unified view.

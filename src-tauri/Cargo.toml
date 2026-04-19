@@ -1,6 +1,6 @@
 [package]
 name = "vibeytm"
-version = "0.1.0"
+version = "0.2.0"
 description = "An Apple Music-style YouTube Music desktop app"
 authors = ["dongli"]
 edition = "2021"

@@ -154,7 +154,11 @@ export const PlayerBar: FC<PlayerBarProps> = ({
     });
   };
   const duration = track?.durationSecs ?? 0;
-  const progress = duration > 0 ? positionSecs / duration : 0;
+  // Clamp position so a momentary bridge/track mismatch can't pin the bar at
+  // 100% (see usePlayerState: we also zero position on track-change, but the
+  // clamp is the last line of defense).
+  const safePosition = duration > 0 ? Math.min(positionSecs, duration) : positionSecs;
+  const progress = duration > 0 ? Math.min(1, Math.max(0, safePosition / duration)) : 0;
 
   return (
     <footer
@@ -204,11 +208,9 @@ export const PlayerBar: FC<PlayerBarProps> = ({
                 overflow: 'hidden',
                 flexShrink: 0,
                 padding: 0,
-                border: nowPlayingOpen
-                  ? '2px solid var(--color-accent)'
-                  : 'none',
+                border: 'none',
+                outline: 'none',
                 cursor: 'pointer',
-                transition: 'border var(--duration-fast) var(--ease-out)',
               }}
             >
               <CachedImage
@@ -266,7 +268,11 @@ export const PlayerBar: FC<PlayerBarProps> = ({
             size="var(--text-base)"
             isActive={isShuffled}
           />
-          <TransportButton label={'\u25C4\u25C4'} onClick={() => playerApi.previous()} />
+          <TransportButton
+            label={'\u23EE'}
+            ariaLabel="Previous"
+            onClick={() => playerApi.previous()}
+          />
           <button
             onClick={handleTogglePlay}
             aria-label={isPlaying ? 'Pause' : 'Play'}
@@ -291,7 +297,11 @@ export const PlayerBar: FC<PlayerBarProps> = ({
           >
             {isPlaying ? '\u275A\u275A' : '\u25B6'}
           </button>
-          <TransportButton label={'\u25BA\u25BA'} onClick={() => playerApi.next()} />
+          <TransportButton
+            label={'\u23ED'}
+            ariaLabel="Next"
+            onClick={() => playerApi.next()}
+          />
           <TransportButton
             label={<RepeatIcon mode={repeatMode} />}
             ariaLabel={REPEAT_ARIA[repeatMode]}
@@ -303,14 +313,21 @@ export const PlayerBar: FC<PlayerBarProps> = ({
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', width: '100%', maxWidth: '480px' }}>
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', minWidth: '36px', textAlign: 'right' }}>
-            {formatTime(positionSecs)}
+            {formatTime(safePosition)}
           </span>
           <input
             type="range"
             min={0}
             max={duration || 1}
-            value={positionSecs}
-            onChange={(e) => playerApi.seek(Number(e.target.value))}
+            value={safePosition}
+            onChange={(e) => {
+              // Optimistic local update so the thumb tracks the cursor without
+              // waiting for the backend round-trip. The next POSITION_UPDATED
+              // event will reconcile with authoritative time.
+              const next = Number(e.target.value);
+              applyOptimistic({ positionSecs: next });
+              playerApi.seek(next);
+            }}
             style={{
               flex: 1,
               height: '4px',
@@ -353,7 +370,7 @@ export const PlayerBar: FC<PlayerBarProps> = ({
               width: '80px',
               height: '4px',
               appearance: 'none',
-              background: `linear-gradient(to right, var(--color-text-secondary) ${volume * 100}%, var(--color-surface-3) ${volume * 100}%)`,
+              background: `linear-gradient(to right, var(--color-accent) ${volume * 100}%, var(--color-surface-3) ${volume * 100}%)`,
               borderRadius: 'var(--radius-full)',
               cursor: 'pointer',
               outline: 'none',
