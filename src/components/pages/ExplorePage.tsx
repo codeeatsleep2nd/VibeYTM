@@ -10,17 +10,27 @@ interface ExplorePageProps {
   onAutoPlayPlaylist?: (playlistId: string) => void;
 }
 
+// Module-level cache so the Explore feed survives tab-switch remounts. The
+// page component is unmounted when the user navigates away, which would
+// otherwise force a fresh fetch every time they return.
+let exploreCache: Shelf[] | null = null;
+
 export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
-  const [shelves, setShelves] = useState<Shelf[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [shelves, setShelves] = useState<Shelf[]>(exploreCache ?? []);
+  // If we already have cached data, skip the loading spinner on remount —
+  // render the cache immediately.
+  const [isLoading, setIsLoading] = useState(exploreCache === null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchExplore = useCallback(() => {
-    setIsLoading(true);
+    // Only show the loader when we have nothing to display — otherwise
+    // refresh silently and swap in the new data when it arrives.
+    if (exploreCache === null) setIsLoading(true);
     setError(null);
     browseApi
       .getExplore()
       .then((data) => {
+        exploreCache = data;
         setShelves(data);
         setIsLoading(false);
       })
@@ -31,6 +41,8 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
   }, []);
 
   useEffect(() => {
+    // On remount with a warm cache, skip the network round-trip entirely.
+    if (exploreCache !== null) return;
     fetchExplore();
   }, [fetchExplore]);
 
