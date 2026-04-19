@@ -204,11 +204,9 @@ export const PlayerBar: FC<PlayerBarProps> = ({
                 overflow: 'hidden',
                 flexShrink: 0,
                 padding: 0,
-                border: nowPlayingOpen
-                  ? '2px solid var(--color-accent)'
-                  : 'none',
+                border: 'none',
+                outline: 'none',
                 cursor: 'pointer',
-                transition: 'border var(--duration-fast) var(--ease-out)',
               }}
             >
               <CachedImage
