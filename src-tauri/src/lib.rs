@@ -10,7 +10,7 @@ mod ytm_api;
 
 use std::sync::Arc;
 
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 use cache::Cache;
 use events::EventBus;
@@ -29,6 +29,18 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
+        .on_window_event(|window, event| {
+            // macOS: clicking the red close button should hide the main
+            // window (leaving the app in the dock) instead of terminating
+            // it, so a subsequent dock-icon click can restore it via the
+            // Reopen handler below.
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .manage(bus.clone())
         .manage(player_state.clone())
         .manage(YtmApi::new())
@@ -180,6 +192,23 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error running VibeYTM");
+        .build(tauri::generate_context!())
+        .expect("error building VibeYTM")
+        .run(|app_handle, event| {
+            // macOS Reopen: fired when the user clicks the dock icon while
+            // the app has no visible windows. Standard expected behavior is
+            // to restore the main window.
+            if let RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = event
+            {
+                if !has_visible_windows {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+        });
 }
