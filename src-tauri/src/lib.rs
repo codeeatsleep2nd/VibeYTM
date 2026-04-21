@@ -35,12 +35,12 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
         .on_window_event(|window, event| {
-            // #43 root cause: the Settings "Close to tray" toggle was a pure
-            // frontend useState value — never persisted, never read by Rust.
-            // This close handler meanwhile UNCONDITIONALLY hid the window,
-            // so flipping the toggle had zero effect regardless of its
-            // position. Now: persist via state::settings, read back here,
-            // and branch — hide for close-to-tray, exit otherwise.
+            // macOS: clicking the red close button should hide the main
+            // window (leaving the app in the dock) instead of terminating
+            // it, so a subsequent dock-icon click can restore it via the
+            // Reopen handler below. The "Close to tray" setting gates this
+            // behavior — when disabled, the red button quits the app like
+            // a conventional desktop program (issue #43).
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     let close_to_tray = window

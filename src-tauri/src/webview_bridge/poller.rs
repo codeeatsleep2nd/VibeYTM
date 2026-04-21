@@ -204,13 +204,10 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                     drop(last_li);
                     let _ = app.emit("player:login-changed", &cur);
 
-                    // #37: prior to this, login-changed fired but nothing
-                    // downstream consumed it — the shared PlayerState and
-                    // last_account cache both kept the old user's data, so
-                    // the controller bar and sidebar still showed a track +
-                    // avatar after sign-out. Hard-reset the state and clear
-                    // the change-detection caches so the next poll cycle
-                    // re-emits ground truth for the new (signed-out) world.
+                    // Hard-reset the shared player state on sign-out so the
+                    // next subscriber receives defaults instead of whatever
+                    // was last scrobbled (issue #37). Also drop cached
+                    // account info and re-emit so the sidebar clears.
                     if !cur {
                         {
                             let mut ps = player_state.write().await;
@@ -283,11 +280,10 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 format!("{}:{}", bs.title, bs.artist)
             };
 
-            // #34 (part 1): the bridge's getDuration() fallback can be 0 for
-            // the first few cycles while the <video> element buffers. Without
-            // a backfill the progress bar briefly renders against duration=0
-            // and pins at 100%. Use the side-cache (populated on every prior
-            // play of this video) to seed a sensible initial length.
+            // Backfill the initial duration from the side-cache when the
+            // bridge hasn't reported one yet. Prevents a ~1s window where a
+            // freshly-clicked track has duration 0 (so the progress bar looks
+            // pinned at 100%) before YTM's metadata lands.
             let cached_duration = if !bs.video_id.is_empty() {
                 app.try_state::<crate::cache::Cache>()
                     .and_then(|c| c.get_track_duration(&bs.video_id))
@@ -337,14 +333,13 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             } else {
                 drop(last_vid);
 
-                // #34 (part 2): root cause was accepting every reported
-                // duration as truth. YTM's getDuration() reflects the
-                // BUFFERED length during early playback — a 4:12 track can
-                // report 0:29 until the pipeline fills, at which point
-                // getVideoData().lengthSeconds (now read first by the
-                // bridge) takes over. Only widen the known length; never
-                // shrink it, so one bad intermediate read can't poison the
-                // display for the rest of the track.
+                // Same track, but duration may have just become available
+                // (YTM occasionally reports 0 for the first few cycles while
+                // the <video> element buffers). Re-emit so the progress bar
+                // doesn't pin at the end. Also accept a *larger* duration —
+                // YTM sometimes reports a partial/buffered length first
+                // (issue #34: a 4:12 track shown as 0:29) before lengthSeconds
+                // resolves. Never shrink once we have a confirmed length.
                 if bs.duration_secs > 0.0 {
                     let needs_update = {
                         let ps = player_state.read().await;
