@@ -332,7 +332,18 @@ export const PlayerBar: FC<PlayerBarProps> = ({
               // that would otherwise bounce the thumb back to the old spot.
               const next = Number(e.target.value);
               markSeek(next);
-              applyOptimistic({ positionSecs: next });
+              // If we're currently playing, force the optimistic status
+              // back to 'playing' too. During a seek YTM briefly reports
+              // buffering/paused while the <video> reseats the buffer, and
+              // that transient would otherwise flash the pause glyph
+              // (issue #41). The STATUS_CHANGED echo guard needs the UI to
+              // already believe it's playing to know to discard the stale
+              // paused event.
+              if (isPlaying) {
+                applyOptimistic({ positionSecs: next, status: 'playing' });
+              } else {
+                applyOptimistic({ positionSecs: next });
+              }
               playerApi.seek(next);
               // If the user scrubs while paused, treat the click as "resume
               // here" — standard behavior across music players.

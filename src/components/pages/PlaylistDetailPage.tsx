@@ -18,6 +18,35 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
   const [playlist, setPlaylist] = useState<PlaylistDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Tri-state local view of whether the playlist is saved. Optimistic — the
+  // backend call confirms after the click, and we roll back on failure.
+  const [isSaved, setIsSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const toggleSaved = async () => {
+    if (isSaving) return;
+    const next = !isSaved;
+    setIsSaving(true);
+    setSaveError(null);
+    setIsSaved(next); // optimistic
+    try {
+      if (next) {
+        await browseApi.savePlaylistToLibrary(playlistId);
+      } else {
+        await browseApi.removePlaylistFromLibrary(playlistId);
+      }
+    } catch (e: unknown) {
+      // Roll back and surface the error so the user knows it didn't stick.
+      setIsSaved(!next);
+      setSaveError(
+        next ? 'Could not save to library' : 'Could not remove from library',
+      );
+      console.error('[PlaylistDetailPage] save toggle failed:', e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -323,31 +352,71 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
               {playlist.description}
             </p>
           )}
-          {/* Play all button */}
-          <button
-            onClick={() => {
-              if (playlist.tracks.length > 0 && playlist.tracks[0].videoId) {
-                playerApi.playTrack(playlist.tracks[0].videoId, playlistId).catch(() => {});
-              }
-            }}
+          {/* Action row: Play all + Save to library */}
+          <div
             style={{
-              alignSelf: 'flex-start',
-              marginTop: 'var(--space-2)',
-              background: 'var(--color-accent)',
-              border: 'none',
-              borderRadius: 'var(--radius-full)',
-              padding: 'var(--space-2) var(--space-5)',
-              color: 'oklch(100% 0 0)',
-              fontSize: 'var(--text-sm)',
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
+              display: 'flex',
               gap: 'var(--space-2)',
+              alignItems: 'center',
+              marginTop: 'var(--space-2)',
             }}
           >
-            &#x25B6; Play all
-          </button>
+            <button
+              onClick={() => {
+                if (playlist.tracks.length > 0 && playlist.tracks[0].videoId) {
+                  playerApi.playTrack(playlist.tracks[0].videoId, playlistId).catch(() => {});
+                }
+              }}
+              style={{
+                background: 'var(--color-accent)',
+                border: 'none',
+                borderRadius: 'var(--radius-full)',
+                padding: 'var(--space-2) var(--space-5)',
+                color: 'oklch(100% 0 0)',
+                fontSize: 'var(--text-sm)',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+              }}
+            >
+              &#x25B6; Play all
+            </button>
+            <button
+              onClick={toggleSaved}
+              disabled={isSaving}
+              aria-pressed={isSaved}
+              aria-label={isSaved ? 'Remove from library' : 'Save to library'}
+              style={{
+                background: 'transparent',
+                border: '1px solid oklch(100% 0 0 / 0.16)',
+                borderRadius: 'var(--radius-full)',
+                padding: 'var(--space-2) var(--space-4)',
+                color: isSaved ? 'var(--color-accent)' : 'var(--color-text-primary)',
+                fontSize: 'var(--text-sm)',
+                fontWeight: 500,
+                cursor: isSaving ? 'progress' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                opacity: isSaving ? 0.7 : 1,
+              }}
+            >
+              {isSaved ? '✓ Saved' : '+ Save to library'}
+            </button>
+          </div>
+          {saveError && (
+            <div
+              style={{
+                fontSize: 'var(--text-xs)',
+                color: '#f44',
+                marginTop: 'var(--space-1)',
+              }}
+            >
+              {saveError}
+            </div>
+          )}
         </div>
       </div>
       </div>

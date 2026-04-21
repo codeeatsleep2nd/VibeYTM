@@ -56,8 +56,39 @@ Apply to: Home, Search (Albums/Artists tabs), Explore, Library, Playlist detail
 - [ ] **#43** "Close to tray" toggle persists across restarts. With it OFF, the
       red close button exits the app. With it ON, the app hides to the tray.
 
+## Regression Checklist for 0.7.0
+- [ ] **#24** Closing the app and relaunching restores the last-played track
+      name, artwork, duration, and progress bar position (no autoplay — status
+      stays idle until user clicks Play). Works even if closed within 5 s of
+      playback starting.
+- [ ] **#41** Clicking the progress bar while a track is playing (or buffering
+      mid-seek) NEVER flashes the pause glyph. Pausing manually still works
+      instantly.
+- [ ] **#44** When YTM raises a playback error (e.g. region-blocked track),
+      the app retries playback automatically — `playVideo()` once, then
+      `seekTo(0)+play`, then `nextVideo()` — instead of freezing the queue.
+- [ ] **#45** Settings → About displays the true bundled app version
+      (pulled at runtime from the Tauri app API, not a build-time fallback).
+- [ ] **#46** Playlist detail page shows a "+ Save to library" button.
+      Clicking saves the playlist to the user's library; the button flips to
+      "✓ Saved" and a second click removes it.
+- [ ] **#47** With Background playback = OFF, closing the main window (tray
+      mode) pauses the music immediately. With it ON, audio continues.
+- [ ] **#48** Non-square cover images (e.g. 16:9 video thumbnails) display
+      letterboxed inside the square frame instead of being aggressively
+      center-cropped. Square album art still fills the frame edge-to-edge.
+- [ ] **#50** After sign-out, the sidebar avatar and name clear to
+      "Not signed in" and the home-page cache is dropped so the feed
+      refreshes with non-signed-in content on next visit.
+- [ ] **#51** If the user is already signed in, launching the app no longer
+      flashes the LoginPage or the YTM window — it boots directly into the
+      main UI. The YTM window is only surfaced when sign-in is needed.
+
 ## Login Flow
-- [ ] App launches with two windows (VibeYTM + YouTube Music)
+- [ ] First launch (no cached session): LoginPage appears and the YouTube
+      Music window surfaces automatically so the user can sign in
+- [ ] Relaunch while already signed in: no LoginPage, no YTM window flash —
+      the main UI appears directly (issue #51)
 - [ ] YouTube Music page loads without "unsupported browser" error
 - [ ] Can sign in to Google account (2FA works)
 - [ ] "I'm signed in — let's go" hides YTM window and shows main UI

@@ -1,8 +1,13 @@
 import { type FC, useEffect, useRef, useState } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
 import { cacheApi, settingsApi, ytmApi, type AppSettings, type CacheStats } from '../../lib/ipc';
 
 declare const __APP_VERSION__: string;
-const APP_VERSION = __APP_VERSION__;
+// Fallback only — the real version is fetched at runtime via Tauri's getVersion()
+// which returns the Cargo package version (what's actually bundled in the DMG).
+// Keeps Settings > About from showing a stale figure when package.json and
+// tauri.conf.json/Cargo.toml drift (issue #45).
+const FALLBACK_VERSION = __APP_VERSION__;
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -191,6 +196,7 @@ export const SettingsPage: FC = () => {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>(FALLBACK_VERSION);
   // Suppress the first save: we receive the persisted state from the
   // backend and would otherwise immediately round-trip it right back.
   const hydratedRef = useRef(false);
@@ -208,6 +214,12 @@ export const SettingsPage: FC = () => {
       .get()
       .then(setSettings)
       .catch((e) => console.error('settings load failed', e));
+    // Fetch the authoritative version from the Tauri runtime (Cargo/tauri.conf).
+    // This is the version actually bundled in the running app, so About can't
+    // drift from the real build (issue #45).
+    getVersion()
+      .then(setAppVersion)
+      .catch((e) => console.error('getVersion failed', e));
   }, []);
 
   useEffect(() => {
@@ -374,7 +386,7 @@ export const SettingsPage: FC = () => {
             marginBottom: 'var(--space-2)',
           }}
         >
-          VibeYTM v{APP_VERSION}
+          VibeYTM v{appVersion}
         </div>
         <div
           style={{

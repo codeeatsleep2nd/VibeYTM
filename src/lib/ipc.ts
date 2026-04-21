@@ -28,6 +28,7 @@ export const playerApi = {
   setVolume: (level: number) => invoke('set_volume', { level }),
   getState: () => invoke<PlayerState>('get_player_state'),
   getAccountInfo: () => invoke<AccountInfo | null>('get_account_info'),
+  getLoginState: () => invoke<boolean | null>('get_login_state'),
   playTrack: (videoId: string, playlistId?: string) => invoke('play_track', { videoId, playlistId: playlistId ?? null }),
   addToQueue: (track: TrackInfo) => invoke('add_to_queue', { track }),
   removeFromQueue: (index: number) => invoke('remove_from_queue', { index }),
@@ -74,6 +75,10 @@ export const browseApi = {
   getLibrarySongs: () => invoke<TrackInfo[]>('get_library_songs'),
   getLibraryAlbums: () => invoke<AlbumSummary[]>('get_library_albums'),
   getLibraryArtists: () => invoke<ArtistSummary[]>('get_library_artists'),
+  savePlaylistToLibrary: (playlistId: string) =>
+    invoke<void>('save_playlist_to_library', { playlistId }),
+  removePlaylistFromLibrary: (playlistId: string) =>
+    invoke<void>('remove_playlist_from_library', { playlistId }),
 };
 
 export async function playFirstFromPlaylist(playlistId: string): Promise<void> {

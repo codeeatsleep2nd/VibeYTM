@@ -1,5 +1,6 @@
 import { type FC, memo } from 'react';
 import { useAccountInfo } from '../../hooks/useAccountInfo';
+import { useLoginState } from '../../hooks/useLoginState';
 import { CachedImage } from '../CachedImage';
 
 interface NavItemProps {
@@ -69,6 +70,7 @@ const LIBRARY_ITEMS = [
 
 export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
   const account = useAccountInfo();
+  const loggedIn = useLoginState();
 
   return (
   <aside
@@ -148,7 +150,7 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
 
     {/* Account — locked to the very bottom of the sidebar */}
     <div style={{ padding: 'var(--space-3)' }}>
-      <AccountCard account={account} />
+      <AccountCard account={account} loggedIn={loggedIn} />
     </div>
   </aside>
   );
@@ -156,6 +158,8 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
 
 interface AccountCardProps {
   account: { name: string; avatarUrl: string } | null;
+  /** Tri-state: true signed in, false signed out, null undetermined. */
+  loggedIn: boolean | null;
 }
 
 // Memo keeps the avatar image stable across parent re-renders triggered by
@@ -165,11 +169,23 @@ interface AccountCardProps {
 const AccountCard = memo(
   AccountCardInner,
   (prev, next) =>
+    prev.loggedIn === next.loggedIn &&
     prev.account?.name === next.account?.name &&
     prev.account?.avatarUrl === next.account?.avatarUrl,
 );
 
-function AccountCardInner({ account }: AccountCardProps) {
+function AccountCardInner({ account, loggedIn }: AccountCardProps) {
+  // Never render the cached avatar or "Signed in" label from a prior session
+  // when the user has signed out (issue #50). Show a neutral placeholder
+  // instead so the sidebar honestly reflects the auth state.
+  const isSignedOut = loggedIn === false;
+  const showAccount = !isSignedOut && account !== null;
+  const label = showAccount
+    ? account.name || 'Signed in'
+    : isSignedOut
+      ? 'Not signed in'
+      : 'Signing in…';
+
   return (
   <div
     style={{
@@ -180,7 +196,7 @@ function AccountCardInner({ account }: AccountCardProps) {
       borderRadius: 'var(--radius-md)',
       minWidth: 0,
     }}
-    title={account?.name || 'Signed in'}
+    title={label}
   >
     <div
       style={{
@@ -197,7 +213,7 @@ function AccountCardInner({ account }: AccountCardProps) {
         color: 'var(--color-text-secondary)',
       }}
     >
-      {account?.avatarUrl ? (
+      {showAccount && account.avatarUrl ? (
         <CachedImage
           src={account.avatarUrl}
           alt={account.name || 'Account avatar'}
@@ -214,13 +230,13 @@ function AccountCardInner({ account }: AccountCardProps) {
         style={{
           fontSize: 'var(--text-sm)',
           fontWeight: 500,
-          color: 'var(--color-text-primary)',
+          color: isSignedOut ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)',
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
         }}
       >
-        {account?.name || 'Signed in'}
+        {label}
       </div>
     </div>
   </div>

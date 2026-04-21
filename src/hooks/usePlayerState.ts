@@ -86,10 +86,12 @@ export function usePlayerState(): UsePlayerState {
     // reports paused while the video element reseats the buffer, and the
     // play button would flicker to paused before the next "playing" event
     // caught up (issue #41). Drop paused events inside the echo window
-    // while we still believe we're playing.
+    // while we still believe we're playing OR buffering — the intermediate
+    // `buffering` status also arrives during a seek and would otherwise let
+    // the stale paused through.
     if (
       status === 'paused' &&
-      statusRef.current === 'playing' &&
+      (statusRef.current === 'playing' || statusRef.current === 'buffering') &&
       Date.now() - lastSeekAtRef.current < SEEK_STATUS_ECHO_WINDOW_MS
     ) {
       return;

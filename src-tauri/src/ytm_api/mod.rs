@@ -184,6 +184,42 @@ impl YtmApi {
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_artists(&data))
     }
+
+    /// Add a playlist to the signed-in user's library ("Saved playlists").
+    /// Uses the YTM like endpoint with the playlist as the target — the same
+    /// call the YTM web UI's save button makes, which adds the playlist to
+    /// FEmusic_liked_playlists (issue #46).
+    pub async fn save_playlist_to_library(
+        &self,
+        app: &AppHandle,
+        playlist_id: &str,
+    ) -> anyhow::Result<()> {
+        let body = serde_json::json!({
+            "target": { "playlistId": playlist_id }
+        })
+        .to_string();
+        ytm_api_call(app, "like/like", &body)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        Ok(())
+    }
+
+    /// Remove a playlist from the signed-in user's library. Mirror of
+    /// `save_playlist_to_library`.
+    pub async fn remove_playlist_from_library(
+        &self,
+        app: &AppHandle,
+        playlist_id: &str,
+    ) -> anyhow::Result<()> {
+        let body = serde_json::json!({
+            "target": { "playlistId": playlist_id }
+        })
+        .to_string();
+        ytm_api_call(app, "like/removelike", &body)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
