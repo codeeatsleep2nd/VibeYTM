@@ -9,7 +9,19 @@ interface CachedImageProps {
   style?: CSSProperties;
   onError?: (e: React.SyntheticEvent<HTMLImageElement>) => void;
   loading?: 'lazy' | 'eager';
+  /**
+   * When true (default for `objectFit: cover` style), if the source image is
+   * non-square (e.g. a 16:9 video thumbnail), swap the fit to `contain` so
+   * the full image is visible instead of aggressively cropped (issue #48).
+   * Pass `false` to preserve the exact style you set.
+   */
+  autoFitForAspect?: boolean;
 }
+
+// Heuristic: treat anything more than ~5% off from 1:1 as "non-square" and
+// switch to contain. Square album art served by YTM is always exactly 1:1, so
+// this only kicks in for genuinely rectangular sources.
+const SQUARE_TOLERANCE = 0.05;
 
 // In-memory map: remote URL -> local asset URL (survives re-renders)
 const inflight = new Map<string, Promise<string | null>>();
@@ -53,12 +65,15 @@ export const CachedImage: FC<CachedImageProps> = ({
   style,
   onError,
   loading = 'lazy',
+  autoFitForAspect = true,
 }) => {
   const [displayUrl, setDisplayUrl] = useState<string | undefined>(undefined);
+  const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
 
   useEffect(() => {
     if (!src) {
       setDisplayUrl(undefined);
+      setNaturalAspect(null);
       return;
     }
 
@@ -69,15 +84,20 @@ export const CachedImage: FC<CachedImageProps> = ({
     const tryReveal = async (url: string) => {
       // Step 2: pre-decode the image off-DOM so the browser fully prepares
       // the bitmap. Only after decode() resolves do we mount the <img>.
+      const probe = new Image();
+      probe.src = url;
+      let aspect: number | null = null;
       try {
-        const probe = new Image();
-        probe.src = url;
         await probe.decode();
+        if (probe.naturalWidth > 0 && probe.naturalHeight > 0) {
+          aspect = probe.naturalWidth / probe.naturalHeight;
+        }
       } catch {
         // decode() can reject for cross-origin images even when they're
         // perfectly loadable; ignore and fall through to mount anyway.
       }
       if (cancelled) return;
+      setNaturalAspect(aspect);
       setDisplayUrl(url);
     };
 
@@ -101,6 +121,17 @@ export const CachedImage: FC<CachedImageProps> = ({
     return null;
   }
 
+  // When the caller requested `objectFit: cover` but the source is decidedly
+  // non-square (video thumbnails, typically ~16:9), switch to `contain` so the
+  // whole image is visible inside the square frame instead of being aggressively
+  // cropped — the exact complaint in issue #48.
+  const effectiveStyle: CSSProperties = (() => {
+    if (!autoFitForAspect || !style || style.objectFit !== 'cover') return style ?? {};
+    if (naturalAspect === null) return style;
+    if (Math.abs(naturalAspect - 1) <= SQUARE_TOLERANCE) return style;
+    return { ...style, objectFit: 'contain' };
+  })();
+
   return (
     <img
       src={displayUrl}
@@ -108,7 +139,7 @@ export const CachedImage: FC<CachedImageProps> = ({
       width={width}
       height={height}
       loading={loading}
-      style={style}
+      style={effectiveStyle}
       onError={onError}
     />
   );

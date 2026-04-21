@@ -59,6 +59,22 @@ fn save_sync(app: &AppHandle, session: &PersistedSession) {
     }
 }
 
+/// Flush the current in-memory state to disk immediately. Called from the
+/// window-close handler so the last-played track/position survives even if
+/// the user closes the app within 5 seconds of starting playback (before the
+/// periodic saver has had a chance to tick) — issue #24.
+pub fn flush_now(app: &AppHandle, state: &SharedPlayerState) {
+    let snapshot = {
+        let player = tauri::async_runtime::block_on(async { state.read().await.clone() });
+        PersistedSession {
+            track: player.track.clone(),
+            position_secs: player.position_secs,
+            volume: player.volume,
+        }
+    };
+    save_sync(app, &snapshot);
+}
+
 /// Apply a loaded session to in-memory state. Position and volume are
 /// restored verbatim; playback status stays idle so nothing auto-plays.
 pub async fn apply(state: &SharedPlayerState, session: PersistedSession) {

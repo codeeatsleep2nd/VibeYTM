@@ -1,6 +1,7 @@
 import { type FC, useCallback, useEffect, useState } from 'react';
 import type { Shelf, TrackInfo } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
+import { useTauriEvent } from '../../hooks/useTauriEvent';
 import { ShelfRow } from '../browse/ShelfRow';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
@@ -90,6 +91,21 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist }) => {
   useEffect(() => {
     fetchHome();
   }, [fetchHome]);
+
+  // When the user signs out, the cached shelves represent the previous
+  // account's home feed. Drop them so the next render pulls non-signed-in
+  // content instead of showing stale personalized data (issue #50).
+  useTauriEvent<boolean>('player:login-changed', (nowLoggedIn) => {
+    if (!nowLoggedIn) {
+      cachedShelves = null;
+      cachedAt = 0;
+      firstLoadDone = false;
+      cachedMoodSongs = null;
+      setShelves([]);
+      setMoodSongs([]);
+      fetchHome(true);
+    }
+  });
 
   // Fetch mood songs when a mood tab other than "All" is selected
   useEffect(() => {

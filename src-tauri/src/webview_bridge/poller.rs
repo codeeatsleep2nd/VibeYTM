@@ -202,6 +202,13 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 if changed {
                     *last_li = Some(cur);
                     drop(last_li);
+                    // Mirror into the shared player state so the frontend can
+                    // query it synchronously at launch (issue #51) instead of
+                    // racing the login event.
+                    {
+                        let mut ps = player_state.write().await;
+                        ps.logged_in = Some(cur);
+                    }
                     let _ = app.emit("player:login-changed", &cur);
 
                     // Hard-reset the shared player state on sign-out so the
@@ -212,6 +219,7 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                         {
                             let mut ps = player_state.write().await;
                             *ps = crate::state::player::PlayerState::default();
+                            ps.logged_in = Some(false);
                         }
                         let mut last_acc = last_account.lock().await;
                         *last_acc = None;

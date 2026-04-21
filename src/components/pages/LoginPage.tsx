@@ -26,9 +26,16 @@ export const LoginPage: FC<LoginPageProps> = ({ onLoggedIn }) => {
     if (isLoggedIn) autoAdvance();
   });
 
-  // Also nudge the bridge to re-check quickly so a user who is already
-  // signed in (returning user) isn't forced to wait for the next poll cycle.
+  // The YTM window is created hidden at startup to avoid flashing on an
+  // already-signed-in session (issue #51). If we landed on the LoginPage,
+  // the user needs to see that window to authenticate — surface it.
   useEffect(() => {
+    ytmApi.showYtm().catch(() => {
+      // If showing fails, the user can still click the "Show YouTube Music
+      // window" button below as a manual recovery path.
+    });
+    // Also nudge the bridge to re-check quickly so a user who is already
+    // signed in (returning user) isn't forced to wait for the next poll cycle.
     ytmApi.injectBridge().catch(() => {
       // Bridge was already injected via Tauri init script — safe to ignore.
     });

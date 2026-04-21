@@ -81,6 +81,18 @@ pub async fn get_account_info(
     Ok(player.account.clone())
 }
 
+/// Returns the YTM sign-in state as last observed by the bridge poller.
+/// Tri-state: None = bridge hasn't reported yet; Some(true) = signed in;
+/// Some(false) = signed out. Used by the frontend on launch to skip the
+/// login gate when the user is already authenticated (issue #51).
+#[tauri::command]
+pub async fn get_login_state(
+    state: State<'_, SharedPlayerState>,
+) -> Result<Option<bool>, String> {
+    let player = state.read().await;
+    Ok(player.logged_in)
+}
+
 // --- Queue management ---
 
 #[tauri::command]

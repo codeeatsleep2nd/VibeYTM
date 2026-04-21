@@ -53,6 +53,11 @@ pub struct PlayerState {
     pub is_shuffled: bool,
     pub queue: Vec<TrackInfo>,
     pub account: Option<AccountInfo>,
+    /// Tri-state YTM sign-in status. None = unknown (bridge not yet loaded),
+    /// Some(true) = signed in, Some(false) = signed out. Used on app launch
+    /// to decide whether to skip the login page (issue #51) and to avoid
+    /// rendering stale signed-in data after sign-out (issue #50).
+    pub logged_in: Option<bool>,
 }
 
 impl Default for PlayerState {
@@ -67,6 +72,7 @@ impl Default for PlayerState {
             is_shuffled: false,
             queue: Vec::new(),
             account: None,
+            logged_in: None,
         }
     }
 }

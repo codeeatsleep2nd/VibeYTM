@@ -43,13 +43,41 @@ pub fn run() {
             // a conventional desktop program (issue #43).
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { api, .. } = event {
-                    let close_to_tray = window
+                    let settings = window
                         .app_handle()
                         .try_state::<SharedSettings>()
-                        .map(|s| state::settings::read_blocking(&s).general.close_to_tray)
-                        .unwrap_or(true);
-                    if close_to_tray {
+                        .map(|s| state::settings::read_blocking(&s).general)
+                        .unwrap_or(state::settings::GeneralSettings {
+                            close_to_tray: true,
+                            background_playback: true,
+                        });
+                    // Flush the last-played session to disk right now so the
+                    // next launch can restore it even when the user closes
+                    // the app within the saver's 5s tick (issue #24).
+                    if let Some(player_state) = window
+                        .app_handle()
+                        .try_state::<SharedPlayerState>()
+                    {
+                        state::persistence::flush_now(
+                            window.app_handle(),
+                            &player_state,
+                        );
+                    }
+                    if settings.close_to_tray {
                         api.prevent_close();
+                        // If the user opted out of background playback, pause
+                        // the YTM webview before hiding the main window so
+                        // audio doesn't keep playing in the tray (issue #47).
+                        if !settings.background_playback {
+                            if let Some(ytm_window) =
+                                crate::webview_bridge::get_ytm_window(window.app_handle())
+                            {
+                                let _ = crate::webview_bridge::exec_playback_command(
+                                    &ytm_window,
+                                    "pause",
+                                );
+                            }
+                        }
                         let _ = window.hide();
                     } else {
                         // Let the event proceed; Tauri will close the window,
@@ -70,6 +98,7 @@ pub fn run() {
             commands::on_position_updated,
             commands::get_player_state,
             commands::player::get_account_info,
+            commands::player::get_login_state,
             commands::player::play,
             commands::player::pause,
             commands::player::toggle_play,
@@ -98,6 +127,8 @@ pub fn run() {
             commands::browse::get_library_songs,
             commands::browse::get_library_albums,
             commands::browse::get_library_artists,
+            commands::browse::save_playlist_to_library,
+            commands::browse::remove_playlist_from_library,
             commands::cache::cache_fetch_image,
             commands::cache::cache_clear,
             commands::cache::cache_stats,
@@ -167,10 +198,13 @@ pub fn run() {
             // 1. YouTube Music accepts Safari as a supported browser
             // 2. Google sign-in allows Safari (unlike Chrome-spoofed WebViews)
             let safari_ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15";
+            // Start the YTM window hidden so an already-signed-in user never
+            // sees it flash on launch (issue #51). The LoginPage will call
+            // show_ytm when sign-in is actually needed.
             let ytm_builder = WebviewWindowBuilder::new(app, "ytm", ytm_url)
                 .title("YouTube Music")
                 .inner_size(1024.0, 700.0)
-                .visible(true)
+                .visible(false)
                 .decorations(true)
                 .center()
                 .user_agent(safari_ua)

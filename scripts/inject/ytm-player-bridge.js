@@ -281,6 +281,48 @@
   };
 
   /**
+   * Auto-retry on YTM playback errors (issue #44). The YTM iframe player
+   * surfaces error codes (2,5,100,101,150) via `onError` — typically for
+   * region-blocked, private, or removed videos. Without intervention the
+   * player stalls with no way forward. Policy:
+   *   attempt 1: playVideo() — transient network/DRM glitches often recover
+   *   attempt 2: seekTo(0) + playVideo()
+   *   attempt >=3 within the retry window: nextVideo() so the queue advances
+   * The attempt counter resets once we observe actual progress (position > 1s)
+   * so an eventually-good track doesn't poison the next failure.
+   */
+  var errorRetries = 0;
+  var lastErrorAtMs = 0;
+  var ERROR_RESET_WINDOW_MS = 30000;
+
+  function attachPlayerErrorListener(player) {
+    if (!player || !player.addEventListener) return;
+    try {
+      player.addEventListener('onError', function (code) {
+        var now = Date.now();
+        if (now - lastErrorAtMs > ERROR_RESET_WINDOW_MS) {
+          errorRetries = 0;
+        }
+        lastErrorAtMs = now;
+        errorRetries += 1;
+        log('onError code=' + code + ' attempt=' + errorRetries);
+        try {
+          if (errorRetries === 1) {
+            player.playVideo();
+          } else if (errorRetries === 2) {
+            player.seekTo(0, true);
+            player.playVideo();
+          } else {
+            // Give up on this track — advance the queue so playback continues.
+            player.nextVideo();
+            errorRetries = 0;
+          }
+        } catch (e) {}
+      });
+    } catch (e) {}
+  }
+
+  /**
    * Watchdog for issue #40: songs occasionally start, then stall at 0:00
    * with status "playing" or "buffering" — the <video> element is ready
    * but playback never actually begins. If we stay at position 0 for
@@ -312,6 +354,8 @@
       if (pos > lastPositionSample) {
         stuckSinceMs = 0;
         stuckRetries = 0;
+        // Clear the error-retry counter too — we proved the track works.
+        if (pos > 1.0) errorRetries = 0;
       }
       lastPositionSample = pos;
       if (pos > 0.25) return;
@@ -347,8 +391,10 @@
   }
 
   function waitForPlayer() {
-    if (getPlayer()) {
+    var p = getPlayer();
+    if (p) {
       log('player found');
+      attachPlayerErrorListener(p);
       setInterval(update, 150);
       setInterval(checkStuck, 1000);
       update();

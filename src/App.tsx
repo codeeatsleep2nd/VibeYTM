@@ -1,4 +1,4 @@
-import { type FC, useState, useCallback, useRef } from 'react';
+import { type FC, useState, useCallback, useEffect, useRef } from 'react';
 import './styles/global.css';
 import { AppShell } from './components/layout/AppShell';
 import { HomePage } from './components/pages/HomePage';
@@ -8,6 +8,8 @@ import { ExplorePage } from './components/pages/ExplorePage';
 import { SettingsPage } from './components/pages/SettingsPage';
 import { LoginPage } from './components/pages/LoginPage';
 import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
+import { useLoginState } from './hooks/useLoginState';
+import { ytmApi } from './lib/ipc';
 
 interface ViewingPlaylist {
   id: string;
@@ -15,7 +17,11 @@ interface ViewingPlaylist {
 }
 
 const App: FC = () => {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const loginState = useLoginState();
+  // Local override so the user can dismiss the login page manually (e.g. via
+  // "Skip for now") even if the bridge hasn't confirmed sign-in yet.
+  const [loginOverride, setLoginOverride] = useState(false);
+  const isLoggedIn = loginState === true || loginOverride;
   const [currentPath, setCurrentPath] = useState('home');
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
@@ -48,8 +54,37 @@ const App: FC = () => {
     setCurrentPath('search');
   }, []);
 
+  // Hide the YTM window as soon as we confirm the user is signed in. Without
+  // this the window lingers from its .visible(true) startup state (issue #51).
+  useEffect(() => {
+    if (loginState === true) {
+      ytmApi.hideYtm().catch(() => {
+        // If hiding fails, the YTM window stays — non-fatal.
+      });
+    }
+  }, [loginState]);
+
+  // While we don't know the login state, show a neutral placeholder instead
+  // of flashing the login page first.
+  if (loginState === null && !loginOverride) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100vh',
+          color: 'var(--color-text-tertiary)',
+          fontSize: 'var(--text-base)',
+        }}
+      >
+        Loading…
+      </div>
+    );
+  }
+
   if (!isLoggedIn) {
-    return <LoginPage onLoggedIn={() => setIsLoggedIn(true)} />;
+    return <LoginPage onLoggedIn={() => setLoginOverride(true)} />;
   }
 
   const renderPage = () => {

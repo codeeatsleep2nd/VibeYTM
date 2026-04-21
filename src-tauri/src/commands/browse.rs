@@ -207,3 +207,29 @@ pub async fn get_library_artists(
     tracing::info!(artists = result.len(), "browse::get_library_artists done");
     Ok(result)
 }
+
+#[tauri::command]
+pub async fn save_playlist_to_library(
+    playlist_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<(), String> {
+    tracing::info!(playlist_id = %playlist_id, "browse::save_playlist_to_library called");
+    api.save_playlist_to_library(&app, &playlist_id).await.map_err(|e| {
+        tracing::error!(error = %e, "browse::save_playlist_to_library failed");
+        e.to_string()
+    })
+}
+
+#[tauri::command]
+pub async fn remove_playlist_from_library(
+    playlist_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<(), String> {
+    tracing::info!(playlist_id = %playlist_id, "browse::remove_playlist_from_library called");
+    api.remove_playlist_from_library(&app, &playlist_id).await.map_err(|e| {
+        tracing::error!(error = %e, "browse::remove_playlist_from_library failed");
+        e.to_string()
+    })
+}
