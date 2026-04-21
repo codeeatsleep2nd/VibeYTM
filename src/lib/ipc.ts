@@ -44,6 +44,26 @@ export const ytmApi = {
   injectBridge: () => invoke('inject_ytm_bridge'),
 };
 
+export interface AppSettings {
+  general: {
+    closeToTray: boolean;
+    backgroundPlayback: boolean;
+  };
+  integrations: {
+    notificationsEnabled: boolean;
+  };
+  shortcuts: {
+    playPause: string;
+    nextTrack: string;
+    prevTrack: string;
+  };
+}
+
+export const settingsApi = {
+  get: () => invoke<AppSettings>('get_settings'),
+  set: (settings: AppSettings) => invoke<void>('set_settings', { new: settings }),
+};
+
 export const browseApi = {
   search: (query: string, filter?: string) => invoke<SearchResults>('search', { query, filter: filter ?? null }),
   searchSuggestions: (query: string) => invoke<string[]>('search_suggestions', { query }),

@@ -21,7 +21,9 @@ export function useAccountInfo(): AccountInfo | null {
     };
   }, []);
 
-  useTauriEvent<AccountInfo>('player:account-changed', (info) => {
+  useTauriEvent<AccountInfo | null>('player:account-changed', (info) => {
+    // Null payload means "signed out" — clear the sidebar avatar and name
+    // so stale info doesn't linger after the user logs out (issue #37).
     setAccount(info);
   });
 

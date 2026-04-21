@@ -15,6 +15,7 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use cache::Cache;
 use events::EventBus;
 use state::player::SharedPlayerState;
+use state::settings::SharedSettings;
 use ytm_api::YtmApi;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -23,6 +24,10 @@ pub fn run() {
 
     let bus = Arc::new(EventBus::new());
     let player_state: SharedPlayerState = SharedPlayerState::default();
+    // Settings are loaded lazily on setup (we need an AppHandle to find the
+    // data dir), so initialize the shared wrapper with defaults here.
+    let settings_state: SharedSettings =
+        std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -33,16 +38,31 @@ pub fn run() {
             // macOS: clicking the red close button should hide the main
             // window (leaving the app in the dock) instead of terminating
             // it, so a subsequent dock-icon click can restore it via the
-            // Reopen handler below.
+            // Reopen handler below. The "Close to tray" setting gates this
+            // behavior — when disabled, the red button quits the app like
+            // a conventional desktop program (issue #43).
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window.hide();
+                    let close_to_tray = window
+                        .app_handle()
+                        .try_state::<SharedSettings>()
+                        .map(|s| state::settings::read_blocking(&s).general.close_to_tray)
+                        .unwrap_or(true);
+                    if close_to_tray {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    } else {
+                        // Let the event proceed; Tauri will close the window,
+                        // and since it's the last visible window the app
+                        // exits on macOS/Win/Linux alike.
+                        window.app_handle().exit(0);
+                    }
                 }
             }
         })
         .manage(bus.clone())
         .manage(player_state.clone())
+        .manage(settings_state.clone())
         .manage(YtmApi::new())
         .invoke_handler(tauri::generate_handler![
             commands::on_track_changed,
@@ -83,8 +103,20 @@ pub fn run() {
             commands::cache::cache_stats,
             commands::cache::cache_get_track,
             commands::cache::cache_put_track,
+            commands::settings::get_settings,
+            commands::settings::set_settings,
         ])
         .setup(move |app| {
+            // Load persisted settings before registering integrations so a
+            // future preference that gates an integration would see it.
+            let loaded_settings = state::settings::load(app.handle());
+            {
+                let settings_clone = settings_state.clone();
+                tauri::async_runtime::block_on(async move {
+                    *settings_clone.write().await = loaded_settings;
+                });
+            }
+
             tray::setup_tray(app.handle(), bus.clone())?;
 
             // Initialize disk cache at {app_data}/cache

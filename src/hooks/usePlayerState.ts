@@ -5,9 +5,15 @@ import { EVENTS } from '../lib/events';
 import { useTauriEvent } from './useTauriEvent';
 
 // Drop VOLUME_CHANGED echoes that arrive within this window of a local
-// optimistic set, so fast drags aren't overwritten by stale intermediate
-// values from the YTM bridge poller.
-const VOLUME_ECHO_WINDOW_MS = 500;
+// optimistic set, so fast drags (and click-to-jump) aren't overwritten by
+// stale intermediate values from the YTM bridge poller. The bridge polls at
+// 150ms and YTM's <video>.volume can take up to 3 poll cycles to settle, so
+// 1200ms absorbs the whole settling window.
+const VOLUME_ECHO_WINDOW_MS = 1200;
+
+// After a seek, ignore STATUS_CHANGED=paused events for this long — they
+// are usually stale echoes from before YTM resumed (issue #41).
+const SEEK_STATUS_ECHO_WINDOW_MS = 800;
 
 // After a manual seek, POSITION_UPDATED events emitted before YTM finished
 // seeking carry pre-seek timestamps that would visually bounce the thumb
@@ -53,6 +59,10 @@ export function usePlayerState(): UsePlayerState {
   const lastSeekAtRef = useRef(0);
   const seekTargetRef = useRef(0);
   const lastTrackChangeAtRef = useRef(0);
+  // Latest status mirror so event handlers can branch on it without
+  // rebinding every render. Kept in sync with state.status below.
+  const statusRef = useRef<PlaybackStatus>(DEFAULT_STATE.status);
+  statusRef.current = state.status;
 
   useEffect(() => {
     playerApi.getState().then((s) => {
@@ -72,6 +82,18 @@ export function usePlayerState(): UsePlayerState {
   });
 
   useTauriEvent<PlaybackStatus>(EVENTS.STATUS_CHANGED, (status) => {
+    // Suppress stale "paused" echoes right after a seek: YTM briefly
+    // reports paused while the video element reseats the buffer, and the
+    // play button would flicker to paused before the next "playing" event
+    // caught up (issue #41). Drop paused events inside the echo window
+    // while we still believe we're playing.
+    if (
+      status === 'paused' &&
+      statusRef.current === 'playing' &&
+      Date.now() - lastSeekAtRef.current < SEEK_STATUS_ECHO_WINDOW_MS
+    ) {
+      return;
+    }
     setState((prev) => ({ ...prev, status }));
   });
 
@@ -128,6 +150,17 @@ export function usePlayerState(): UsePlayerState {
 
   useTauriEvent<boolean>(EVENTS.LIKE_CHANGED, (isLiked) => {
     setState((prev) => ({ ...prev, isLiked }));
+  });
+
+  // When the user signs out of YouTube Music, the player controller bar
+  // still shows the last track's metadata until the page is reloaded
+  // (issue #37). Reset the entire player slice to defaults so the sidebar
+  // and bottom bar return to their idle state. Account info is handled
+  // separately via useAccountInfo.
+  useTauriEvent<boolean>(EVENTS.LOGIN_CHANGED, (loggedIn) => {
+    if (!loggedIn) {
+      setState(DEFAULT_STATE);
+    }
   });
 
   const applyOptimistic = useCallback((patch: Partial<PlayerState>) => {
