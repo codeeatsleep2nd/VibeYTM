@@ -1,4 +1,4 @@
-import { type FC } from 'react';
+import { type FC, memo } from 'react';
 import { useAccountInfo } from '../../hooks/useAccountInfo';
 import { CachedImage } from '../CachedImage';
 
@@ -158,7 +158,19 @@ interface AccountCardProps {
   account: { name: string; avatarUrl: string } | null;
 }
 
-const AccountCard: FC<AccountCardProps> = ({ account }) => (
+// Memo keeps the avatar image stable across parent re-renders triggered by
+// track/position/status events. Without this the <CachedImage> inside would
+// tear down and re-probe on every player event, causing a visible flicker
+// of the profile picture whenever a new song started (issue #38).
+const AccountCard = memo(
+  AccountCardInner,
+  (prev, next) =>
+    prev.account?.name === next.account?.name &&
+    prev.account?.avatarUrl === next.account?.avatarUrl,
+);
+
+function AccountCardInner({ account }: AccountCardProps) {
+  return (
   <div
     style={{
       display: 'flex',
@@ -212,4 +224,5 @@ const AccountCard: FC<AccountCardProps> = ({ account }) => (
       </div>
     </div>
   </div>
-);
+  );
+}

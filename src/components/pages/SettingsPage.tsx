@@ -1,5 +1,8 @@
-import { type FC, useEffect, useState } from 'react';
-import { cacheApi, ytmApi, type CacheStats } from '../../lib/ipc';
+import { type FC, useEffect, useRef, useState } from 'react';
+import { cacheApi, settingsApi, ytmApi, type AppSettings, type CacheStats } from '../../lib/ipc';
+
+declare const __APP_VERSION__: string;
+const APP_VERSION = __APP_VERSION__;
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -175,18 +178,22 @@ const OutlinedButton: FC<{ label: string; onClick: () => void }> = ({ label, onC
   </button>
 );
 
+// Mirrors the chords registered in
+// src-tauri/src/integrations/global_shortcuts.rs. Keep in sync — otherwise
+// the Settings page advertises bindings that aren't wired up.
 const SHORTCUTS = [
-  { action: 'Play / Pause', keys: 'Space' },
-  { action: 'Next Track', keys: 'Cmd + Right' },
-  { action: 'Previous Track', keys: 'Cmd + Left' },
+  { action: 'Play / Pause', keys: '\u2318 \u21E7 Space' },
+  { action: 'Next Track', keys: '\u2318 \u2325 \u2192' },
+  { action: 'Previous Track', keys: '\u2318 \u2325 \u2190' },
 ] as const;
 
 export const SettingsPage: FC = () => {
-  const [closeToTray, setCloseToTray] = useState(false);
-  const [backgroundPlayback, setBackgroundPlayback] = useState(true);
-  const [desktopNotifications, setDesktopNotifications] = useState(true);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
+  // Suppress the first save: we receive the persisted state from the
+  // backend and would otherwise immediately round-trip it right back.
+  const hydratedRef = useRef(false);
 
   const loadCacheStats = () => {
     cacheApi
@@ -197,7 +204,37 @@ export const SettingsPage: FC = () => {
 
   useEffect(() => {
     loadCacheStats();
+    settingsApi
+      .get()
+      .then(setSettings)
+      .catch((e) => console.error('settings load failed', e));
   }, []);
+
+  useEffect(() => {
+    if (!settings) return;
+    if (!hydratedRef.current) {
+      // The first settings value came from disk — skip the save so we
+      // don't immediately round-trip the same bytes back.
+      hydratedRef.current = true;
+      return;
+    }
+    settingsApi.set(settings).catch((e) => console.error('settings save failed', e));
+  }, [settings]);
+
+  const updateGeneral = (patch: Partial<AppSettings['general']>) => {
+    setSettings((prev) =>
+      prev ? { ...prev, general: { ...prev.general, ...patch } } : prev,
+    );
+  };
+  const updateIntegrations = (patch: Partial<AppSettings['integrations']>) => {
+    setSettings((prev) =>
+      prev ? { ...prev, integrations: { ...prev.integrations, ...patch } } : prev,
+    );
+  };
+
+  const closeToTray = settings?.general.closeToTray ?? true;
+  const backgroundPlayback = settings?.general.backgroundPlayback ?? true;
+  const desktopNotifications = settings?.integrations.notificationsEnabled ?? true;
 
   const handleClearCache = async () => {
     setIsClearingCache(true);
@@ -234,11 +271,19 @@ export const SettingsPage: FC = () => {
       <SectionHeading title="General" />
       <Divider />
       <SettingRow label="Close to tray" description="Keep VibeYTM running in the menu bar when the window is closed">
-        <ToggleSwitch checked={closeToTray} onChange={setCloseToTray} />
+        <ToggleSwitch
+          checked={closeToTray}
+          disabled={!settings}
+          onChange={(v) => updateGeneral({ closeToTray: v })}
+        />
       </SettingRow>
       <Divider />
       <SettingRow label="Background playback" description="Continue playing audio when the app is in the background">
-        <ToggleSwitch checked={backgroundPlayback} onChange={setBackgroundPlayback} />
+        <ToggleSwitch
+          checked={backgroundPlayback}
+          disabled={!settings}
+          onChange={(v) => updateGeneral({ backgroundPlayback: v })}
+        />
       </SettingRow>
       <Divider />
 
@@ -246,7 +291,11 @@ export const SettingsPage: FC = () => {
       <SectionHeading title="Integrations" />
       <Divider />
       <SettingRow label="Desktop notifications" description="Show notifications when the track changes">
-        <ToggleSwitch checked={desktopNotifications} onChange={setDesktopNotifications} />
+        <ToggleSwitch
+          checked={desktopNotifications}
+          disabled={!settings}
+          onChange={(v) => updateIntegrations({ notificationsEnabled: v })}
+        />
       </SettingRow>
       <Divider />
 
@@ -325,7 +374,7 @@ export const SettingsPage: FC = () => {
             marginBottom: 'var(--space-2)',
           }}
         >
-          VibeYTM v0.1.0
+          VibeYTM v{APP_VERSION}
         </div>
         <div
           style={{

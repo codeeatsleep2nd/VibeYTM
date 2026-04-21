@@ -33,12 +33,20 @@
 
     var titleEl = document.querySelector('.title.ytmusic-player-bar');
     var artistEl = document.querySelector('.byline.ytmusic-player-bar a:first-of-type');
-    var imgEl = document.querySelector('.image.ytmusic-player-bar img');
+    // Prefer the expanded song-image (right-hand now-playing panel) because
+    // it shows the *album* artwork even for songs that also have a music
+    // video — issue #39. The small bar thumbnail is our second choice and
+    // the bar's ytmusic-player-bar image is the last resort.
+    var imgEl =
+      document.querySelector('ytmusic-player-page .song-image img') ||
+      document.querySelector('ytmusic-player-page img.thumbnail-image') ||
+      document.querySelector('.image.ytmusic-player-bar img');
 
     // Get video ID — prefer getVideoData() (authoritative) over URL (may lag)
     var videoId = '';
+    var vdata = null;
     try {
-      var vdata = player.getVideoData ? player.getVideoData() : null;
+      vdata = player.getVideoData ? player.getVideoData() : null;
       if (vdata && vdata.video_id) videoId = vdata.video_id;
     } catch(e) {}
     if (!videoId) {
@@ -120,6 +128,20 @@
       }
     } catch(e) {}
 
+    // YTM's getDuration() returns 0 for a few cycles while the <video>
+    // element buffers, and on some tracks it reports a fractional/buffered
+    // length (4:12 shown as 0:29). getVideoData().lengthSeconds is the
+    // authoritative track length published by the player metadata. Prefer
+    // it when present and only fall back to getDuration() otherwise.
+    var lengthFromData = 0;
+    try {
+      if (vdata && typeof vdata.lengthSeconds !== 'undefined') {
+        lengthFromData = Number(vdata.lengthSeconds) || 0;
+      }
+    } catch(e) {}
+    var rawDuration = player.getDuration() || 0;
+    var durationSecs = lengthFromData > 0 ? lengthFromData : rawDuration;
+
     window.__VIBEYTM_STATE__ = {
       status: stateMap[rawState] || 'idle',
       title: titleEl ? titleEl.textContent.trim() : '',
@@ -128,7 +150,7 @@
       artworkUrl: artworkUrl,
       videoId: videoId,
       positionSecs: player.getCurrentTime() || 0,
-      durationSecs: player.getDuration() || 0,
+      durationSecs: durationSecs,
       volume: (player.getVolume() || 0) / 100,
       isShuffled: shuffleOn,
       repeatMode: repeatMode,
@@ -258,10 +280,77 @@
     }
   };
 
+  /**
+   * Watchdog for issue #40: songs occasionally start, then stall at 0:00
+   * with status "playing" or "buffering" — the <video> element is ready
+   * but playback never actually begins. If we stay at position 0 for
+   * STUCK_THRESHOLD_MS without any progress, nudge YTM with a play() call
+   * (and, on a second offense, re-seek to 0) to kick the pipeline awake.
+   */
+  var STUCK_THRESHOLD_MS = 4000;
+  var lastPositionSample = -1;
+  var stuckSinceMs = 0;
+  var stuckRetries = 0;
+  function checkStuck() {
+    var s = window.__VIBEYTM_STATE__;
+    if (!s || !s.videoId) {
+      stuckSinceMs = 0;
+      stuckRetries = 0;
+      return;
+    }
+    // Only watch when YTM claims to be playing or buffering — a deliberately
+    // paused track at 0s isn't stuck.
+    if (s.status !== 'playing' && s.status !== 'buffering') {
+      stuckSinceMs = 0;
+      stuckRetries = 0;
+      lastPositionSample = s.positionSecs;
+      return;
+    }
+    var pos = s.positionSecs || 0;
+    if (pos > 0.25 || pos !== lastPositionSample) {
+      // Progress is happening (or at least the position moved) — reset.
+      if (pos > lastPositionSample) {
+        stuckSinceMs = 0;
+        stuckRetries = 0;
+      }
+      lastPositionSample = pos;
+      if (pos > 0.25) return;
+    }
+    if (stuckSinceMs === 0) {
+      stuckSinceMs = Date.now();
+      return;
+    }
+    if (Date.now() - stuckSinceMs < STUCK_THRESHOLD_MS) return;
+
+    var player = getPlayer();
+    if (!player) return;
+    log('stuck at 0s for ' + (Date.now() - stuckSinceMs) + 'ms — retry ' + stuckRetries);
+    try {
+      if (stuckRetries === 0) {
+        player.playVideo();
+      } else if (stuckRetries === 1) {
+        player.seekTo(0, true);
+        player.playVideo();
+      } else {
+        // Last resort: reload the same track via a fresh navigation. Using
+        // the anchor-click SPA path avoids a full page reload.
+        var a = document.createElement('a');
+        a.href = '/watch?v=' + s.videoId;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function(){ try { document.body.removeChild(a); } catch(e){} }, 100);
+      }
+    } catch(e) {}
+    stuckRetries += 1;
+    stuckSinceMs = Date.now();
+  }
+
   function waitForPlayer() {
     if (getPlayer()) {
       log('player found');
       setInterval(update, 150);
+      setInterval(checkStuck, 1000);
       update();
     } else {
       log('waiting for player...');

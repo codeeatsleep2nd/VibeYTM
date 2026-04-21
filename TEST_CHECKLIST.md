@@ -41,6 +41,21 @@ Apply to: Home, Search (Albums/Artists tabs), Explore, Library, Playlist detail
 - **Volume slider**: Rust stores volume as 0.0-1.0 but slider expects 0-100. Fixed
   with `Math.round(volume * 100)`.
 
+## Regression Checklist for 0.6.0
+- [ ] **#34** Track duration renders correctly on start (no 4:12-shown-as-0:29)
+- [ ] **#34** Duration never shrinks once a real length is reported
+- [ ] **#35** Settings page shows ⌘⇧Space / ⌘⌥→ / ⌘⌥← matching registered shortcuts
+- [ ] **#36 / #42** Clicking the volume bar lands on the target position, no bounce
+- [ ] **#37** After sign-out, player bar returns to "No track playing" and sidebar
+      avatar clears within ~2s
+- [ ] **#38** Sidebar avatar/name do NOT flicker on track change
+- [ ] **#39** Cover art shows album artwork (not the video frame) for songs with
+      music videos such as "Despacito — Pop Version"
+- [ ] **#40** A track that stalls at 0:00 auto-recovers within ~4 seconds
+- [ ] **#41** Clicking the progress bar while playing does NOT flash paused
+- [ ] **#43** "Close to tray" toggle persists across restarts. With it OFF, the
+      red close button exits the app. With it ON, the app hides to the tray.
+
 ## Login Flow
 - [ ] App launches with two windows (VibeYTM + YouTube Music)
 - [ ] YouTube Music page loads without "unsupported browser" error

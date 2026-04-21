@@ -7,4 +7,6 @@ export const EVENTS = {
   SHUFFLE_CHANGED: 'player:shuffle-changed',
   REPEAT_CHANGED: 'player:repeat-changed',
   LIKE_CHANGED: 'player:like-changed',
+  LOGIN_CHANGED: 'player:login-changed',
+  ACCOUNT_CHANGED: 'player:account-changed',
 } as const;

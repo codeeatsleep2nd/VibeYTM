@@ -198,10 +198,39 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             // DOM doesn't exist yet on the sign-in page).
             if let Some(cur) = bs.logged_in {
                 let mut last_li = last_logged_in.lock().await;
-                if *last_li != Some(cur) {
+                let changed = *last_li != Some(cur);
+                if changed {
                     *last_li = Some(cur);
                     drop(last_li);
                     let _ = app.emit("player:login-changed", &cur);
+
+                    // Hard-reset the shared player state on sign-out so the
+                    // next subscriber receives defaults instead of whatever
+                    // was last scrobbled (issue #37). Also drop cached
+                    // account info and re-emit so the sidebar clears.
+                    if !cur {
+                        {
+                            let mut ps = player_state.write().await;
+                            *ps = crate::state::player::PlayerState::default();
+                        }
+                        let mut last_acc = last_account.lock().await;
+                        *last_acc = None;
+                        drop(last_acc);
+                        // null signals "no account" so useAccountInfo clears
+                        // the avatar+name on the sidebar.
+                        let _ =
+                            app.emit("player:account-changed", &serde_json::Value::Null);
+                        // Reset the change-detection caches so the next
+                        // track/status after sign-in re-emits the full truth.
+                        let mut lv = last_video_id.lock().await;
+                        lv.clear();
+                        drop(lv);
+                        let mut ls = last_status.lock().await;
+                        ls.clear();
+                        drop(ls);
+                    }
+                } else {
+                    drop(last_li);
                 }
             }
 
@@ -251,6 +280,23 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 format!("{}:{}", bs.title, bs.artist)
             };
 
+            // Backfill the initial duration from the side-cache when the
+            // bridge hasn't reported one yet. Prevents a ~1s window where a
+            // freshly-clicked track has duration 0 (so the progress bar looks
+            // pinned at 100%) before YTM's metadata lands.
+            let cached_duration = if !bs.video_id.is_empty() {
+                app.try_state::<crate::cache::Cache>()
+                    .and_then(|c| c.get_track_duration(&bs.video_id))
+                    .unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            let initial_duration = if bs.duration_secs > 0.0 {
+                bs.duration_secs
+            } else {
+                cached_duration
+            };
+
             let mut last_vid = last_video_id.lock().await;
             let track_changed = track_key != *last_vid;
             if track_changed {
@@ -265,7 +311,7 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                     album: bs.album.clone(),
                     album_id: None,
                     artwork_url: if bs.artwork_url.is_empty() { None } else { Some(bs.artwork_url.clone()) },
-                    duration_secs: bs.duration_secs,
+                    duration_secs: initial_duration,
                 };
 
                 // Persist duration in the side-cache so future list responses
@@ -290,13 +336,16 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 // Same track, but duration may have just become available
                 // (YTM occasionally reports 0 for the first few cycles while
                 // the <video> element buffers). Re-emit so the progress bar
-                // doesn't pin at the end.
+                // doesn't pin at the end. Also accept a *larger* duration —
+                // YTM sometimes reports a partial/buffered length first
+                // (issue #34: a 4:12 track shown as 0:29) before lengthSeconds
+                // resolves. Never shrink once we have a confirmed length.
                 if bs.duration_secs > 0.0 {
                     let needs_update = {
                         let ps = player_state.read().await;
                         ps.track
                             .as_ref()
-                            .map(|t| t.duration_secs <= 0.0)
+                            .map(|t| bs.duration_secs > t.duration_secs + 0.5)
                             .unwrap_or(false)
                     };
                     if needs_update {
