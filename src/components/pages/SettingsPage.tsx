@@ -178,9 +178,12 @@ const OutlinedButton: FC<{ label: string; onClick: () => void }> = ({ label, onC
   </button>
 );
 
+// #35 root cause: these strings were hand-written before the v0.5.0
+// shortcut remap and were never linked to the real registration site. When
+// global_shortcuts.rs moved to ⌘⇧Space / ⌘⌥→ / ⌘⌥← the Settings panel
+// still advertised the old Space / ⌘→ / ⌘← bindings that no longer fire.
 // Mirrors the chords registered in
-// src-tauri/src/integrations/global_shortcuts.rs. Keep in sync — otherwise
-// the Settings page advertises bindings that aren't wired up.
+// src-tauri/src/integrations/global_shortcuts.rs — keep in sync.
 const SHORTCUTS = [
   { action: 'Play / Pause', keys: '\u2318 \u21E7 Space' },
   { action: 'Next Track', keys: '\u2318 \u2325 \u2192' },

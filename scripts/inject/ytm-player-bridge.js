@@ -33,10 +33,13 @@
 
     var titleEl = document.querySelector('.title.ytmusic-player-bar');
     var artistEl = document.querySelector('.byline.ytmusic-player-bar a:first-of-type');
-    // Prefer the expanded song-image (right-hand now-playing panel) because
-    // it shows the *album* artwork even for songs that also have a music
-    // video — issue #39. The small bar thumbnail is our second choice and
-    // the bar's ytmusic-player-bar image is the last resort.
+    // #39 root cause: .image.ytmusic-player-bar img is the bottom bar
+    // thumbnail. For songs that ALSO have a music video (e.g. Despacito —
+    // Pop Version), that <img> carries the video frame, not the album
+    // cover, because YTM reuses it for the mini video preview. The
+    // expanded now-playing panel at ytmusic-player-page .song-image keeps
+    // the static album artwork regardless. Prefer that selector; fall
+    // back to the bar image only when the expanded panel isn't mounted.
     var imgEl =
       document.querySelector('ytmusic-player-page .song-image img') ||
       document.querySelector('ytmusic-player-page img.thumbnail-image') ||
@@ -128,11 +131,15 @@
       }
     } catch(e) {}
 
-    // YTM's getDuration() returns 0 for a few cycles while the <video>
-    // element buffers, and on some tracks it reports a fractional/buffered
-    // length (4:12 shown as 0:29). getVideoData().lengthSeconds is the
-    // authoritative track length published by the player metadata. Prefer
-    // it when present and only fall back to getDuration() otherwise.
+    // #34 root cause: getDuration() reads the <video>.duration property,
+    // which reflects the BUFFERED length of the stream during early
+    // playback (and 0 while metadata is loading). For a 4:12 track mid-
+    // buffer it can return 29 — and we were treating that as truth. YTM
+    // separately publishes the real track length in getVideoData().
+    // lengthSeconds, which is authoritative and set once the watch page
+    // metadata is parsed. Prefer that; fall back to getDuration() only
+    // when lengthSeconds is missing (which is normal during the very first
+    // cycles right after navigation).
     var lengthFromData = 0;
     try {
       if (vdata && typeof vdata.lengthSeconds !== 'undefined') {
@@ -281,11 +288,15 @@
   };
 
   /**
-   * Watchdog for issue #40: songs occasionally start, then stall at 0:00
-   * with status "playing" or "buffering" — the <video> element is ready
-   * but playback never actually begins. If we stay at position 0 for
-   * STUCK_THRESHOLD_MS without any progress, nudge YTM with a play() call
-   * (and, on a second offense, re-seek to 0) to kick the pipeline awake.
+   * #40 root cause: YTM's player reports playerState=1 (playing) the
+   * moment playVideo() is called, even when the underlying media pipeline
+   * hasn't actually started pushing audio frames — a known WKWebView /
+   * YTM failure mode that leaves position pinned at 0 with no error,
+   * requiring the user to skip or restart. The app had no detection for
+   * this condition, so a stuck track would silently never recover.
+   * Watchdog: if we stay at 0:00 for STUCK_THRESHOLD_MS while status
+   * claims playing/buffering, escalate — first playVideo(), then seek to
+   * 0 and play, then a fresh SPA navigation to the same videoId.
    */
   var STUCK_THRESHOLD_MS = 4000;
   var lastPositionSample = -1;

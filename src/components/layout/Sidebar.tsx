@@ -158,10 +158,13 @@ interface AccountCardProps {
   account: { name: string; avatarUrl: string } | null;
 }
 
-// Memo keeps the avatar image stable across parent re-renders triggered by
-// track/position/status events. Without this the <CachedImage> inside would
-// tear down and re-probe on every player event, causing a visible flicker
-// of the profile picture whenever a new song started (issue #38).
+// #38 root cause: Sidebar is rendered by AppShell, and AppShell re-renders
+// on every player event (track / position / status). Each re-render forced
+// a new <AccountCard> instance and, crucially, a new <CachedImage> subtree,
+// which reran its async disk-cache probe. During the probe the image
+// returns null — visually a flash of the avatar on every track change,
+// every second of progress, etc. Memoizing on account identity breaks
+// that chain: the avatar stays mounted unless the account truly changed.
 const AccountCard = memo(
   AccountCardInner,
   (prev, next) =>

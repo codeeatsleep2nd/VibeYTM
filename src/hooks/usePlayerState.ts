@@ -4,15 +4,19 @@ import { playerApi } from '../lib/ipc';
 import { EVENTS } from '../lib/events';
 import { useTauriEvent } from './useTauriEvent';
 
-// Drop VOLUME_CHANGED echoes that arrive within this window of a local
-// optimistic set, so fast drags (and click-to-jump) aren't overwritten by
-// stale intermediate values from the YTM bridge poller. The bridge polls at
-// 150ms and YTM's <video>.volume can take up to 3 poll cycles to settle, so
-// 1200ms absorbs the whole settling window.
+// Why (#36/#42): the bridge is a poll-driven mirror of YTM. After a local
+// set_volume call, YTM's <video>.volume takes ~3 poll cycles (~450ms) to
+// stabilize, and the previous 500ms window expired mid-settle — a stale
+// intermediate value landed AFTER the window closed and overwrote the
+// optimistic state, so the thumb bounced. 1200ms covers the full settling
+// window with margin for click-to-jump and fast drags.
 const VOLUME_ECHO_WINDOW_MS = 1200;
 
-// After a seek, ignore STATUS_CHANGED=paused events for this long — they
-// are usually stale echoes from before YTM resumed (issue #41).
+// Why (#41): YTM briefly reports status=paused during a seek while the
+// <video> element reseats the buffer, then flips back to playing. The UI
+// used to accept that stale "paused" event unconditionally and rendered the
+// pause glyph for a frame before the next event corrected it. This window
+// suppresses those echoes when we are optimistically still playing.
 const SEEK_STATUS_ECHO_WINDOW_MS = 800;
 
 // After a manual seek, POSITION_UPDATED events emitted before YTM finished
@@ -82,11 +86,10 @@ export function usePlayerState(): UsePlayerState {
   });
 
   useTauriEvent<PlaybackStatus>(EVENTS.STATUS_CHANGED, (status) => {
-    // Suppress stale "paused" echoes right after a seek: YTM briefly
-    // reports paused while the video element reseats the buffer, and the
-    // play button would flicker to paused before the next "playing" event
-    // caught up (issue #41). Drop paused events inside the echo window
-    // while we still believe we're playing.
+    // #41: YTM drops to "paused" for a cycle or two while a seek reseats
+    // the buffer, then flips back to "playing". Taking that intermediate
+    // value as truth flashed the pause glyph for a frame. Drop it while
+    // we are optimistically still playing and inside the echo window.
     if (
       status === 'paused' &&
       statusRef.current === 'playing' &&
@@ -127,9 +130,10 @@ export function usePlayerState(): UsePlayerState {
   });
 
   useTauriEvent<number>(EVENTS.VOLUME_CHANGED, (volume) => {
-    // During a local drag, the bridge poller can emit intermediate values
-    // from before the latest set_volume took effect. Those echoes would
-    // overwrite the fresh optimistic state and the thumb would jitter.
+    // #36/#42: during a local drag or click-to-jump, the bridge poller can
+    // emit intermediate <video>.volume values from BEFORE the latest
+    // set_volume took effect. Accepting them overwrote the optimistic
+    // state mid-drag and the thumb visibly bounced back and forth.
     if (Date.now() - lastLocalVolumeAtRef.current < VOLUME_ECHO_WINDOW_MS) {
       return;
     }
@@ -152,11 +156,12 @@ export function usePlayerState(): UsePlayerState {
     setState((prev) => ({ ...prev, isLiked }));
   });
 
-  // When the user signs out of YouTube Music, the player controller bar
-  // still shows the last track's metadata until the page is reloaded
-  // (issue #37). Reset the entire player slice to defaults so the sidebar
-  // and bottom bar return to their idle state. Account info is handled
-  // separately via useAccountInfo.
+  // #37: the bridge was already emitting login-changed on sign-out, but no
+  // one downstream consumed it — the shared PlayerState kept the last
+  // track's title/artist/artwork/progress, so the controller bar looked
+  // identical to a signed-in session until the next app launch. Reset to
+  // defaults so the bottom bar returns to "No track playing". Account info
+  // clears separately via useAccountInfo.
   useTauriEvent<boolean>(EVENTS.LOGIN_CHANGED, (loggedIn) => {
     if (!loggedIn) {
       setState(DEFAULT_STATE);
