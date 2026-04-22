@@ -330,7 +330,14 @@ export const PlayerBar: FC<PlayerBarProps> = ({
               // waiting for the backend round-trip. markSeek lets the hook
               // discard stale pre-seek position echoes from the bridge poller
               // that would otherwise bounce the thumb back to the old spot.
-              const next = Number(e.target.value);
+              const raw = Number(e.target.value);
+              // Clamp to `duration - 1.25s` so a click at the very end of a
+              // short track can't trigger YTM's end-of-video auto-advance.
+              // That race causes the <video> element to swap mid-poll, and
+              // we briefly emit new duration + old cover/title (issue #57).
+              const next = duration > 0
+                ? Math.min(raw, Math.max(0, duration - 1.25))
+                : raw;
               markSeek(next);
               // If we're currently playing, force the optimistic status
               // back to 'playing' too. During a seek YTM briefly reports

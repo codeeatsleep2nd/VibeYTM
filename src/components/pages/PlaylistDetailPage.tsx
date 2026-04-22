@@ -8,21 +8,34 @@ interface PlaylistDetailPageProps {
   playlistId: string;
   autoPlay?: boolean;
   onBack: () => void;
+  /**
+   * Fired after a successful save or remove so the parent can invalidate
+   * any cached library data — otherwise a removed playlist still appears
+   * in LibraryPage when the user clicks Back.
+   */
+  onLibraryChanged?: () => void;
 }
 
 export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
   playlistId,
   autoPlay = false,
   onBack,
+  onLibraryChanged,
 }) => {
   const [playlist, setPlaylist] = useState<PlaylistDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Tri-state local view of whether the playlist is saved. Optimistic — the
-  // backend call confirms after the click, and we roll back on failure.
+  // Tri-state local view of whether the playlist is saved. Seeded from the
+  // YTM response's header toggle-button state (issue #55), then kept
+  // optimistic across user clicks.
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  const isAlbum = playlist?.isAlbum ?? playlistId.startsWith('MPRE');
+  // Albums save via their underlying audioPlaylistId (OLAK*), not the MPRE
+  // browseId. Fall back to playlistId when the backend didn't surface one.
+  const saveTargetId = playlist?.audioPlaylistId || playlistId;
 
   const toggleSaved = async () => {
     if (isSaving) return;
@@ -32,15 +45,20 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     setIsSaved(next); // optimistic
     try {
       if (next) {
-        await browseApi.savePlaylistToLibrary(playlistId);
+        await browseApi.savePlaylistToLibrary(saveTargetId);
       } else {
-        await browseApi.removePlaylistFromLibrary(playlistId);
+        await browseApi.removePlaylistFromLibrary(saveTargetId);
       }
+      // Tell the parent so cached library/album lists rebuild before the
+      // user clicks Back into them.
+      onLibraryChanged?.();
     } catch (e: unknown) {
       // Roll back and surface the error so the user knows it didn't stick.
       setIsSaved(!next);
       setSaveError(
-        next ? 'Could not save to library' : 'Could not remove from library',
+        next
+          ? `Could not save to ${isAlbum ? 'Albums' : 'Playlists'}`
+          : `Could not remove from ${isAlbum ? 'Albums' : 'Playlists'}`,
       );
       console.error('[PlaylistDetailPage] save toggle failed:', e);
     } finally {
@@ -62,6 +80,10 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
       .then(([data, currentState]) => {
         if (cancelled) return;
         setPlaylist(data);
+        // Seed the saved-state from the server so the button renders the
+        // correct label on first paint (issue #55). Without this the button
+        // always starts as "Save to library" even for already-saved content.
+        setIsSaved(data.isInLibrary ?? false);
         setIsLoading(false);
 
         if (autoPlay && data.tracks.length > 0 && data.tracks[0].videoId) {
@@ -228,7 +250,9 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
           background: 'var(--color-surface-1)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
-          paddingTop: 'var(--space-6)',
+          // Match the sidebar nav's top padding so the back button lines
+          // up with the sidebar navigation (issue #59).
+          paddingTop: 'var(--space-3)',
           paddingBottom: 'var(--space-4)',
           marginBottom: 'var(--space-4)',
         }}
@@ -403,7 +427,9 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
                 opacity: isSaving ? 0.7 : 1,
               }}
             >
-              {isSaved ? '✓ Saved' : '+ Save to library'}
+              {isSaved
+                ? '✓ Remove from Library'
+                : `+ Save to ${isAlbum ? 'Albums' : 'Playlists'}`}
             </button>
           </div>
           {saveError && (

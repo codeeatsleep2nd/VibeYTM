@@ -341,39 +341,68 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             } else {
                 drop(last_vid);
 
-                // Same track, but duration may have just become available
-                // (YTM occasionally reports 0 for the first few cycles while
-                // the <video> element buffers). Re-emit so the progress bar
-                // doesn't pin at the end. Also accept a *larger* duration —
-                // YTM sometimes reports a partial/buffered length first
-                // (issue #34: a 4:12 track shown as 0:29) before lengthSeconds
-                // resolves. Never shrink once we have a confirmed length.
-                if bs.duration_secs > 0.0 {
-                    let needs_update = {
-                        let ps = player_state.read().await;
-                        ps.track
-                            .as_ref()
-                            .map(|t| bs.duration_secs > t.duration_secs + 0.5)
-                            .unwrap_or(false)
-                    };
-                    if needs_update {
-                        let updated = {
-                            let mut ps = player_state.write().await;
-                            if let Some(ref mut t) = ps.track {
+                // Same videoId, but YTM's DOM can still be mid-transition.
+                // Two scenarios this branch has to repair:
+                //   * initial duration was 0 and has now filled in (issue #34)
+                //   * track auto-advanced and our previous emit captured the
+                //     new videoId alongside the OLD title/artwork, so the
+                //     frontend is stuck showing stale metadata (issue #57)
+                // Any meaningful field delta triggers a re-emit of
+                // TRACK_CHANGED with the reconciled data.
+                let needs_update = {
+                    let ps = player_state.read().await;
+                    ps.track
+                        .as_ref()
+                        .map(|t| {
+                            let duration_grew = bs.duration_secs > 0.0
+                                && bs.duration_secs > t.duration_secs + 0.5;
+                            let title_changed =
+                                !bs.title.is_empty() && bs.title != t.title;
+                            let artist_changed =
+                                !bs.artist.is_empty() && bs.artist != t.artist;
+                            let artwork_changed = !bs.artwork_url.is_empty()
+                                && t.artwork_url.as_deref() != Some(bs.artwork_url.as_str());
+                            duration_grew
+                                || title_changed
+                                || artist_changed
+                                || artwork_changed
+                        })
+                        .unwrap_or(false)
+                };
+                if needs_update {
+                    let updated = {
+                        let mut ps = player_state.write().await;
+                        if let Some(ref mut t) = ps.track {
+                            if bs.duration_secs > t.duration_secs + 0.5 {
                                 t.duration_secs = bs.duration_secs;
-                                Some(t.clone())
-                            } else {
-                                None
                             }
-                        };
-                        if let Some(track) = updated {
-                            if let Some(cache) = app.try_state::<crate::cache::Cache>() {
-                                if !track.video_id.is_empty() {
-                                    cache.put_track_duration(&track.video_id, track.duration_secs);
-                                }
+                            if !bs.title.is_empty() {
+                                t.title = bs.title.clone();
                             }
-                            let _ = app.emit("player:track-changed", &track);
+                            if !bs.artist.is_empty() {
+                                t.artist = bs.artist.clone();
+                            }
+                            if !bs.album.is_empty() {
+                                t.album = bs.album.clone();
+                            }
+                            if !bs.artwork_url.is_empty() {
+                                t.artwork_url = Some(bs.artwork_url.clone());
+                            }
+                            Some(t.clone())
+                        } else {
+                            None
                         }
+                    };
+                    if let Some(track) = updated {
+                        if let Some(cache) = app.try_state::<crate::cache::Cache>() {
+                            if track.duration_secs > 0.0 && !track.video_id.is_empty() {
+                                cache.put_track_duration(
+                                    &track.video_id,
+                                    track.duration_secs,
+                                );
+                            }
+                        }
+                        let _ = app.emit("player:track-changed", &track);
                     }
                 }
             }

@@ -16,6 +16,13 @@ interface LibraryPageProps {
   onOpenPlaylist?: (playlistId: string) => void;
   onAutoPlayPlaylist?: (playlistId: string) => void;
   onSearchArtist?: (name: string) => void;
+  /**
+   * Bumped by the parent whenever a save/remove succeeds elsewhere in the
+   * app. Including it in the fetch effect's deps forces a refetch so the
+   * underlying mounted LibraryPage doesn't show a removed playlist when
+   * the user closes the playlist-detail overlay.
+   */
+  refreshKey?: number;
 }
 
 const TAB_TITLES: Record<LibraryTab, string> = {
@@ -29,6 +36,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
   activeTab,
   onOpenPlaylist,
   onSearchArtist,
+  refreshKey = 0,
 }) => {
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [songs, setSongs] = useState<TrackInfo[]>([]);
@@ -76,27 +84,43 @@ export const LibraryPage: FC<LibraryPageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [activeTab]);
+  }, [activeTab, refreshKey]);
 
   return (
     <section
       style={{
-        padding: 'var(--space-8) var(--space-6)',
+        padding: '0 var(--space-6) var(--space-8)',
         overflowY: 'auto',
         height: '100%',
       }}
     >
+      <div
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+          background: 'var(--color-surface-1)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          // Line the library title up with the sidebar's Library group
+          // headings (issue #59).
+          paddingTop: 'var(--space-3)',
+          paddingBottom: 'var(--space-4)',
+          marginBottom: 'var(--space-4)',
+        }}
+      >
       <h1
         style={{
           fontSize: 'var(--text-2xl)',
           fontWeight: 700,
-          marginBottom: 'var(--space-6)',
           letterSpacing: '-0.02em',
           color: 'var(--color-text-primary)',
+          margin: 0,
         }}
       >
         {TAB_TITLES[activeTab]}
       </h1>
+      </div>
 
       {isLoading && (
         <p style={{ fontSize: 'var(--text-base)', color: 'var(--color-text-tertiary)' }}>

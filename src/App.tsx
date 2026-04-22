@@ -8,6 +8,7 @@ import { ExplorePage } from './components/pages/ExplorePage';
 import { SettingsPage } from './components/pages/SettingsPage';
 import { LoginPage } from './components/pages/LoginPage';
 import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
+import { WelcomeScreen } from './components/WelcomeScreen';
 import { useLoginState } from './hooks/useLoginState';
 import { ytmApi } from './lib/ipc';
 
@@ -26,6 +27,20 @@ const App: FC = () => {
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
+  // Flips true once the Home page has finished its first real render (or we
+  // settle into the LoginPage for signed-out users). While false, the
+  // WelcomeScreen stays overlaid so cold launch never shows the "Loading…"
+  // placeholder or a half-painted Home (issue #56).
+  const [isHomeReady, setIsHomeReady] = useState(false);
+  const handleHomeReady = useCallback(() => setIsHomeReady(true), []);
+  // Bumped whenever the user saves or removes a playlist/album so the
+  // LibraryPage knows to refetch even when it stays mounted under the
+  // playlist-detail overlay.
+  const [libraryVersion, setLibraryVersion] = useState(0);
+  const handleLibraryChanged = useCallback(
+    () => setLibraryVersion((v) => v + 1),
+    [],
+  );
   // Remembered so "Settings → Settings" toggles back to where the user was.
   const previousPathRef = useRef<string>('home');
 
@@ -64,27 +79,21 @@ const App: FC = () => {
     }
   }, [loginState]);
 
-  // While we don't know the login state, show a neutral placeholder instead
-  // of flashing the login page first.
+  // While we don't know the login state, the WelcomeScreen is the only thing
+  // on screen — no neutral "Loading…" flash.
   if (loginState === null && !loginOverride) {
-    return (
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          color: 'var(--color-text-tertiary)',
-          fontSize: 'var(--text-base)',
-        }}
-      >
-        Loading…
-      </div>
-    );
+    return <WelcomeScreen isDone={false} />;
   }
 
   if (!isLoggedIn) {
-    return <LoginPage onLoggedIn={() => setLoginOverride(true)} />;
+    // Once we know the user is signed out, the LoginPage is ready to render
+    // behind the fading WelcomeScreen.
+    return (
+      <>
+        <LoginPage onLoggedIn={() => setLoginOverride(true)} />
+        <WelcomeScreen isDone />
+      </>
+    );
   }
 
   const renderPage = () => {
@@ -121,6 +130,7 @@ const App: FC = () => {
           onOpenPlaylist={openPlaylistDetail}
           onAutoPlayPlaylist={openPlaylistAutoPlay}
           onSearchArtist={searchForArtist}
+          refreshKey={libraryVersion}
         />
       );
     }
@@ -128,11 +138,13 @@ const App: FC = () => {
       <HomePage
         onOpenPlaylist={openPlaylistDetail}
         onAutoPlayPlaylist={openPlaylistAutoPlay}
+        onReady={handleHomeReady}
       />
     );
   };
 
   return (
+    <>
     <AppShell
       currentPath={currentPath}
       onNavigate={(path) => {
@@ -175,11 +187,14 @@ const App: FC = () => {
               playlistId={viewingPlaylist.id}
               autoPlay={viewingPlaylist.autoPlay}
               onBack={() => setViewingPlaylist(null)}
+              onLibraryChanged={handleLibraryChanged}
             />
           </div>
         )}
       </div>
     </AppShell>
+    <WelcomeScreen isDone={isHomeReady} />
+    </>
   );
 };
 
