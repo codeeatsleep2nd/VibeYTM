@@ -238,24 +238,14 @@ vibeytm/
 │   │   ├── layout/
 │   │   │   ├── AppShell.tsx          # Sidebar + content + now-playing layout
 │   │   │   ├── Sidebar.tsx           # Left nav: Home, Search, Library sections
-│   │   │   ├── TitleBar.tsx          # Custom title bar with traffic lights zone
 │   │   │   └── PlayerBar.tsx         # Fixed bottom player bar
 │   │   │
 │   │   ├── player/
-│   │   │   ├── NowPlaying.tsx        # Right sidebar: artwork, lyrics, queue
-│   │   │   ├── QueueList.tsx         # Draggable queue
-│   │   │   ├── LyricsView.tsx        # Synced lyrics with highlight
-│   │   │   ├── ProgressBar.tsx       # Seekable progress slider
-│   │   │   ├── VolumeSlider.tsx      # Volume control
-│   │   │   └── TransportControls.tsx # Play/pause/next/prev buttons
+│   │   │   └── NowPlaying.tsx        # Right sidebar: artwork, lyrics, queue
 │   │   │
 │   │   ├── browse/
-│   │   │   ├── AlbumGrid.tsx         # Grid of album cards
 │   │   │   ├── AlbumCard.tsx         # Single album art + title + artist
-│   │   │   ├── SongList.tsx          # Table/list of songs
 │   │   │   ├── SongRow.tsx           # Single song row
-│   │   │   ├── ArtistCard.tsx        # Artist circle avatar + name
-│   │   │   ├── PlaylistCard.tsx      # Playlist cover + title
 │   │   │   └── ShelfRow.tsx          # Horizontal scrollable row of cards
 │   │   │
 │   │   ├── pages/
@@ -263,26 +253,18 @@ vibeytm/
 │   │   │   ├── SearchPage.tsx        # Search input + results
 │   │   │   ├── ExplorePage.tsx       # Charts, new releases, genres
 │   │   │   ├── LibraryPage.tsx       # Library sub-nav (playlists/songs/albums/artists)
-│   │   │   ├── AlbumDetailPage.tsx   # Album tracklist
-│   │   │   ├── ArtistDetailPage.tsx  # Artist bio, discography, similar
 │   │   │   ├── PlaylistDetailPage.tsx # Playlist tracklist
-│   │   │   └── SettingsPage.tsx      # Settings UI
+│   │   │   ├── SettingsPage.tsx      # Settings UI
+│   │   │   └── LoginPage.tsx         # Login / authentication page
 │   │   │
-│   │   ├── shared/
-│   │   │   ├── Artwork.tsx           # Image with fallback, dominant color extraction
-│   │   │   ├── ContextMenu.tsx       # Right-click menu (add to playlist, etc.)
-│   │   │   ├── ScrollArea.tsx        # Custom scrollbar
-│   │   │   └── Skeleton.tsx          # Loading placeholder
-│   │   │
-│   │   └── debug/
-│   │       └── EventInspector.tsx    # Dev-only event stream viewer
+│   │   ├── CachedImage.tsx           # Image with local cache support
+│   │   ├── MarqueeText.tsx           # Scrolling text for overflow
+│   │   └── WelcomeScreen.tsx         # First-launch welcome screen
 │   │
 │   ├── hooks/
 │   │   ├── usePlayerState.ts         # Subscribe to player state
-│   │   ├── useSearch.ts              # Search with debounce
-│   │   ├── useLibrary.ts             # Library data fetching
-│   │   ├── useAlbumColors.ts         # Extract dominant color from artwork
-│   │   ├── useSettings.ts            # Settings read/write
+│   │   ├── useLoginState.ts          # Login state tracking
+│   │   ├── useAccountInfo.ts         # Account info fetching
 │   │   └── useTauriEvent.ts          # Generic event listener
 │   │
 │   ├── lib/
@@ -293,8 +275,7 @@ vibeytm/
 │   │
 │   └── styles/
 │       ├── tokens.css                # Design tokens (CSS custom properties)
-│       ├── global.css                # Reset + base styles
-│       └── glass.css                 # Frosted glass / transparency effects
+│       └── global.css                # Reset + base styles
 │
 ├── src-tauri/
 │   ├── Cargo.toml
@@ -309,29 +290,27 @@ vibeytm/
 │   │   ├── state/
 │   │   │   ├── mod.rs
 │   │   │   ├── player.rs             # PlayerState, TrackInfo, Queue
-│   │   │   └── settings.rs           # AppSettings
+│   │   │   ├── settings.rs           # AppSettings
+│   │   │   └── persistence.rs        # State persistence to disk
 │   │   │
 │   │   ├── commands/
 │   │   │   ├── mod.rs
 │   │   │   ├── player.rs             # play, pause, next, prev, seek, volume
 │   │   │   ├── browse.rs             # search, get_home, get_album, get_artist
-│   │   │   ├── library.rs            # get_playlists, get_liked_songs, etc.
-│   │   │   ├── settings.rs           # get/set settings
-│   │   │   └── window.rs             # mini player, now playing toggle
+│   │   │   ├── cache.rs              # image cache management
+│   │   │   └── settings.rs           # get/set settings
 │   │   │
 │   │   ├── ytm_api/
 │   │   │   ├── mod.rs                # YtmApi struct + auth
-│   │   │   ├── search.rs             # Search endpoint
-│   │   │   ├── browse.rs             # Home, album, artist, playlist
-│   │   │   ├── library.rs            # Library endpoints
-│   │   │   ├── lyrics.rs             # Lyrics endpoint
-│   │   │   ├── types.rs              # API response types
-│   │   │   └── parser.rs             # JSON response parsing
+│   │   │   └── types.rs              # API response types
 │   │   │
 │   │   ├── webview_bridge/
 │   │   │   ├── mod.rs                # Hidden WebView management
-│   │   │   ├── playback.rs           # Send playback commands to hidden WebView
-│   │   │   └── auth.rs               # Extract auth cookies from WebView
+│   │   │   ├── api.rs                # WebView API call dispatch
+│   │   │   └── poller.rs             # Poll player state from hidden WebView
+│   │   │
+│   │   ├── cache/
+│   │   │   └── mod.rs                # Image/asset caching
 │   │   │
 │   │   ├── events/
 │   │   │   ├── mod.rs
@@ -354,7 +333,8 @@ vibeytm/
 │
 └── scripts/
     └── inject/
-        └── ytm-player-bridge.js      # JS injected into hidden WebView
+        ├── ytm-player-bridge.js      # JS injected into hidden WebView
+        └── ytm-compat.js             # YTM compatibility shims
 ```
 
 ---
@@ -386,6 +366,12 @@ pub enum PlaybackStatus { Playing, Paused, Buffering, Idle }
 #[serde(rename_all = "snake_case")]
 pub enum RepeatMode { None, One, All }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AccountInfo {
+    pub name: String,
+    pub avatar_url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerState {
     pub status: PlaybackStatus,
@@ -396,6 +382,8 @@ pub struct PlayerState {
     pub repeat_mode: RepeatMode,
     pub is_shuffled: bool,
     pub queue: Vec<TrackInfo>,
+    pub account: Option<AccountInfo>,
+    pub logged_in: Option<bool>,
 }
 
 pub type SharedPlayerState = Arc<RwLock<PlayerState>>;
@@ -507,6 +495,11 @@ export interface TrackInfo {
   durationSecs: number;
 }
 
+export interface AccountInfo {
+  name: string;
+  avatarUrl: string;
+}
+
 export interface PlayerState {
   status: 'playing' | 'paused' | 'buffering' | 'idle';
   track: TrackInfo | null;
@@ -516,6 +509,8 @@ export interface PlayerState {
   repeatMode: 'none' | 'one' | 'all';
   isShuffled: boolean;
   queue: TrackInfo[];
+  account: AccountInfo | null;
+  loggedIn: boolean | null;
 }
 
 export interface SearchResults {
@@ -553,6 +548,8 @@ export const playerApi = {
   playTrack:  (videoId: string)     => invoke('play_track', { videoId }),
   playAlbum:  (browseId: string)    => invoke('play_album', { browseId }),
   addToQueue: (videoId: string)     => invoke('add_to_queue', { videoId }),
+  getLoginState: () => invoke<boolean | null>('get_login_state'),
+  getAccountInfo: () => invoke<AccountInfo | null>('get_account_info'),
 };
 ```
 
@@ -567,6 +564,9 @@ export const browseApi = {
   getPlaylist:  (playlistId: string)  => invoke<PlaylistDetail>('get_playlist', { playlistId }),
   getExplore:   ()                    => invoke<Shelf[]>('get_explore'),
   getLyrics:    (videoId: string)     => invoke<Lyrics>('get_lyrics', { videoId }),
+  searchSuggestions: (query: string) => invoke<string[]>('search_suggestions', { query }),
+  savePlaylistToLibrary: (playlistId: string) => invoke('save_playlist_to_library', { playlistId }),
+  removePlaylistFromLibrary: (playlistId: string) => invoke('remove_playlist_from_library', { playlistId }),
 };
 ```
 
@@ -581,6 +581,26 @@ export const libraryApi = {
 };
 ```
 
+### Cache Commands
+
+```typescript
+export const cacheApi = {
+  fetchImage: (url: string) => invoke<string>('cache_fetch_image', { url }),
+  clear: () => invoke('cache_clear'),
+  stats: () => invoke<CacheStats>('cache_stats'),
+  convertToAssetUrl: (path: string) => convertFileSrc(path, 'cache-asset'),
+};
+```
+
+### Settings Commands
+
+```typescript
+export const settingsApi = {
+  get: () => invoke<AppSettings>('get_settings'),
+  set: (settings: AppSettings) => invoke('set_settings', { settings }),
+};
+```
+
 ### Events (Rust → React)
 
 ```typescript
@@ -589,6 +609,10 @@ export const EVENTS = {
   PLAYER_STATE_CHANGED: 'player:state-changed',  // full PlayerState
   TRACK_CHANGED:        'player:track-changed',   // TrackInfo
   POSITION_UPDATED:     'player:position',         // number (secs)
+  VOLUME_CHANGED:       'player:volume',           // number (level)
+  STATUS_CHANGED:       'player:status',           // PlaybackStatus
+  LOGIN_CHANGED:        'player:login-changed',    // boolean
+  ACCOUNT_CHANGED:      'player:account-changed',  // AccountInfo | null
 } as const;
 ```
 
