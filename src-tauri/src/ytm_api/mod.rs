@@ -188,7 +188,7 @@ impl YtmApi {
     /// Add a playlist to the signed-in user's library ("Saved playlists").
     /// Uses the YTM like endpoint with the playlist as the target — the same
     /// call the YTM web UI's save button makes, which adds the playlist to
-    /// FEmusic_liked_playlists (issue #46).
+    /// FEmusic_liked_playlists (issues #46, #54).
     pub async fn save_playlist_to_library(
         &self,
         app: &AppHandle,
@@ -198,10 +198,10 @@ impl YtmApi {
             "target": { "playlistId": playlist_id }
         })
         .to_string();
-        ytm_api_call(app, "like/like", &body)
+        let raw = ytm_api_call(app, "like/like", &body)
             .await
             .map_err(anyhow::Error::msg)?;
-        Ok(())
+        check_like_response(&raw, "like")
     }
 
     /// Remove a playlist from the signed-in user's library. Mirror of
@@ -215,11 +215,31 @@ impl YtmApi {
             "target": { "playlistId": playlist_id }
         })
         .to_string();
-        ytm_api_call(app, "like/removelike", &body)
+        let raw = ytm_api_call(app, "like/removelike", &body)
             .await
             .map_err(anyhow::Error::msg)?;
-        Ok(())
+        check_like_response(&raw, "removelike")
     }
+}
+
+/// YTM returns a minimal JSON body on success (responseContext + actions).
+/// A failure surfaces as `{ "error": { "code": N, "message": "..." } }`.
+/// Propagate that as an Err so the UI can roll back the optimistic toggle.
+fn check_like_response(raw: &str, action: &str) -> anyhow::Result<()> {
+    let parsed: Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(action, error = %e, "could not parse like response; treating as success");
+            return Ok(());
+        }
+    };
+    if let Some(err) = parsed.get("error") {
+        let code = err["code"].as_i64().unwrap_or(-1);
+        let message = err["message"].as_str().unwrap_or("");
+        tracing::error!(action, code, message, "YTM rejected like call");
+        anyhow::bail!("YTM error {code}: {message}");
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -852,6 +872,17 @@ fn parse_playlist_detail(data: &Value, playlist_id: &str) -> PlaylistDetail {
         Some(tracks.len() as u32)
     };
 
+    // --- Library toggle state + audio playlist ID (issues #54, #55) ---
+    let library_toggle = extract_library_save_toggle(data);
+    let is_in_library = library_toggle.as_ref().map(|t| t.is_toggled).unwrap_or(false);
+    // Prefer the toggle's own target — it's the canonical ID YTM's own save
+    // button posts to /like/like with. Fall back to a watch-endpoint scan
+    // for any older response shapes.
+    let audio_playlist_id = library_toggle
+        .and_then(|t| t.target_playlist_id)
+        .or_else(|| extract_audio_playlist_id(data));
+    let is_album = playlist_id.starts_with("MPRE");
+
     PlaylistDetail {
         playlist_id: playlist_id.to_string(),
         title,
@@ -859,7 +890,121 @@ fn parse_playlist_detail(data: &Value, playlist_id: &str) -> PlaylistDetail {
         artwork_url,
         track_count,
         tracks,
+        is_in_library,
+        audio_playlist_id,
+        is_album,
     }
+}
+
+struct LibrarySaveToggle {
+    is_toggled: bool,
+    target_playlist_id: Option<String>,
+}
+
+/// Find the header's "Save to library" toggle button and read both its
+/// `isToggled` flag and the playlistId it posts to (issues #54, #55).
+///
+/// In current YTM responses this is a `toggleButtonRenderer` whose
+/// `defaultServiceEndpoint.likeEndpoint` carries `target.playlistId`. The
+/// icon pair is `BOOKMARK_BORDER` ↔ `BOOKMARK`. Older responses sometimes
+/// used `LIBRARY_ADD` ↔ `LIBRARY_SAVED`, so we accept either signal.
+fn extract_library_save_toggle(data: &Value) -> Option<LibrarySaveToggle> {
+    fn walk(val: &Value, depth: u8) -> Option<LibrarySaveToggle> {
+        if depth > 14 {
+            return None;
+        }
+        if let Some(toggle) = val.get("toggleButtonRenderer") {
+            let default_icon =
+                toggle["defaultIcon"]["iconType"].as_str().unwrap_or("");
+            let toggled_icon =
+                toggle["toggledIcon"]["iconType"].as_str().unwrap_or("");
+            let has_like_endpoint =
+                toggle["defaultServiceEndpoint"].get("likeEndpoint").is_some()
+                    || toggle["toggledServiceEndpoint"]
+                        .get("likeEndpoint")
+                        .is_some();
+            let icon_matches = default_icon == "BOOKMARK_BORDER"
+                || default_icon == "BOOKMARK"
+                || toggled_icon == "BOOKMARK"
+                || default_icon.contains("LIBRARY")
+                || toggled_icon.contains("LIBRARY");
+            if has_like_endpoint || icon_matches {
+                if let Some(is_toggled) = toggle["isToggled"].as_bool() {
+                    let target_playlist_id = toggle["defaultServiceEndpoint"]
+                        ["likeEndpoint"]["target"]["playlistId"]
+                        .as_str()
+                        .or_else(|| {
+                            toggle["toggledServiceEndpoint"]["likeEndpoint"]
+                                ["target"]["playlistId"]
+                                .as_str()
+                        })
+                        .map(|s| s.to_string());
+                    return Some(LibrarySaveToggle {
+                        is_toggled,
+                        target_playlist_id,
+                    });
+                }
+            }
+        }
+        match val {
+            Value::Object(map) => {
+                for v in map.values() {
+                    if let Some(found) = walk(v, depth + 1) {
+                        return Some(found);
+                    }
+                }
+            }
+            Value::Array(arr) => {
+                for v in arr {
+                    if let Some(found) = walk(v, depth + 1) {
+                        return Some(found);
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+    walk(data, 0)
+}
+
+/// Fallback: pull a playable playlist ID (OLAK*, RDCLAK*, PL*) from any
+/// watch endpoint in the response, used only when no toggle button surfaces
+/// one (issue #54).
+fn extract_audio_playlist_id(data: &Value) -> Option<String> {
+    fn walk(val: &Value, depth: u8) -> Option<String> {
+        if depth > 12 {
+            return None;
+        }
+        for key in ["watchEndpoint", "watchPlaylistEndpoint"] {
+            if let Some(ep) = val.get(key) {
+                if let Some(id) = ep["playlistId"].as_str() {
+                    if id.starts_with("OLAK") || id.starts_with("RDCLAK") || id.starts_with("PL") {
+                        return Some(id.to_string());
+                    }
+                }
+            }
+        }
+        match val {
+            Value::Object(map) => {
+                for v in map.values() {
+                    if let Some(found) = walk(v, depth + 1) {
+                        return Some(found);
+                    }
+                }
+            }
+            Value::Array(arr) => {
+                for v in arr {
+                    if let Some(found) = walk(v, depth + 1) {
+                        return Some(found);
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+    walk(data, 0)
 }
 
 fn parse_explore_shelves(data: &Value) -> Vec<Shelf> {
@@ -1711,5 +1856,83 @@ mod tests {
     fn parse_search_suggestions_empty_for_bad_shape() {
         assert!(parse_search_suggestions(&json!({})).is_empty());
         assert!(parse_search_suggestions(&json!(null)).is_empty());
+    }
+
+    // ---- extract_library_save_toggle -------------------------------------
+
+    /// YTM's playlist/album header save toggle uses BOOKMARK_BORDER (default,
+    /// not saved) ↔ BOOKMARK (toggled, saved) and a `likeEndpoint` carrying
+    /// the canonical save target (issues #54, #55).
+    #[test]
+    fn extract_library_save_toggle_reads_bookmark_button() {
+        let data = json!({
+            "wrapper": {
+                "musicResponsiveHeaderRenderer": {
+                    "buttons": [
+                        { "downloadButtonRenderer": {} },
+                        {
+                            "toggleButtonRenderer": {
+                                "isToggled": true,
+                                "defaultIcon": { "iconType": "BOOKMARK_BORDER" },
+                                "toggledIcon": { "iconType": "BOOKMARK" },
+                                "defaultServiceEndpoint": {
+                                    "likeEndpoint": {
+                                        "status": "LIKE",
+                                        "target": { "playlistId": "OLAK5uy_test" }
+                                    }
+                                },
+                                "toggledServiceEndpoint": {
+                                    "likeEndpoint": {
+                                        "status": "INDIFFERENT",
+                                        "target": { "playlistId": "OLAK5uy_test" }
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        });
+        let toggle = extract_library_save_toggle(&data).expect("expected toggle");
+        assert!(toggle.is_toggled);
+        assert_eq!(toggle.target_playlist_id.as_deref(), Some("OLAK5uy_test"));
+    }
+
+    #[test]
+    fn extract_library_save_toggle_returns_false_when_not_saved() {
+        let data = json!({
+            "x": {
+                "toggleButtonRenderer": {
+                    "isToggled": false,
+                    "defaultIcon": { "iconType": "BOOKMARK_BORDER" },
+                    "toggledIcon": { "iconType": "BOOKMARK" },
+                    "defaultServiceEndpoint": {
+                        "likeEndpoint": {
+                            "status": "LIKE",
+                            "target": { "playlistId": "RDCLAK5uy" }
+                        }
+                    }
+                }
+            }
+        });
+        let toggle = extract_library_save_toggle(&data).unwrap();
+        assert!(!toggle.is_toggled);
+        assert_eq!(toggle.target_playlist_id.as_deref(), Some("RDCLAK5uy"));
+    }
+
+    #[test]
+    fn extract_library_save_toggle_none_for_unrelated_toggle() {
+        // A toggle with no like endpoint and no bookmark/library icons should
+        // not be mistaken for the save button (e.g. shuffle, autoplay).
+        let data = json!({
+            "x": {
+                "toggleButtonRenderer": {
+                    "isToggled": true,
+                    "defaultIcon": { "iconType": "SHUFFLE" },
+                    "toggledIcon": { "iconType": "SHUFFLE" }
+                }
+            }
+        });
+        assert!(extract_library_save_toggle(&data).is_none());
     }
 }

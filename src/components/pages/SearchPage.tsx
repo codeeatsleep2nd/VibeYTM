@@ -210,11 +210,30 @@ export const SearchPage: FC<SearchPageProps> = ({
   return (
     <section
       style={{
-        padding: 'var(--space-8) var(--space-6)',
+        padding: '0 var(--space-6) var(--space-8)',
         overflowY: 'auto',
         height: '100%',
       }}
     >
+      {/*
+        Sticky wrapper keeps the search bar + category tabs pinned while the
+        results scroll underneath (issue #58). Top padding matches the
+        sidebar nav so the search bar lines up with the Search button
+        (issue #59).
+      */}
+      <div
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 20,
+          background: 'var(--color-surface-1)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          paddingTop: 'var(--space-3)',
+          paddingBottom: 'var(--space-3)',
+          marginBottom: 'var(--space-3)',
+        }}
+      >
       <div
         style={{
           position: 'relative',
@@ -355,7 +374,6 @@ export const SearchPage: FC<SearchPageProps> = ({
         style={{
           display: 'flex',
           gap: 'var(--space-2)',
-          marginBottom: 'var(--space-6)',
           overflowX: 'auto',
           scrollbarWidth: 'none',
         }}
@@ -387,6 +405,7 @@ export const SearchPage: FC<SearchPageProps> = ({
             </button>
           );
         })}
+      </div>
       </div>
 
       {isLoading && (

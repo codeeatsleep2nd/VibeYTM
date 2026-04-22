@@ -261,7 +261,7 @@ export const SettingsPage: FC = () => {
   return (
     <section
       style={{
-        padding: 'var(--space-8) var(--space-6)',
+        padding: '0 var(--space-6) var(--space-8)',
         overflowY: 'auto',
         height: '100%',
         maxWidth: '640px',
@@ -273,6 +273,9 @@ export const SettingsPage: FC = () => {
           fontWeight: 700,
           letterSpacing: '-0.02em',
           color: 'var(--color-text-primary)',
+          // Match the sidebar Settings button's vertical position
+          // (issue #59).
+          paddingTop: 'var(--space-3)',
           marginBottom: 'var(--space-2)',
         }}
       >

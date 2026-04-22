@@ -9,6 +9,12 @@ import { SongRow } from '../browse/SongRow';
 interface HomePageProps {
   onOpenPlaylist?: (playlistId: string) => void;
   onAutoPlayPlaylist?: (playlistId: string) => void;
+  /**
+   * Fires once the home page has finished loading shelves (or surfaced an
+   * empty state). Used by App.tsx to dismiss the welcome splash at the
+   * earliest moment there's something real to look at (issue #56).
+   */
+  onReady?: () => void;
 }
 
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -48,7 +54,7 @@ const getGreeting = (): string => {
   return 'Good evening';
 };
 
-export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist }) => {
+export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
   const [shelves, setShelves] = useState<Shelf[]>(cachedShelves ?? []);
   const [isLoading, setIsLoading] = useState(!cachedShelves);
   const [activeMood, setActiveMood] = useState<MoodTab>(lastActiveMood);
@@ -70,6 +76,8 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist }) => {
     if (!shouldForce && cachedShelves && Date.now() - cachedAt < CACHE_TTL_MS) {
       setShelves(cachedShelves);
       setIsLoading(false);
+      // Warm cache path still needs to dismiss the splash (issue #56).
+      onReady?.();
       return;
     }
     setIsLoading(true);
@@ -81,11 +89,18 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist }) => {
         firstLoadDone = true;
         setShelves(data);
         setIsLoading(false);
+        onReady?.();
       })
       .catch((e) => {
         console.error('[HomePage] getHome failed:', e);
         setIsLoading(false);
+        // Still dismiss the welcome splash — users shouldn't get stuck on
+        // it if the first fetch fails.
+        onReady?.();
       });
+    // onReady intentionally omitted — we only want to refetch on explicit
+    // triggers, not when the parent remounts the callback identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -179,7 +194,9 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist }) => {
           background: 'var(--color-surface-1)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
-          paddingTop: 'var(--space-8)',
+          // Match the sidebar nav's top padding so the greeting vertically
+          // aligns with the Home button (issue #59).
+          paddingTop: 'var(--space-3)',
           paddingBottom: 'var(--space-3)',
           marginBottom: 'var(--space-3)',
         }}

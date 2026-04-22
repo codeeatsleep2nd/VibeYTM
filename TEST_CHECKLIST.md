@@ -84,6 +84,32 @@ Apply to: Home, Search (Albums/Artists tabs), Explore, Library, Playlist detail
       flashes the LoginPage or the YTM window — it boots directly into the
       main UI. The YTM window is only surfaced when sign-in is needed.
 
+## Regression Checklist for 0.8.0
+- [ ] **#54 / #55** Opening a playlist or album you have already saved
+      shows "✓ Remove from Library" on first paint. Opening one you have
+      not saved shows "+ Save to Playlists" (or "+ Save to Albums" for an
+      MPRE album). Toggling once succeeds and the next reopen reflects the
+      new state. The save call actually mutates your library on YTM.
+- [ ] After removing a saved playlist/album, clicking Back to the Library
+      page shows the item gone — no need to navigate away and return.
+- [ ] **#56** Cold launch shows a branded welcome screen (♪ logo + "VibeYTM"
+      + "Tuning in…") from the moment the window appears. It fades out
+      smoothly once Home shelves are painted. With `prefers-reduced-motion`
+      enabled, the splash hides without animation.
+- [ ] **#57** Clicking the progress bar near the very end of a short track
+      (e.g. a 1:10 song clicked at ~1:08) NEVER causes the player to stop
+      with a stale cover/title and the next song's duration. Either it
+      seeks slightly back from the end and keeps playing, or transitions
+      cleanly to the next track with all metadata in sync.
+- [ ] **#58** On the Search page, the search bar and the category filter
+      tabs stay pinned at the top while results scroll underneath, mirroring
+      the Home page's sticky greeting + mood tabs.
+- [ ] **#59** Each page's title aligns vertically with its corresponding
+      sidebar nav button — Home greeting with Home, Search bar with Search,
+      Library tab title with the Library section, Explore title with
+      Explore, Settings title with Settings, playlist Back button with the
+      sidebar nav row.
+
 ## Login Flow
 - [ ] First launch (no cached session): LoginPage appears and the YouTube
       Music window surfaces automatically so the user can sign in

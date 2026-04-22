@@ -60,6 +60,21 @@ pub struct PlaylistDetail {
     pub artwork_url: String,
     pub track_count: Option<u32>,
     pub tracks: Vec<TrackInfo>,
+    /// Whether this playlist/album is already saved in the user's library.
+    /// Extracted from the header's toggle-button state when available so the
+    /// Save/Remove label can render correctly on first paint (issue #55).
+    #[serde(default)]
+    pub is_in_library: bool,
+    /// The `audioPlaylistId` (typically an OLAK* ID) that library operations
+    /// should target. For user playlists this matches `playlist_id`; for
+    /// albums (MPRE browseId) this is the underlying playable playlist used
+    /// by YTM's save endpoint (issue #54).
+    #[serde(default)]
+    pub audio_playlist_id: Option<String>,
+    /// Whether this detail represents an album (MPRE browseId), so the UI
+    /// can pick the correct "saved to Albums / Playlists" label (issue #55).
+    #[serde(default)]
+    pub is_album: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -59,6 +59,12 @@ export interface PlaylistDetail {
   artworkUrl: string;
   trackCount?: number;
   tracks: TrackInfo[];
+  /** Whether the current user already has this in their library. */
+  isInLibrary?: boolean;
+  /** Playable playlist ID for library operations (OLAK* for albums). */
+  audioPlaylistId?: string | null;
+  /** True when this detail represents an album (MPRE browseId). */
+  isAlbum?: boolean;
 }
 
 export interface SearchResults {

@@ -124,7 +124,9 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          paddingTop: 'var(--space-8)',
+          // Align the Explore title with the sidebar's Explore button
+          // (issue #59).
+          paddingTop: 'var(--space-3)',
           paddingBottom: 'var(--space-4)',
           marginBottom: 'var(--space-4)',
         }}
