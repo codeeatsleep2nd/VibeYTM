@@ -4,6 +4,7 @@ import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
 import { ShelfRow } from '../browse/ShelfRow';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
+import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
 
 interface ExplorePageProps {
   onOpenPlaylist?: (playlistId: string) => void;
@@ -50,21 +51,10 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
     fetchExplore();
   }, [fetchExplore]);
 
-  if (isLoading) {
-    return (
-      <section
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100%',
-          color: 'var(--color-text-tertiary)',
-          fontSize: 'var(--text-base)',
-        }}
-      >
-        Loading...
-      </section>
-    );
+  const isReloading = isLoading || isRefreshing;
+
+  if (isLoading && shelves.length === 0) {
+    return <LoadingSpinner />;
   }
 
   if (error) {
@@ -105,7 +95,7 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
     );
   }
 
-  return (
+  const content = (
     <section
       style={{
         padding: '0 var(--space-6) var(--space-8)',
@@ -207,6 +197,12 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
         </div>
       )}
     </section>
+  );
+
+  return isReloading && shelves.length > 0 ? (
+    <ReloadOverlay>{content}</ReloadOverlay>
+  ) : (
+    content
   );
 };
 

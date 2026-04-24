@@ -1,13 +1,14 @@
-//! Disk cache for images and track metadata.
+//! Disk cache for images, track metadata, and lyrics.
 //!
 //! Layout:
 //!   {app_data}/cache/
 //!     images/{sha256(url)}.bin
 //!     tracks/{videoId}.json
+//!     lyrics/{videoId}.json
 //!
 //! Images are capped at `MAX_IMAGE_CACHE_BYTES` with LRU eviction (based on
-//! file mtime). Track metadata is a small JSON side-cache and is included in
-//! cache stats but not heavily constrained.
+//! file mtime). Track + lyrics metadata are small JSON side-caches and are
+//! included in cache stats but not heavily constrained.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -54,10 +55,49 @@ impl Cache {
             .with_context(|| format!("creating {}/images", root.display()))?;
         fs::create_dir_all(root.join("tracks"))
             .with_context(|| format!("creating {}/tracks", root.display()))?;
+        fs::create_dir_all(root.join("lyrics"))
+            .with_context(|| format!("creating {}/lyrics", root.display()))?;
         Ok(Self {
             root,
             lock: Arc::new(Mutex::new(())),
         })
+    }
+
+    fn lyrics_path(&self, video_id: &str) -> (PathBuf, [u8; 32]) {
+        let mut hasher = Sha256::new();
+        hasher.update(video_id.as_bytes());
+        let hash: [u8; 32] = hasher.finalize().into();
+        (
+            self.root.join("lyrics").join(format!("{video_id}.json")),
+            hash,
+        )
+    }
+
+    /// Read a cached lyrics JSON payload, or `None` if absent/expired.
+    pub fn get_lyrics(&self, video_id: &str) -> Result<Option<String>> {
+        let (path, hash) = self.lyrics_path(video_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        if Self::is_expired(&path, &hash) {
+            let _ = fs::remove_file(&path);
+            return Ok(None);
+        }
+        let _ = touch(&path);
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        Ok(Some(content))
+    }
+
+    /// Persist a lyrics JSON payload. Overwrites any prior entry.
+    pub fn put_lyrics(&self, video_id: &str, json: &str) -> Result<()> {
+        if video_id.is_empty() {
+            return Ok(());
+        }
+        let (path, _) = self.lyrics_path(video_id);
+        fs::write(&path, json)
+            .with_context(|| format!("writing {}", path.display()))?;
+        Ok(())
     }
 
     fn image_path(&self, url: &str) -> (PathBuf, [u8; 32]) {
@@ -166,7 +206,7 @@ impl Cache {
     pub async fn clear(&self) -> Result<u64> {
         let _guard = self.lock.lock().await;
         let mut freed = 0u64;
-        for sub in ["images", "tracks"] {
+        for sub in ["images", "tracks", "lyrics"] {
             let dir = self.root.join(sub);
             if !dir.exists() {
                 continue;

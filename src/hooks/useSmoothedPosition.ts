@@ -1,0 +1,49 @@
+import { useEffect, useState } from 'react';
+
+/**
+ * Interpolate playback position between backend POSITION_UPDATED events
+ * using `requestAnimationFrame`, so lyric highlighting advances smoothly
+ * at ~60 fps instead of stepping every ~150 ms when a new backend sample
+ * arrives.
+ *
+ * How it auto-tunes: every time `positionSecs` lands, we reset the
+ * baseline to (that value, wall-clock now). While playing, rAF ticks
+ * update the returned value to `baseline.pos + (now - baseline.at)`. Since
+ * we re-base on every backend update, small clock skew can't drift.
+ *
+ * `constantOffsetMs` is an optional fixed forward-shift that compensates
+ * for residual pipeline lag (poll cycle + audio output buffering). It
+ * defaults to 0 — the rAF interpolation alone often gets within a vocal
+ * syllable.
+ */
+export function useSmoothedPosition(
+  positionSecs: number,
+  isPlaying: boolean,
+  constantOffsetMs = 0,
+): number {
+  const [value, setValue] = useState(positionSecs + constantOffsetMs / 1000);
+
+  useEffect(() => {
+    // Snapshot the backend reading and the instant we saw it. Everything
+    // else in this effect derives from these two numbers, so rAF ticks
+    // can't drift relative to real time.
+    const baselinePos = positionSecs;
+    const baselineAt = performance.now();
+
+    if (!isPlaying) {
+      setValue(baselinePos + constantOffsetMs / 1000);
+      return;
+    }
+
+    let raf = 0;
+    const tick = () => {
+      const elapsedSecs = (performance.now() - baselineAt) / 1000;
+      setValue(baselinePos + elapsedSecs + constantOffsetMs / 1000);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [positionSecs, isPlaying, constantOffsetMs]);
+
+  return value;
+}

@@ -1277,3 +1277,86 @@ see `git log` for the exhaustive list.
   - Integration: `src-tauri/tests/account_info_integration.rs` (3 tests) —
     locks the wire contract between the bridge JS, Rust poller, and
     frontend `AccountInfo` type.
+
+### v0.9.0 — Lyrics pipeline, karaoke UI, reload polish
+
+- **Three-tier timed lyrics fallback**:
+  1. YTM's own timed lyrics from
+     `contents.elementRenderer.newElement.type.componentType.model.timedLyricsModel.lyricsData.timedLyricsData`
+     when available.
+  2. Parallel race of LRCLIB and NetEase via `tokio::select!` —
+     `fetch_lrclib_synced` against `https://lrclib.net/api/get` and
+     `fetch_netease_synced` against `music.163.com` (search → `song/lyric`).
+     First `Some(data)` wins; `None` results wait for the other. LRCLIB
+     covers Western catalog, NetEase covers Mandopop/CJK.
+  3. Plain text with evenly-distributed synthetic timings so the panel
+     still scrolls when neither source has synced lines.
+  The external fallbacks run only when YTM confirmed lyrics exist; a
+  `messageRenderer: "Lyrics not available"` short-circuits so
+  instrumentals don't get the vocal original's lyrics pasted onto them.
+
+- **YTM request context upgrade**: `webview_bridge::api::ytm_api_call`
+  now reads `window.ytcfg.get('INNERTUBE_CONTEXT')` and
+  `INNERTUBE_API_KEY` from inside the YTM webview, replacing the
+  hand-crafted 4-field context. Adds `X-YouTube-Client-Name: 67` and
+  `X-YouTube-Client-Version` headers, plus `&key=<api_key>` on the URL —
+  matching what YTM web sends and unlocking Elements-rendered responses
+  the minimal context missed.
+
+- **Persistent lyrics cache** at `{app_data}/cache/lyrics/{videoId}.json`
+  alongside `tracks/` and `images/`. `Cache::get_lyrics` / `put_lyrics`
+  methods, 7-day + jitter TTL, included in `Cache::clear`. Only content-
+  bearing results are persisted; empty stubs and transient errors stay
+  un-cached so a future probe can still populate them.
+
+- **In-memory cache + de-dupe** (`src/hooks/useLyrics.ts`): shared
+  `lyricsCache` and `lyricsMisses` maps keyed by videoId, plus an
+  `inFlight` promise map so `PlayerBar` (pre-probe) and `NowPlaying`
+  (on-demand) share the same fetch. Single-retry after 1.5 s on
+  transient error handles webview-navigation races.
+
+- **Pre-fetch + upcoming-queue preload**: `PlayerBar` calls
+  `useLyrics(track, true, true)` so the fetch starts the instant a track
+  loads. Separately, new `get_upcoming_tracks(video_id, limit)` command
+  parses YTM's upcoming queue from `playlistPanelRenderer.contents`
+  (handles both the direct `playlistPanelVideoRenderer` form and the
+  newer `playlistPanelVideoWrapperRenderer.primaryRenderer` wrap), then
+  fires `preloadLyrics` on the first two results so skipping forward
+  usually hits cache.
+
+- **Karaoke UI** (`NowPlaying` + `LyricLineView`): each line renders as
+  two stacked copies — a base at the title color and an absolute overlay
+  in the same color with `clip-path: inset(0 (1-progress)*100% 0 0)`
+  revealing left-to-right as the vocal advances. Container auto-scrolls
+  to keep the active line centered; first scroll per visibility session
+  is instant (`behavior: 'auto'`), subsequent advances are smooth. First
+  scroll waits 450 ms after the panel opens so the column's width
+  transition has settled before measuring.
+
+- **Split playing-page layout**: single row used in both cover-only and
+  lyrics-open modes. Lyrics column width animates `0` →
+  `calc(coverSide / 2)` over 420 ms with `marginLeft` and `opacity` in
+  sync, so toggling LRC is a smooth transition rather than a tree
+  remount. Cover takes 2/3 of the 1200 px-capped row, lyrics 1/3; cover
+  side length computed once and used identically in both modes so
+  toggling never resizes it. Panel top-aligns with the sidebar's Home
+  button via `paddingTop: var(--space-3)`.
+
+- **LRC button**: always clickable. Pre-probe runs on every
+  `track.videoId` change so state is ready before the user clicks. Dim
+  opacity communicates "no lyrics" without disabling — the user can open
+  the panel to see the "No lyrics for this track" message.
+
+- **Blur-and-spinner reload pattern** (`src/components/LoadingOverlay.tsx`):
+  new `<LoadingSpinner>` and `<ReloadOverlay>` primitives. Home, Explore,
+  Library, PlaylistDetail, and Search now keep previously-rendered
+  content visible with a 10 px blur + centered spinner while refetching,
+  instead of wiping to a "Loading…" placeholder. First-load on each page
+  still shows a bare spinner since there's nothing to blur.
+
+- **Data-model additions**:
+  - `Lyrics { text, source?, lines? }` and
+    `LyricLine { startMs, endMs?, text }`, serialized camelCase; mirrored
+    in TS `src/lib/types.ts`.
+  - New commands: `get_lyrics(video_id, artist?, title?, duration_secs?)`,
+    `get_upcoming_tracks(video_id, limit?)`.

@@ -8,6 +8,8 @@ interface AppShellProps {
   onNavigate: (path: string) => void;
   nowPlayingOpen: boolean;
   onToggleNowPlaying: () => void;
+  lyricsOpen: boolean;
+  onToggleLyrics: () => void;
   children: ReactNode;
 }
 
@@ -16,6 +18,8 @@ export const AppShell: FC<AppShellProps> = ({
   onNavigate,
   nowPlayingOpen,
   onToggleNowPlaying,
+  lyricsOpen,
+  onToggleLyrics,
   children,
 }) => (
   <div
@@ -59,8 +63,14 @@ export const AppShell: FC<AppShellProps> = ({
     <PlayerBar
       onToggleNowPlaying={onToggleNowPlaying}
       nowPlayingOpen={nowPlayingOpen}
+      lyricsOpen={lyricsOpen}
+      onToggleLyrics={onToggleLyrics}
     />
 
-    <NowPlaying isOpen={nowPlayingOpen} onClose={onToggleNowPlaying} />
+    <NowPlaying
+      isOpen={nowPlayingOpen}
+      onClose={onToggleNowPlaying}
+      showLyrics={lyricsOpen}
+    />
   </div>
 );

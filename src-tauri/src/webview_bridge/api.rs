@@ -51,27 +51,53 @@ pub async fn ytm_api_call(
                 }});
             }}
 
+            // Prefer YTM's own INNERTUBE_CONTEXT (pulled from ytcfg) so our
+            // requests match the ones YTM web makes. That's what unlocks the
+            // Elements-rendered timed lyrics on synced tracks — the minimal
+            // hand-crafted context we used before got the plain-text path only.
+            var ytctx = null;
+            try {{
+                if (window.ytcfg && typeof window.ytcfg.get === 'function') {{
+                    ytctx = window.ytcfg.get('INNERTUBE_CONTEXT');
+                }}
+                if (!ytctx && window.ytcfg && window.ytcfg.data_) {{
+                    ytctx = window.ytcfg.data_.INNERTUBE_CONTEXT;
+                }}
+            }} catch (e) {{ ytctx = null; }}
+            var ytApiKey = null;
+            try {{
+                if (window.ytcfg && typeof window.ytcfg.get === 'function') {{
+                    ytApiKey = window.ytcfg.get('INNERTUBE_API_KEY');
+                }}
+                if (!ytApiKey && window.ytcfg && window.ytcfg.data_) {{
+                    ytApiKey = window.ytcfg.data_.INNERTUBE_API_KEY;
+                }}
+            }} catch (e) {{ ytApiKey = null; }}
+
             makeAuth().then(function(auth) {{
                 var headers = {{
                     'Content-Type': 'application/json',
                     'X-Origin': 'https://music.youtube.com',
                     'X-Goog-AuthUser': '0',
+                    'X-YouTube-Client-Name': (ytctx && ytctx.client && ytctx.client.clientName === 'WEB_REMIX') ? '67' : '67',
+                    'X-YouTube-Client-Version': (ytctx && ytctx.client && ytctx.client.clientVersion) || '1.20250407.01.00',
                 }};
                 if (auth) headers['Authorization'] = auth;
-                return fetch('https://music.youtube.com/youtubei/v1/{endpoint}?prettyPrint=false', {{
+                var url = 'https://music.youtube.com/youtubei/v1/{endpoint}?prettyPrint=false';
+                if (ytApiKey) url += '&key=' + encodeURIComponent(ytApiKey);
+                var ctx = ytctx || {{
+                    client: {{
+                        clientName: 'WEB_REMIX',
+                        clientVersion: '1.20250407.01.00',
+                        hl: navigator.language || 'en',
+                        gl: 'US'
+                    }}
+                }};
+                return fetch(url, {{
                     method: 'POST',
                     credentials: 'include',
                     headers: headers,
-                    body: JSON.stringify(Object.assign({{
-                        context: {{
-                            client: {{
-                                clientName: 'WEB_REMIX',
-                                clientVersion: '1.20250407.01.00',
-                                hl: navigator.language || 'en',
-                                gl: 'US'
-                            }}
-                        }}
-                    }}, {body_json}))
+                    body: JSON.stringify(Object.assign({{ context: ctx }}, {body_json}))
                 }});
             }})
             .then(function(r) {{ return r.text(); }})

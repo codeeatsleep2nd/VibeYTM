@@ -85,3 +85,28 @@ pub enum ShelfContent {
     Songs(Vec<TrackInfo>),
     Artists(Vec<ArtistSummary>),
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Lyrics {
+    /// Lyrics text with line breaks preserved. Empty when YTM returned a
+    /// lyrics tab but no content (e.g. "Lyrics not available" placeholder).
+    pub text: String,
+    /// Attribution line YTM renders below the lyrics ("Source: ...").
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Per-line timing when YTM ships synced lyrics for the track. `None`
+    /// when only plain text was returned — the UI then falls back to a
+    /// static, non-highlighting view.
+    #[serde(default)]
+    pub lines: Option<Vec<LyricLine>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricLine {
+    pub start_ms: u64,
+    #[serde(default)]
+    pub end_ms: Option<u64>,
+    pub text: String,
+}

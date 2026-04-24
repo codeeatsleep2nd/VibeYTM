@@ -408,18 +408,21 @@ export const SearchPage: FC<SearchPageProps> = ({
       </div>
       </div>
 
-      {isLoading && (
-        <p
-          style={{
-            fontSize: 'var(--text-base)',
-            color: 'var(--color-text-tertiary)',
-          }}
-        >
-          Searching...
-        </p>
-      )}
+      {/*
+        Results region wrapped in a relative container so a reload can blur
+        the previous results while a spinner overlays on top — instead of
+        wiping them to a "Searching…" placeholder.
+      */}
+      <div style={{ position: 'relative', minHeight: '200px' }}>
+      <div
+        style={{
+          filter: isLoading && results ? 'blur(10px)' : 'none',
+          pointerEvents: isLoading ? 'none' : 'auto',
+          transition: 'filter var(--duration-normal) var(--ease-out)',
+        }}
+      >
 
-      {!isLoading && !results && (
+      {!results && !isLoading && (
         <div
           style={{
             display: 'flex',
@@ -440,7 +443,7 @@ export const SearchPage: FC<SearchPageProps> = ({
       )}
 
       {/* ---------- Unified default view (no tab selected) ---------- */}
-      {!isLoading && results && activeCategory === null && (
+      {results && activeCategory === null && (
         <>
           {topAlbum && topAlbumPreview && previewTracks.length > 0 && topCoverReady && (
             <ShelfRow title="Top result">
@@ -570,7 +573,7 @@ export const SearchPage: FC<SearchPageProps> = ({
       )}
 
       {/* ---------- Tab-specific views ---------- */}
-      {!isLoading && results && activeCategory === 'Songs' && (
+      {results && activeCategory === 'Songs' && (
         <>
           {results.songs.length > 0 ? (
             <ShelfRow title="Songs">
@@ -586,7 +589,7 @@ export const SearchPage: FC<SearchPageProps> = ({
         </>
       )}
 
-      {!isLoading && results && activeCategory === 'Albums' && (
+      {results && activeCategory === 'Albums' && (
         <>
           {results.albums.length > 0 ? (
             <ShelfRow title="Albums">
@@ -624,7 +627,7 @@ export const SearchPage: FC<SearchPageProps> = ({
         </>
       )}
 
-      {!isLoading && results && activeCategory === 'Playlists' && (
+      {results && activeCategory === 'Playlists' && (
         <>
           {results.playlists.length > 0 ? (
             <ShelfRow title="Playlists">
@@ -660,7 +663,7 @@ export const SearchPage: FC<SearchPageProps> = ({
         </>
       )}
 
-      {!isLoading && results && activeCategory === 'Artists' && (
+      {results && activeCategory === 'Artists' && (
         <>
           {results.artists.length > 0 ? (
             <ShelfRow title="Artists">
@@ -740,6 +743,35 @@ export const SearchPage: FC<SearchPageProps> = ({
           )}
         </>
       )}
+
+      </div>
+      {isLoading && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+            background: results ? 'oklch(10% 0.005 270 / 0.35)' : 'transparent',
+          }}
+        >
+          <div
+            role="status"
+            aria-label="Searching"
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: '50%',
+              border: '3px solid var(--color-surface-3)',
+              borderTopColor: 'var(--color-accent)',
+              animation: 'vibeytm-spin 0.9s linear infinite',
+            }}
+          />
+        </div>
+      )}
+      </div>
 
     </section>
   );

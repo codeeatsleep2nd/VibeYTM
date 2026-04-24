@@ -3,6 +3,7 @@ import type { PlaylistDetail } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
 import { SongRow } from '../browse/SongRow';
 import { CachedImage } from '../CachedImage';
+import { LoadingSpinner } from '../LoadingOverlay';
 
 interface PlaylistDetailPageProps {
   playlistId: string;
@@ -111,21 +112,10 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     };
   }, [playlistId, autoPlay]);
 
+  // PlaylistDetailPage resets `playlist` to null before each fetch, so there
+  // is no stale content to blur mid-load — keep the plain spinner here.
   if (isLoading) {
-    return (
-      <section
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100%',
-          color: 'var(--color-text-tertiary)',
-          fontSize: 'var(--text-base)',
-        }}
-      >
-        Loading...
-      </section>
-    );
+    return <LoadingSpinner />;
   }
 
   if (error) {
