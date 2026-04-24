@@ -5,6 +5,7 @@ import { useTauriEvent } from '../../hooks/useTauriEvent';
 import { ShelfRow } from '../browse/ShelfRow';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
+import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
 
 interface HomePageProps {
   onOpenPlaylist?: (playlistId: string) => void;
@@ -161,24 +162,11 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
     };
   }, [activeMood]);
 
-  if (isLoading) {
-    return (
-      <section
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100%',
-          color: 'var(--color-text-tertiary)',
-          fontSize: 'var(--text-base)',
-        }}
-      >
-        Loading...
-      </section>
-    );
+  if (isLoading && shelves.length === 0) {
+    return <LoadingSpinner />;
   }
 
-  return (
+  const content = (
     <section
       style={{
         padding: '0 var(--space-6) var(--space-8)',
@@ -335,6 +323,8 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
         ))}
     </section>
   );
+
+  return isLoading ? <ReloadOverlay>{content}</ReloadOverlay> : content;
 };
 
 function renderShelfContent(

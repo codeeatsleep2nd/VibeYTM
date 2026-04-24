@@ -25,6 +25,7 @@ const App: FC = () => {
   const isLoggedIn = loginState === true || loginOverride;
   const [currentPath, setCurrentPath] = useState('home');
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
+  const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
   // Flips true once the Home page has finished its first real render (or we
@@ -51,7 +52,22 @@ const App: FC = () => {
     const now = Date.now();
     if (now - lastToggleAtRef.current < 450) return;
     lastToggleAtRef.current = now;
-    setIsNowPlayingOpen((prev) => !prev);
+    setIsNowPlayingOpen((prev) => {
+      // Closing the overlay also tears down the lyrics view — otherwise the
+      // next open would flash the lyrics layout before the user asked for it.
+      if (prev) setIsLyricsOpen(false);
+      return !prev;
+    });
+  }, []);
+
+  // Lyrics button opens the Now Playing page if it isn't already, then flips
+  // the lyrics view on/off within it.
+  const toggleLyrics = useCallback(() => {
+    setIsLyricsOpen((prev) => {
+      const next = !prev;
+      if (next) setIsNowPlayingOpen(true);
+      return next;
+    });
   }, []);
 
   const openPlaylistDetail = useCallback((playlistId: string) => {
@@ -166,6 +182,8 @@ const App: FC = () => {
       }}
       nowPlayingOpen={isNowPlayingOpen}
       onToggleNowPlaying={toggleNowPlaying}
+      lyricsOpen={isLyricsOpen}
+      onToggleLyrics={toggleLyrics}
     >
       {/*
         The underlying page (home/search/explore/library/settings) stays

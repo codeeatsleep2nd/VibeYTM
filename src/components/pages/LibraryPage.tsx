@@ -8,6 +8,7 @@ import type {
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
+import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
 
 export type LibraryTab = 'playlists' | 'songs' | 'albums' | 'artists';
 
@@ -86,7 +87,17 @@ export const LibraryPage: FC<LibraryPageProps> = ({
     };
   }, [activeTab, refreshKey]);
 
-  return (
+  const currentTabHasData =
+    (activeTab === 'playlists' && playlists.length > 0) ||
+    (activeTab === 'songs' && songs.length > 0) ||
+    (activeTab === 'albums' && albums.length > 0) ||
+    (activeTab === 'artists' && artists.length > 0);
+
+  if (isLoading && !currentTabHasData) {
+    return <LoadingSpinner />;
+  }
+
+  const content = (
     <section
       style={{
         padding: '0 var(--space-6) var(--space-8)',
@@ -122,13 +133,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
       </h1>
       </div>
 
-      {isLoading && (
-        <p style={{ fontSize: 'var(--text-base)', color: 'var(--color-text-tertiary)' }}>
-          Loading...
-        </p>
-      )}
-
-      {!isLoading && activeTab === 'playlists' && (
+      {activeTab === 'playlists' && (
         <>
           {playlists.length > 0 ? (
             <div
@@ -162,7 +167,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
         </>
       )}
 
-      {!isLoading && activeTab === 'songs' && (
+      {activeTab === 'songs' && (
         <>
           {songs.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -176,7 +181,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
         </>
       )}
 
-      {!isLoading && activeTab === 'albums' && (
+      {activeTab === 'albums' && (
         <>
           {albums.length > 0 ? (
             <div
@@ -212,7 +217,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
         </>
       )}
 
-      {!isLoading && activeTab === 'artists' && (
+      {activeTab === 'artists' && (
         <>
           {artists.length > 0 ? (
             <div
@@ -288,6 +293,8 @@ export const LibraryPage: FC<LibraryPageProps> = ({
       )}
     </section>
   );
+
+  return isLoading ? <ReloadOverlay>{content}</ReloadOverlay> : content;
 };
 
 const EmptyState: FC<{ label: string }> = ({ label }) => (

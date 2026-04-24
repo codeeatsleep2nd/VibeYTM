@@ -90,3 +90,16 @@ export interface Shelf {
   title: string;
   items: ShelfContent;
 }
+
+export interface LyricLine {
+  startMs: number;
+  endMs?: number | null;
+  text: string;
+}
+
+export interface Lyrics {
+  text: string;
+  source?: string | null;
+  /** Per-line timings when YTM returned synced lyrics; else null. */
+  lines?: LyricLine[] | null;
+}

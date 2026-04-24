@@ -233,3 +233,68 @@ pub async fn remove_playlist_from_library(
         e.to_string()
     })
 }
+
+#[tauri::command]
+pub async fn get_upcoming_tracks(
+    video_id: String,
+    limit: Option<usize>,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<Vec<TrackInfo>, String> {
+    let limit = limit.unwrap_or(3).min(10);
+    tracing::info!(video_id = %video_id, limit, "browse::get_upcoming_tracks called");
+    let result = api
+        .get_upcoming_tracks(&app, &video_id, limit)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "browse::get_upcoming_tracks failed");
+            e.to_string()
+        })?;
+    tracing::info!(count = result.len(), "browse::get_upcoming_tracks done");
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn get_lyrics(
+    video_id: String,
+    artist: Option<String>,
+    title: Option<String>,
+    duration_secs: Option<f64>,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+    cache: State<'_, Cache>,
+) -> Result<Lyrics, String> {
+    tracing::info!(video_id = %video_id, "browse::get_lyrics called");
+
+    // Disk cache hit? Return immediately — no network round-trip, survives
+    // app restarts. The cache's 7d+jitter TTL handles freshness.
+    if let Ok(Some(raw)) = cache.get_lyrics(&video_id) {
+        if let Ok(cached) = serde_json::from_str::<Lyrics>(&raw) {
+            tracing::info!(video_id = %video_id, "browse::get_lyrics served from disk cache");
+            return Ok(cached);
+        }
+    }
+
+    let result = api
+        .get_lyrics(&app, &video_id, artist.as_deref(), title.as_deref(), duration_secs)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "browse::get_lyrics failed");
+            e.to_string()
+        })?;
+
+    // Persist only meaningful results. Empty stubs are left un-cached so a
+    // later probe (with better title cleaning or once LRCLIB re-indexes)
+    // can still populate the track.
+    let has_text = !result.text.trim().is_empty();
+    let has_lines = result.lines.as_ref().map_or(false, |l| !l.is_empty());
+    if has_text || has_lines {
+        if let Ok(json) = serde_json::to_string(&result) {
+            if let Err(e) = cache.put_lyrics(&video_id, &json) {
+                tracing::warn!(error = %e, "failed to persist lyrics cache");
+            }
+        }
+    }
+
+    Ok(result)
+}

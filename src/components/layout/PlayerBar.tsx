@@ -1,6 +1,7 @@
-import { type FC, type ReactNode } from 'react';
+import { type FC, type ReactNode, useEffect } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
-import { playerApi } from '../../lib/ipc';
+import { useLyrics, preloadLyrics } from '../../hooks/useLyrics';
+import { browseApi, playerApi } from '../../lib/ipc';
 import type { RepeatMode } from '../../lib/types';
 import { CachedImage } from '../CachedImage';
 import { MarqueeText } from '../MarqueeText';
@@ -20,6 +21,8 @@ function pickArtwork(track: { artworkUrl?: string | null; videoId?: string }): s
 interface PlayerBarProps {
   onToggleNowPlaying?: () => void;
   nowPlayingOpen?: boolean;
+  onToggleLyrics?: () => void;
+  lyricsOpen?: boolean;
 }
 
 const formatTime = (secs: number): string => {
@@ -117,10 +120,62 @@ const NEXT_REPEAT_MODE: Record<RepeatMode, RepeatMode> = {
 export const PlayerBar: FC<PlayerBarProps> = ({
   onToggleNowPlaying,
   nowPlayingOpen = false,
+  onToggleLyrics,
+  lyricsOpen = false,
 }) => {
   const state = usePlayerState();
   const { track, status, positionSecs, volume, isShuffled, repeatMode, isLiked, applyOptimistic, markSeek } = state;
   const isPlaying = status === 'playing';
+
+  // Preload lyrics for the next two upcoming tracks so the LRC panel opens
+  // instantly when the user skips forward. YTM's upcoming queue isn't in
+  // our PlayerState — it lives in the `next` endpoint's playlist panel —
+  // so we ask the backend to fetch it for the current track, then fire
+  // preloadLyrics on each result. De-duped by the shared useLyrics cache.
+  const currentVideoId = track?.videoId;
+  useEffect(() => {
+    if (!currentVideoId) return;
+    let cancelled = false;
+    browseApi
+      .getUpcomingTracks(currentVideoId, 3)
+      .then((tracks) => {
+        if (cancelled) return;
+        for (const t of tracks.slice(0, 2)) {
+          if (!t.videoId || t.videoId === currentVideoId) continue;
+          preloadLyrics({
+            videoId: t.videoId,
+            artist: t.artist,
+            title: t.title,
+            durationSecs: t.durationSecs,
+          });
+        }
+      })
+      .catch(() => {
+        // Preload is best-effort — a failed upcoming-tracks lookup just
+        // means lyrics won't be warm when the user skips. Safe to swallow.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentVideoId]);
+  // Pre-probe lyrics as soon as a track loads. `immediate=true` skips the
+  // track-change debounce so the fetch starts the instant playback begins —
+  // by the time the user clicks LRC, the result is usually ready (served
+  // from disk cache on a second visit, or already in-flight from the
+  // parallel LRCLIB + NetEase race on a first visit).
+  const { status: lyricsAvailability } = useLyrics(
+    track
+      ? {
+          videoId: track.videoId,
+          artist: track.artist,
+          title: track.title,
+          durationSecs: track.durationSecs,
+        }
+      : null,
+    true,
+    true,
+  );
+  const lyricsMissing = lyricsAvailability === 'missing';
 
   const handleTogglePlay = () => {
     // Optimistic flip — instant UI feedback. Backend's next event reconciles.
@@ -425,6 +480,49 @@ export const PlayerBar: FC<PlayerBarProps> = ({
             }}
           />
         </div>
+
+        {onToggleLyrics && track && (
+          <button
+            onClick={onToggleLyrics}
+            aria-label={lyricsOpen ? 'Hide lyrics' : 'Show lyrics'}
+            aria-pressed={lyricsOpen}
+            title={lyricsMissing ? 'No lyrics for this track' : undefined}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 'var(--text-xs)',
+              fontWeight: 600,
+              letterSpacing: '0.04em',
+              color: lyricsOpen ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+              // Always clickable. Dim the icon slightly when we know the
+              // track has no lyrics so the state is still communicated,
+              // but let the user open the panel to see the "No lyrics"
+              // message themselves.
+              opacity: lyricsMissing && !lyricsOpen ? 0.55 : 1,
+              padding: 'var(--space-1) var(--space-2)',
+              borderRadius: 'var(--radius-sm)',
+              transition: `color var(--duration-fast) var(--ease-out),
+                           transform var(--duration-fast) var(--ease-out),
+                           opacity var(--duration-fast) var(--ease-out)`,
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'scale(1.1)';
+              if (!lyricsOpen) {
+                e.currentTarget.style.color = 'var(--color-text-primary)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+              if (!lyricsOpen) {
+                e.currentTarget.style.color = 'var(--color-text-tertiary)';
+              }
+            }}
+          >
+            LRC
+          </button>
+        )}
 
         {onToggleNowPlaying && (
           <button

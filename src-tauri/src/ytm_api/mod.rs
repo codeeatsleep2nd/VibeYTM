@@ -220,6 +220,427 @@ impl YtmApi {
             .map_err(anyhow::Error::msg)?;
         check_like_response(&raw, "removelike")
     }
+
+    /// Fetch lyrics for a track. Two-step flow: `next` with the videoId
+    /// surfaces a tabs list; the "Lyrics" tab carries a `browseId` that
+    /// returns the actual lyrics text via a second `browse` call.
+    ///
+    /// When YTM ships only plain text (the common case), a fallback hop to
+    /// the public LRCLIB database supplies per-line timings — required for
+    /// the highlight-and-scroll-with-playback UX.
+    pub async fn get_lyrics(
+        &self,
+        app: &AppHandle,
+        video_id: &str,
+        artist: Option<&str>,
+        title: Option<&str>,
+        duration_secs: Option<f64>,
+    ) -> anyhow::Result<Lyrics> {
+        let next_body = serde_json::json!({ "videoId": video_id }).to_string();
+        let next_raw = ytm_api_call(app, "next", &next_body)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let next_data: Value = serde_json::from_str(&next_raw)?;
+        let browse_id = extract_lyrics_browse_id(&next_data).ok_or_else(|| {
+            anyhow::anyhow!("YTM did not expose a lyrics tab for this track")
+        })?;
+
+        let browse_body = serde_json::json!({ "browseId": browse_id }).to_string();
+        let browse_raw = ytm_api_call(app, "browse", &browse_body)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let browse_data: Value = serde_json::from_str(&browse_raw)?;
+        let mut lyrics = parse_lyrics(&browse_data);
+
+        // YTM already shipped synced lines — use them and skip external sources.
+        if lyrics.lines.as_ref().map_or(false, |l| !l.is_empty()) {
+            return Ok(lyrics);
+        }
+
+        // Trust YTM's "no lyrics" verdict (empty text + no lines). That path
+        // covers instrumentals, karaoke versions, uploaded covers that lack
+        // lyrics, etc. Falling through to LRCLIB/NetEase here would match
+        // the vocal original by title and paste its lyrics onto a piano /
+        // instrumental rendition — false positive.
+        let has_plain_text = !lyrics.text.trim().is_empty();
+        if !has_plain_text {
+            tracing::info!(
+                video_id,
+                "YTM reported no lyrics — skipping external sync lookup (likely instrumental)"
+            );
+            return Ok(lyrics);
+        }
+
+        if let (Some(artist), Some(title)) = (artist, title) {
+            let clean_artist = clean_query_field(artist);
+            let clean_title = clean_query_field(title);
+
+            // Race LRCLIB and NetEase in parallel. Whichever returns synced
+            // lyrics first wins; `None` results wait for the other source
+            // before giving up. Different sources win on different catalogs
+            // (LRCLIB for Western, NetEase for CJK), so racing halves the
+            // typical wait instead of trying them one after the other.
+            let artist_l = clean_artist.clone();
+            let title_l = clean_title.clone();
+            let vid_l = video_id.to_string();
+            let lrc_fut = async move {
+                match fetch_lrclib_synced(&artist_l, &title_l, duration_secs).await {
+                    Ok(Some(body)) => Some((body, "LRCLIB")),
+                    Ok(None) => {
+                        tracing::info!(video_id = %vid_l, "LRCLIB had no synced lyrics");
+                        None
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "LRCLIB fetch failed");
+                        None
+                    }
+                }
+            };
+
+            let artist_n = clean_artist.clone();
+            let title_n = clean_title.clone();
+            let vid_n = video_id.to_string();
+            let ne_fut = async move {
+                match fetch_netease_synced(&artist_n, &title_n).await {
+                    Ok(Some(body)) => Some((body, "NetEase")),
+                    Ok(None) => {
+                        tracing::info!(video_id = %vid_n, "NetEase had no synced lyrics");
+                        None
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "NetEase fetch failed");
+                        None
+                    }
+                }
+            };
+
+            tokio::pin!(lrc_fut, ne_fut);
+            let mut lrc_done = false;
+            let mut ne_done = false;
+            let mut winner: Option<(String, &'static str)> = None;
+
+            while winner.is_none() && !(lrc_done && ne_done) {
+                tokio::select! {
+                    r = &mut lrc_fut, if !lrc_done => {
+                        lrc_done = true;
+                        if r.is_some() { winner = r; }
+                    }
+                    r = &mut ne_fut, if !ne_done => {
+                        ne_done = true;
+                        if r.is_some() { winner = r; }
+                    }
+                }
+            }
+
+            if let Some((body, source_name)) = winner {
+                if apply_synced_lrc(&mut lyrics, &body, source_name) {
+                    return Ok(lyrics);
+                }
+            }
+        }
+
+        Ok(lyrics)
+    }
+
+    /// Fetch the upcoming tracks for a given videoId by calling YTM's
+    /// `next` endpoint and parsing its queue panel. Used to warm the
+    /// lyrics cache for songs the user will play in a few seconds.
+    pub async fn get_upcoming_tracks(
+        &self,
+        app: &AppHandle,
+        video_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<TrackInfo>> {
+        let body = serde_json::json!({ "videoId": video_id }).to_string();
+        let raw = ytm_api_call(app, "next", &body)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let data: Value = serde_json::from_str(&raw)?;
+        Ok(extract_upcoming_tracks(&data, video_id, limit))
+    }
+}
+
+/// Mutate `lyrics` in-place with parsed LRC data from an external source.
+/// Returns `true` when timed lines were successfully adopted.
+fn apply_synced_lrc(lyrics: &mut Lyrics, lrc: &str, source_name: &str) -> bool {
+    let parsed = parse_lrc(lrc);
+    if parsed.is_empty() {
+        return false;
+    }
+    lyrics.text = parsed
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    lyrics.lines = Some(parsed);
+    let existing = lyrics.source.take();
+    lyrics.source = Some(match existing {
+        Some(s) if !s.is_empty() => format!("{s} · Synced by {source_name}"),
+        _ => format!("Synced by {source_name}"),
+    });
+    true
+}
+
+/// Strip common YouTube-title noise that kills exact-match lookups on
+/// LRCLIB / NetEase: parenthesized "Official MV" markers, bracketed tags,
+/// full-width Chinese brackets, and a trailing `- My Secret` translation.
+fn clean_query_field(s: &str) -> String {
+    // Noise tokens we strip when they appear inside any bracket pair. Match
+    // case-insensitively; any bracket whose lowercased inner text contains
+    // one of these tokens gets dropped wholesale.
+    const NOISE_TOKENS: &[&str] = &[
+        "official", "mv", "music video", "audio", "lyric", "visualizer",
+        "hd", "hq", "remix", "cover", "live", "版", "版本",
+    ];
+
+    let noise_pairs: &[(char, char)] = &[('(', ')'), ('[', ']'), ('【', '】'), ('〈', '〉')];
+    let mut out = s.to_string();
+
+    for (open, close) in noise_pairs {
+        out = strip_noise_brackets(&out, *open, *close, NOISE_TOKENS);
+    }
+
+    // Cut at " - " dash-tail (translations, "- My Secret", etc.) only when
+    // the part before it is meaningfully long.
+    if let Some(idx) = out.find(" - ") {
+        let head = &out[..idx];
+        if head.trim().chars().count() >= 2 {
+            out = head.to_string();
+        }
+    }
+
+    // Collapse internal whitespace runs so the remote query encodes cleanly.
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Remove every `open..close` pair whose contents contain any of the given
+/// lowercase noise tokens. Tolerant of mismatched / unbalanced brackets
+/// (just returns the tail unchanged when it can't find a close).
+fn strip_noise_brackets(
+    s: &str,
+    open: char,
+    close: char,
+    noise_tokens: &[&str],
+) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find(open) {
+        out.push_str(&rest[..pos]);
+        let after_open = &rest[pos + open.len_utf8()..];
+        let Some(end_off) = after_open.find(close) else {
+            // No closing bracket; keep the open char and everything else.
+            out.push(open);
+            out.push_str(after_open);
+            return out;
+        };
+        let inner = &after_open[..end_off];
+        let lower = inner.to_lowercase();
+        let is_noise = noise_tokens.iter().any(|t| lower.contains(t));
+        if !is_noise {
+            // Keep non-noise brackets verbatim.
+            out.push(open);
+            out.push_str(inner);
+            out.push(close);
+        }
+        rest = &after_open[end_off + close.len_utf8()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Ask LRCLIB (https://lrclib.net) for synced LRC-format lyrics. Returns the
+/// raw LRC body on success, `None` when LRCLIB has no match, `Err` on
+/// transport failure. LRCLIB is a free, open, community-maintained database
+/// of synced lyrics keyed by artist/track/duration.
+async fn fetch_lrclib_synced(
+    artist: &str,
+    title: &str,
+    duration_secs: Option<f64>,
+) -> anyhow::Result<Option<String>> {
+    // LRCLIB can take 5-8s to respond for CJK/less-indexed queries. A
+    // tight timeout is why Chinese tracks were falling through to NetEase.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+    let mut query: Vec<(&str, String)> = vec![
+        ("artist_name", artist.to_string()),
+        ("track_name", title.to_string()),
+    ];
+    if let Some(d) = duration_secs.filter(|d| *d > 0.0) {
+        query.push(("duration", (d.round() as u64).to_string()));
+    }
+
+    let resp = client
+        .get("https://lrclib.net/api/get")
+        .query(&query)
+        .header(
+            "User-Agent",
+            "VibeYTM/0.9.0 (https://github.com/dongli/VibeYTM)",
+        )
+        .send()
+        .await?;
+
+    if resp.status().as_u16() == 404 {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        anyhow::bail!("LRCLIB returned HTTP {}", resp.status());
+    }
+
+    let body: Value = resp.json().await?;
+    // LRCLIB returns instrumental tracks with syncedLyrics=null, plainLyrics="".
+    if body.get("instrumental").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return Ok(None);
+    }
+    let synced = body.get("syncedLyrics").and_then(|v| v.as_str()).unwrap_or("");
+    if synced.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(synced.to_string()))
+}
+
+/// Ask NetEase Cloud Music for synced LRC-format lyrics. Does a two-call
+/// lookup: search by "artist title" to find a song id, then fetch that
+/// song's lyrics. NetEase has excellent coverage for Mandopop, Cantopop,
+/// K-pop, J-pop, and a growing Western catalog. Free, no auth required.
+async fn fetch_netease_synced(artist: &str, title: &str) -> anyhow::Result<Option<String>> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .build()?;
+
+    // Step 1: search. `s` is the query, `type=1` selects song results.
+    let query = format!("{artist} {title}");
+    let search_resp = client
+        .get("https://music.163.com/api/search/get")
+        .query(&[("s", query.as_str()), ("type", "1"), ("limit", "5")])
+        .header("Referer", "https://music.163.com")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
+             (KHTML, like Gecko) Version/16.0 Safari/605.1.15",
+        )
+        .send()
+        .await?;
+
+    if !search_resp.status().is_success() {
+        anyhow::bail!("NetEase search HTTP {}", search_resp.status());
+    }
+    let search_body: Value = search_resp.json().await?;
+    let Some(songs) = search_body.pointer("/result/songs").and_then(|v| v.as_array()) else {
+        return Ok(None);
+    };
+
+    // Pick the first candidate whose title loosely matches — NetEase's
+    // search is forgiving so the top hit is usually right, but we defend
+    // against karaoke / cover false positives by checking the returned name.
+    let want_title = title.to_lowercase();
+    let picked_id = songs
+        .iter()
+        .find_map(|s| {
+            let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+            let id = s.get("id").and_then(|v| v.as_u64())?;
+            if name.contains(&want_title) || want_title.contains(&name) {
+                Some(id)
+            } else {
+                None
+            }
+        })
+        .or_else(|| songs.first().and_then(|s| s.get("id")).and_then(|v| v.as_u64()));
+
+    let Some(song_id) = picked_id else {
+        return Ok(None);
+    };
+
+    // Step 2: fetch lyrics. `lv=1` asks for original LRC, `tv=-1` suppresses
+    // the translation track (we render the native text).
+    let lyric_resp = client
+        .get("https://music.163.com/api/song/lyric")
+        .query(&[
+            ("id", song_id.to_string().as_str()),
+            ("lv", "1"),
+            ("tv", "-1"),
+        ])
+        .header("Referer", "https://music.163.com")
+        .send()
+        .await?;
+
+    if !lyric_resp.status().is_success() {
+        anyhow::bail!("NetEase lyric HTTP {}", lyric_resp.status());
+    }
+    let body: Value = lyric_resp.json().await?;
+    let lrc = body
+        .pointer("/lrc/lyric")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && s.contains('['));
+    Ok(lrc.map(str::to_string))
+}
+
+/// Parse an LRC-format string into timed lines. LRC supports multiple
+/// timestamps per line (for repeats) and `[mm:ss.xx]` or `[mm:ss]` forms.
+/// Metadata headers like `[ar:Artist]` are treated as non-numeric and skipped.
+fn parse_lrc(lrc: &str) -> Vec<LyricLine> {
+    let mut out: Vec<LyricLine> = Vec::new();
+    for raw in lrc.lines() {
+        let mut stamps: Vec<u64> = Vec::new();
+        let mut rest = raw;
+        loop {
+            let Some(open) = rest.find('[') else { break; };
+            if open != 0 {
+                break;
+            }
+            let Some(close) = rest[open + 1..].find(']') else { break; };
+            let inner = &rest[open + 1..open + 1 + close];
+            if let Some(ms) = parse_lrc_timestamp(inner) {
+                stamps.push(ms);
+            }
+            rest = &rest[open + 1 + close + 1..];
+        }
+        if stamps.is_empty() {
+            continue;
+        }
+        let text = rest.trim().to_string();
+        for start_ms in stamps {
+            out.push(LyricLine {
+                start_ms,
+                end_ms: None,
+                text: text.clone(),
+            });
+        }
+    }
+    out.sort_by_key(|l| l.start_ms);
+
+    // Fill end_ms from the next line's start so the UI can render line
+    // durations if it wants. Keeps the last line open-ended.
+    for i in 0..out.len().saturating_sub(1) {
+        let next = out[i + 1].start_ms;
+        out[i].end_ms = Some(next);
+    }
+
+    out
+}
+
+/// Parse an LRC-style timestamp. Accepts `mm:ss`, `mm:ss.xx`, `mm:ss.xxx`.
+/// Returns milliseconds; `None` for non-numeric (e.g. metadata keys).
+fn parse_lrc_timestamp(s: &str) -> Option<u64> {
+    let (mins_str, rest) = s.split_once(':')?;
+    let mins: u64 = mins_str.trim().parse().ok()?;
+    let (secs_str, frac_str) = match rest.split_once('.') {
+        Some((a, b)) => (a, Some(b)),
+        None => (rest, None),
+    };
+    let secs: u64 = secs_str.trim().parse().ok()?;
+    let frac_ms: u64 = match frac_str {
+        Some(f) => {
+            // "5" → 500 ms, "50" → 500 ms, "500" → 500 ms, "1234" → 123 ms
+            let mut digits: String = f.chars().take(3).collect();
+            while digits.len() < 3 {
+                digits.push('0');
+            }
+            digits.parse().ok()?
+        }
+        None => 0,
+    };
+    Some(mins * 60_000 + secs * 1_000 + frac_ms)
 }
 
 /// YTM returns a minimal JSON body on success (responseContext + actions).
@@ -1663,6 +2084,225 @@ fn parse_playlist_from_two_row(two_row: &Value) -> Option<PlaylistSummary> {
         artwork_url,
         track_count,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Lyrics
+// ---------------------------------------------------------------------------
+
+/// Walk the watch-next tab list and return the `browseId` whose tab title
+/// mentions lyrics. Title matching is case-insensitive so non-English locales
+/// don't silently drop to `None` — YTM localizes the tab label but keeps the
+/// lyrics browse IDs identifiable on the lyrics-tab position (second tab).
+fn extract_lyrics_browse_id(data: &Value) -> Option<String> {
+    let tabs = data
+        .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs")?
+        .as_array()?;
+
+    for tab in tabs {
+        let Some(renderer) = tab.get("tabRenderer") else { continue; };
+        let title = renderer
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let Some(browse_id) = renderer
+            .pointer("/endpoint/browseEndpoint/browseId")
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        if title.contains("lyric") || browse_id.starts_with("MPLYt") {
+            return Some(browse_id.to_string());
+        }
+    }
+    None
+}
+
+/// Pull the next up-to-`limit` tracks from the `next`-response queue panel.
+/// Skips the entry matching `skip_video_id` so the current track isn't
+/// returned as its own upcoming.
+fn extract_upcoming_tracks(data: &Value, skip_video_id: &str, limit: usize) -> Vec<TrackInfo> {
+    let contents = data
+        .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")
+        .and_then(|v| v.as_array());
+    let Some(contents) = contents else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<TrackInfo> = Vec::new();
+    for entry in contents {
+        if out.len() >= limit {
+            break;
+        }
+        // YTM wraps each queue entry as either:
+        //   { playlistPanelVideoRenderer: { ... } }                 (older)
+        //   { playlistPanelVideoWrapperRenderer:
+        //       { primaryRenderer: { playlistPanelVideoRenderer: { ... } } } } (current)
+        let r = entry
+            .get("playlistPanelVideoRenderer")
+            .or_else(|| entry.pointer("/playlistPanelVideoWrapperRenderer/primaryRenderer/playlistPanelVideoRenderer"));
+        let Some(r) = r else { continue };
+        let video_id = r
+            .get("videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if video_id.is_empty() || video_id == skip_video_id {
+            continue;
+        }
+        let title = r
+            .pointer("/title/runs")
+            .map(runs_text)
+            .unwrap_or_default();
+        let artist = r
+            .pointer("/longBylineText/runs")
+            .or_else(|| r.pointer("/shortBylineText/runs"))
+            .map(runs_text)
+            .unwrap_or_default();
+        let duration_secs = r
+            .pointer("/lengthText/runs/0/text")
+            .and_then(|v| v.as_str())
+            .map(parse_duration_text)
+            .unwrap_or(0.0);
+        let artwork_url = r
+            .pointer("/thumbnail/thumbnails")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.last())
+            .and_then(|t| t.get("url"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        out.push(TrackInfo {
+            video_id,
+            title,
+            artist,
+            artist_id: None,
+            album: String::new(),
+            album_id: None,
+            artwork_url,
+            duration_secs,
+        });
+    }
+    out
+}
+
+/// Extract lyrics from a YTM `browse` response against a lyrics browseId.
+///
+/// YTM ships lyrics in two possible renderers depending on the track:
+///   * `musicDescriptionShelfRenderer` — plain text (licensed, no timing)
+///   * `elementRenderer … timedLyricsModel` — per-line synced lyrics
+///     (YTM's own, available on a growing catalog)
+///
+/// We prefer timed lyrics when present; otherwise fall back to plain text.
+fn parse_lyrics(data: &Value) -> Lyrics {
+    if let Some(timed) = parse_timed_lyrics(data) {
+        return timed;
+    }
+
+    let section = data
+        .pointer("/contents/sectionListRenderer/contents")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first());
+
+    let shelf = section.and_then(|s| s.get("musicDescriptionShelfRenderer"));
+
+    let text = shelf
+        .and_then(|s| s.pointer("/description/runs"))
+        .map(runs_text)
+        .unwrap_or_default();
+
+    let source = shelf
+        .and_then(|s| s.pointer("/footer/runs"))
+        .map(runs_text)
+        .filter(|s| !s.is_empty());
+
+    Lyrics {
+        text,
+        source,
+        lines: None,
+    }
+}
+
+/// Attempt to extract synced lyrics from YTM's elementRenderer-based timed
+/// lyrics payload. Returns `None` when the track has no timed data — the
+/// caller falls back to plain text.
+fn parse_timed_lyrics(data: &Value) -> Option<Lyrics> {
+    // Path shape emitted by YTM's Elements runtime for timed lyrics.
+    let timed = data
+        .pointer("/contents/elementRenderer/newElement/type/componentType/model/timedLyricsModel/lyricsData")
+        .or_else(|| {
+            // Some responses wrap the element under a sectionListRenderer list.
+            data.pointer("/contents/sectionListRenderer/contents")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| {
+                    arr.iter().find_map(|entry| {
+                        entry.pointer(
+                            "/elementRenderer/newElement/type/componentType/model/timedLyricsModel/lyricsData",
+                        )
+                    })
+                })
+        })?;
+
+    let entries = timed.get("timedLyricsData").and_then(|v| v.as_array())?;
+    if entries.is_empty() {
+        return None;
+    }
+
+    let mut lines: Vec<LyricLine> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let text = entry
+            .get("lyricLine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let start_ms = entry
+            .pointer("/cueRange/startTimeMilliseconds")
+            .and_then(parse_ms)
+            .unwrap_or(0);
+        let end_ms = entry
+            .pointer("/cueRange/endTimeMilliseconds")
+            .and_then(parse_ms);
+
+        if text.is_empty() {
+            continue;
+        }
+        lines.push(LyricLine {
+            start_ms,
+            end_ms,
+            text,
+        });
+    }
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    let text = lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let source = timed
+        .get("sourceMessage")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .filter(|s| !s.is_empty());
+
+    Some(Lyrics {
+        text,
+        source,
+        lines: Some(lines),
+    })
+}
+
+/// YTM stringifies millisecond timings; accept both numeric and string forms.
+fn parse_ms(v: &Value) -> Option<u64> {
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    v.as_str().and_then(|s| s.parse::<u64>().ok())
 }
 
 #[cfg(test)]

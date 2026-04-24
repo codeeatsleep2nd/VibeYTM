@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary } from './types';
+import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary, Lyrics } from './types';
 import type { RepeatMode } from './types';
 
 export interface CacheStats {
@@ -79,6 +79,20 @@ export const browseApi = {
     invoke<void>('save_playlist_to_library', { playlistId }),
   removePlaylistFromLibrary: (playlistId: string) =>
     invoke<void>('remove_playlist_from_library', { playlistId }),
+  getLyrics: (params: {
+    videoId: string;
+    artist?: string | null;
+    title?: string | null;
+    durationSecs?: number | null;
+  }) =>
+    invoke<Lyrics>('get_lyrics', {
+      videoId: params.videoId,
+      artist: params.artist ?? null,
+      title: params.title ?? null,
+      durationSecs: params.durationSecs ?? null,
+    }),
+  getUpcomingTracks: (videoId: string, limit = 3) =>
+    invoke<TrackInfo[]>('get_upcoming_tracks', { videoId, limit }),
 };
 
 export async function playFirstFromPlaylist(playlistId: string): Promise<void> {

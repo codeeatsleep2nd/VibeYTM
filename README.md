@@ -22,7 +22,9 @@ An Apple Music-style YouTube Music desktop app built with Tauri, React, and Rust
 - Desktop notifications on track change
 - Global keyboard shortcuts (configurable)
 - Queue management with drag-to-reorder
-- Synced lyrics display
+- Synced lyrics display with karaoke-style per-line highlighting (YTM timed lyrics → LRCLIB → NetEase fallback, persisted per-track on disk)
+- Lyrics pre-fetch for the current track and the next two in YTM's upcoming queue
+- Blur-and-spinner on reload — refreshing a page keeps previous content visible while fresh data arrives
 - Custom CSS themes (coming soon)
 
 ## Screenshots
