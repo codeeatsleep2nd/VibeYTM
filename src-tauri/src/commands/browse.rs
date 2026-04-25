@@ -260,6 +260,26 @@ pub async fn get_upcoming_tracks(
     Ok(result)
 }
 
+/// Look up the audio counterpart's album-art thumbnail for a videoId.
+/// YTM matches every official music video (`MUSIC_VIDEO_TYPE_OMV`) to
+/// its audio track (`MUSIC_VIDEO_TYPE_ATV`); the audio side carries
+/// the `lh*.googleusercontent.com` square album cover, while the
+/// video side has the 16:9 video frame. Returns `Some(url)` only
+/// when a counterpart exists and its thumbnail differs from what
+/// YTM would have shown for the video. Returns `None` for tracks
+/// that already ARE the audio side, or when YTM hasn't matched the
+/// video to an audio counterpart.
+#[tauri::command]
+pub async fn get_audio_counterpart_artwork(
+    video_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<Option<String>, String> {
+    api.get_audio_counterpart_artwork(&app, &video_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn get_lyrics(
     video_id: String,

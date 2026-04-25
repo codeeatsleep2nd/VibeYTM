@@ -1,6 +1,7 @@
 import { type FC, type ReactNode, useEffect } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useLyrics, preloadLyrics } from '../../hooks/useLyrics';
+import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
 import {
   browseApi,
   getActivePlaylistId,
@@ -137,6 +138,13 @@ export const PlayerBar: FC<PlayerBarProps> = ({
   const state = usePlayerState();
   const { track, status, positionSecs, volume, isShuffled, repeatMode, isLiked, applyOptimistic, markSeek } = state;
   const isPlaying = status === 'playing';
+  // Swap the bridge-captured artwork for the audio counterpart's
+  // album cover when YTM has matched the playing music video to a
+  // song. Falls back to the bridge's URL when there's no counterpart.
+  const counterpartArtwork = useAudioCounterpartArtwork(
+    track?.videoId,
+    track?.artworkUrl,
+  );
 
   // Preload lyrics for the upcoming track so the LRC panel opens instantly
   // when the user skips forward. Prefer the visible queue's Up Next #1
@@ -314,7 +322,7 @@ export const PlayerBar: FC<PlayerBarProps> = ({
               }}
             >
               <CachedImage
-                src={pickArtwork(track)}
+                src={pickArtwork({ ...track, artworkUrl: counterpartArtwork ?? track.artworkUrl })}
                 alt={`${track.title} artwork`}
                 width={48}
                 height={48}

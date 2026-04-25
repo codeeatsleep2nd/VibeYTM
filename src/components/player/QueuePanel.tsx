@@ -1,5 +1,6 @@
 import { type FC, useEffect, useRef, useState } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
+import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
 import {
   browseApi,
   getActivePlaylistId,
@@ -153,6 +154,13 @@ export function artworkChain(track: { videoId?: string; artworkUrl?: string | nu
  */
 export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
   const { track, queue: liveQueue } = usePlayerState();
+  // Audio-counterpart album cover for the live track. Used by the
+  // now-playing row inside this panel so it matches the player bar /
+  // now-playing page rather than the bridge-captured video frame.
+  const liveCounterpartArtwork = useAudioCounterpartArtwork(
+    track?.videoId,
+    track?.artworkUrl,
+  );
   const [fetchedUpcoming, setFetchedUpcoming] = useState<TrackInfo[]>([]);
   // Overlaid on top of PlayerState.track while YTM is still navigating to a
   // clicked queue row. Gives instant "now playing" feedback so the panel
@@ -671,7 +679,11 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
                 track={nowPlayingTrack}
                 highlighted
                 nowPlaying
-                liveTrack={track}
+                liveTrack={
+                  track
+                    ? { ...track, artworkUrl: liveCounterpartArtwork ?? track.artworkUrl }
+                    : null
+                }
               />
             </div>
           );

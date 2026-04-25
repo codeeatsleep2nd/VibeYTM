@@ -133,6 +133,7 @@ pub fn run() {
             commands::browse::remove_playlist_from_library,
             commands::browse::get_lyrics,
             commands::browse::get_upcoming_tracks,
+            commands::browse::get_audio_counterpart_artwork,
             commands::cache::cache_fetch_image,
             commands::cache::cache_clear,
             commands::cache::cache_stats,

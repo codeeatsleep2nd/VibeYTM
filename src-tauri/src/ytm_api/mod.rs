@@ -236,11 +236,35 @@ impl YtmApi {
         title: Option<&str>,
         duration_secs: Option<f64>,
     ) -> anyhow::Result<Lyrics> {
+        // Always look up lyrics for the AUDIO counterpart, never the music
+        // video. YTM matches every official music video to its audio track
+        // (`MUSIC_VIDEO_TYPE_ATV`); the audio side carries the real lyric
+        // tab — many music-video pages don't expose one at all. We grab
+        // the counterpart videoId from the first /next response and, if
+        // it differs from the playing video, re-issue /next against it
+        // before extracting the lyrics browseId.
         let next_body = serde_json::json!({ "videoId": video_id }).to_string();
         let next_raw = ytm_api_call(app, "next", &next_body)
             .await
             .map_err(anyhow::Error::msg)?;
-        let next_data: Value = serde_json::from_str(&next_raw)?;
+        let mut next_data: Value = serde_json::from_str(&next_raw)?;
+
+        if let Some(audio_vid) = extract_audio_counterpart_video_id(&next_data, video_id) {
+            if audio_vid != video_id {
+                tracing::info!(
+                    video_id,
+                    audio_video_id = %audio_vid,
+                    "lyrics lookup: switched from music video to audio counterpart"
+                );
+                let alt_body = serde_json::json!({ "videoId": &audio_vid }).to_string();
+                if let Ok(alt_raw) = ytm_api_call(app, "next", &alt_body).await {
+                    if let Ok(alt_data) = serde_json::from_str::<Value>(&alt_raw) {
+                        next_data = alt_data;
+                    }
+                }
+            }
+        }
+
         let browse_id = extract_lyrics_browse_id(&next_data).ok_or_else(|| {
             anyhow::anyhow!("YTM did not expose a lyrics tab for this track")
         })?;
@@ -366,6 +390,23 @@ impl YtmApi {
             .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(extract_upcoming_tracks(&data, video_id, limit))
+    }
+
+    /// Fetch the audio counterpart's album-art URL for a given videoId.
+    /// Used to swap the music-video 16:9 frame the bridge captured for
+    /// the song's square album cover. See
+    /// `extract_audio_counterpart_thumbnail` for the JSON shape.
+    pub async fn get_audio_counterpart_artwork(
+        &self,
+        app: &AppHandle,
+        video_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let body = serde_json::json!({ "videoId": video_id }).to_string();
+        let raw = ytm_api_call(app, "next", &body)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let data: Value = serde_json::from_str(&raw)?;
+        Ok(extract_audio_counterpart_thumbnail(&data, video_id))
     }
 }
 
@@ -2216,6 +2257,73 @@ fn parse_playlist_from_two_row(two_row: &Value) -> Option<PlaylistSummary> {
 /// mentions lyrics. Title matching is case-insensitive so non-English locales
 /// don't silently drop to `None` — YTM localizes the tab label but keeps the
 /// lyrics browse IDs identifiable on the lyrics-tab position (second tab).
+/// Walk a `/next` response's playlist panel and return the audio
+/// counterpart's videoId for the currently-playing track if YTM has
+/// matched a `MUSIC_VIDEO_TYPE_OMV` (music video) to a
+/// `MUSIC_VIDEO_TYPE_ATV` (audio track). Returns `None` if the track
+/// has no counterpart (already an audio track, or YTM hasn't matched
+/// it). The result is suitable for re-issuing /next to land on the
+/// audio variant — that's what surfaces the lyrics tab YTM hides on
+/// many music-video pages, and the album-art thumbnail YTM omits
+/// from the video page in favor of the 16:9 frame.
+fn extract_audio_counterpart_video_id(data: &Value, current_video_id: &str) -> Option<String> {
+    let contents = data
+        .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")?
+        .as_array()?;
+    for entry in contents {
+        let Some(wrapper) = entry.get("playlistPanelVideoWrapperRenderer") else {
+            continue;
+        };
+        let primary_id = wrapper
+            .pointer("/primaryRenderer/playlistPanelVideoRenderer/videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if primary_id != current_video_id {
+            continue;
+        }
+        let counterpart_id = wrapper
+            .pointer("/counterpartRenderer/0/playlistPanelVideoRenderer/videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if counterpart_id.is_empty() || counterpart_id == current_video_id {
+            return None;
+        }
+        return Some(counterpart_id.to_string());
+    }
+    None
+}
+
+/// Walk a `/next` response's playlist panel and return the audio
+/// counterpart's largest album-art thumbnail URL for the currently-
+/// playing track. Returns `None` if there's no counterpart (already
+/// an audio track, or YTM hasn't matched it).
+fn extract_audio_counterpart_thumbnail(data: &Value, current_video_id: &str) -> Option<String> {
+    let contents = data
+        .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")?
+        .as_array()?;
+    for entry in contents {
+        let Some(wrapper) = entry.get("playlistPanelVideoWrapperRenderer") else {
+            continue;
+        };
+        let primary_id = wrapper
+            .pointer("/primaryRenderer/playlistPanelVideoRenderer/videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if primary_id != current_video_id {
+            continue;
+        }
+        let url = wrapper
+            .pointer("/counterpartRenderer/0/playlistPanelVideoRenderer/thumbnail/thumbnails")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.last())
+            .and_then(|t| t.get("url"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        return url;
+    }
+    None
+}
+
 fn extract_lyrics_browse_id(data: &Value) -> Option<String> {
     let tabs = data
         .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs")?
@@ -2259,11 +2367,23 @@ fn extract_upcoming_tracks(data: &Value, current_video_id: &str, limit: usize) -
     // YTM wraps each queue entry as either:
     //   { playlistPanelVideoRenderer: { ... } }                 (older)
     //   { playlistPanelVideoWrapperRenderer:
-    //       { primaryRenderer: { playlistPanelVideoRenderer: { ... } } } } (current)
+    //       { primaryRenderer:    { playlistPanelVideoRenderer: { ... } },
+    //         counterpartRenderer: [{ playlistPanelVideoRenderer: { ... } }]
+    //       } } (current — counterpart present when track has both video and song)
     let renderer = |entry: &Value| -> Option<Value> {
         entry
             .get("playlistPanelVideoRenderer")
             .or_else(|| entry.pointer("/playlistPanelVideoWrapperRenderer/primaryRenderer/playlistPanelVideoRenderer"))
+            .cloned()
+    };
+    // The audio/song "counterpart" — same track, different videoId,
+    // hosted under the lh*.googleusercontent.com album-art CDN. Present
+    // when YTM has matched a music video (`MUSIC_VIDEO_TYPE_OMV`) to
+    // its audio counterpart (`MUSIC_VIDEO_TYPE_ATV`). This is what
+    // powers YTM's Song/Video toggle.
+    let counterpart_renderer = |entry: &Value| -> Option<Value> {
+        entry
+            .pointer("/playlistPanelVideoWrapperRenderer/counterpartRenderer/0/playlistPanelVideoRenderer")
             .cloned()
     };
     let video_id_of = |r: &Value| -> String {
@@ -2271,6 +2391,14 @@ fn extract_upcoming_tracks(data: &Value, current_video_id: &str, limit: usize) -
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string()
+    };
+    let thumbnail_of = |r: &Value| -> Option<String> {
+        r.pointer("/thumbnail/thumbnails")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.last())
+            .and_then(|t| t.get("url"))
+            .and_then(|v| v.as_str())
+            .map(String::from)
     };
 
     // Locate the current track's index in the panel. If it isn't there
@@ -2312,13 +2440,20 @@ fn extract_upcoming_tracks(data: &Value, current_video_id: &str, limit: usize) -
             .and_then(|v| v.as_str())
             .map(parse_duration_text)
             .unwrap_or(0.0);
-        let artwork_url = r
-            .pointer("/thumbnail/thumbnails")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.last())
-            .and_then(|t| t.get("url"))
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        // Prefer the audio/song counterpart's album-art thumbnail
+        // (lh*.googleusercontent.com) over the music video's 16:9
+        // frame whenever the counterpart is present. The user wants
+        // the song cover, not the video thumbnail — and YTM gives us
+        // the audio counterpart's metadata in the same /next response
+        // via `playlistPanelVideoWrapperRenderer.counterpartRenderer`.
+        // The videoId stays as the primary (video) one so playback
+        // continues without a navigation hiccup; only the cover image
+        // source is swapped.
+        let counterpart = counterpart_renderer(entry);
+        let artwork_url = counterpart
+            .as_ref()
+            .and_then(thumbnail_of)
+            .or_else(|| thumbnail_of(&r));
 
         out.push(TrackInfo {
             video_id,
@@ -2945,6 +3080,164 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].video_id, "wrapped_vid");
         assert_eq!(out[0].title, "Wrapped");
+    }
+
+    // ---- audio counterpart parsing ----------------------------------------
+    //
+    // YTM matches every official music video (`MUSIC_VIDEO_TYPE_OMV`) to
+    // its audio track (`MUSIC_VIDEO_TYPE_ATV`) and exposes the audio
+    // counterpart's videoId + album-art thumbnail under
+    // `playlistPanelVideoWrapperRenderer.counterpartRenderer[0]
+    // .playlistPanelVideoRenderer`. We use this to (a) show the song's
+    // album-art cover in the queue instead of the video's 16:9 frame,
+    // and (b) re-issue /next against the audio counterpart for the
+    // lyrics tab YTM hides on most music-video pages.
+
+    fn build_next_with_counterpart(
+        primary_id: &str,
+        primary_thumb: &str,
+        counterpart_id: &str,
+        counterpart_thumb: &str,
+    ) -> Value {
+        json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": primary_id,
+                                "title": { "runs": [{ "text": "Little Lies" }] },
+                                "longBylineText": { "runs": [{ "text": "Fleetwood Mac" }] },
+                                "lengthText": { "runs": [{ "text": "3:42" }] },
+                                "thumbnail": { "thumbnails": [
+                                    { "url": primary_thumb }
+                                ]}
+                            }},
+                            "counterpartRenderer": [{ "playlistPanelVideoRenderer": {
+                                "videoId": counterpart_id,
+                                "title": { "runs": [{ "text": "Little Lies" }] },
+                                "longBylineText": { "runs": [{ "text": "Fleetwood Mac" }] },
+                                "thumbnail": { "thumbnails": [
+                                    { "url": counterpart_thumb }
+                                ]}
+                            }}]
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        })
+    }
+
+    #[test]
+    fn extract_audio_counterpart_returns_audio_video_id_when_playing_video() {
+        let data = build_next_with_counterpart(
+            "videoVID",
+            "https://i.ytimg.com/vi/videoVID/sddefault.jpg?sqp=foo",
+            "audioVID",
+            "https://lh3.googleusercontent.com/abc=w512-h512",
+        );
+        let out = extract_audio_counterpart_video_id(&data, "videoVID");
+        assert_eq!(out.as_deref(), Some("audioVID"));
+    }
+
+    #[test]
+    fn extract_audio_counterpart_returns_none_for_unknown_video() {
+        let data = build_next_with_counterpart("vidA", "x", "audA", "y");
+        assert!(extract_audio_counterpart_video_id(&data, "different_id").is_none());
+    }
+
+    #[test]
+    fn extract_audio_counterpart_returns_none_when_no_wrapper() {
+        // Older response shape with bare playlistPanelVideoRenderer:
+        // there's nothing to switch to.
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoRenderer": {
+                            "videoId": "soloVid",
+                            "title": { "runs": [{ "text": "Solo" }] },
+                            "longBylineText": { "runs": [{ "text": "Artist" }] },
+                            "thumbnail": { "thumbnails": [] }
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        assert!(extract_audio_counterpart_video_id(&data, "soloVid").is_none());
+    }
+
+    #[test]
+    fn extract_audio_counterpart_returns_none_when_counterpart_id_matches_primary() {
+        // Defensive: if YTM ever returns a self-counterpart, we should
+        // not enter an infinite re-issue loop.
+        let data = build_next_with_counterpart("sameId", "x", "sameId", "y");
+        assert!(extract_audio_counterpart_video_id(&data, "sameId").is_none());
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_uses_counterpart_thumbnail_when_present() {
+        // Two queue entries: one wraps a video with an audio counterpart
+        // (counterpart's lh3 thumbnail must be picked); the other has no
+        // counterpart (its own thumbnail must be picked).
+        let with_counterpart = json!({
+            "playlistPanelVideoWrapperRenderer": {
+                "primaryRenderer": { "playlistPanelVideoRenderer": {
+                    "videoId": "vidA",
+                    "title": { "runs": [{ "text": "A" }] },
+                    "longBylineText": { "runs": [{ "text": "Artist A" }] },
+                    "lengthText": { "runs": [{ "text": "3:00" }] },
+                    "thumbnail": { "thumbnails": [{ "url": "https://i.ytimg.com/vi/vidA/sd.jpg?sqp=x" }]}
+                }},
+                "counterpartRenderer": [{ "playlistPanelVideoRenderer": {
+                    "videoId": "audA",
+                    "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/audA=w512" }]}
+                }}]
+            }
+        });
+        let without = json!({
+            "playlistPanelVideoWrapperRenderer": {
+                "primaryRenderer": { "playlistPanelVideoRenderer": {
+                    "videoId": "vidB",
+                    "title": { "runs": [{ "text": "B" }] },
+                    "longBylineText": { "runs": [{ "text": "Artist B" }] },
+                    "lengthText": { "runs": [{ "text": "3:00" }] },
+                    "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/vidB=w512" }]}
+                }}
+            }
+        });
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        with_counterpart,
+                        without,
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        let out = extract_upcoming_tracks(&data, "_seed_", 100);
+        assert_eq!(out.len(), 2);
+        // First entry: counterpart's lh3 URL was picked.
+        assert_eq!(out[0].video_id, "vidA");
+        assert!(
+            out[0]
+                .artwork_url
+                .as_deref()
+                .unwrap_or("")
+                .contains("lh3.googleusercontent.com/audA"),
+            "expected counterpart thumbnail, got {:?}",
+            out[0].artwork_url
+        );
+        // Second entry: no counterpart, falls back to its own thumbnail.
+        assert_eq!(out[1].video_id, "vidB");
+        assert!(
+            out[1]
+                .artwork_url
+                .as_deref()
+                .unwrap_or("")
+                .contains("lh3.googleusercontent.com/vidB"),
+        );
     }
 
     // ---- v0.8.0: extract_audio_playlist_id (album OLAK lookup) ------------

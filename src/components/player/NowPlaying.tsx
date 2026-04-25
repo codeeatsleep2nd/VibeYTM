@@ -3,6 +3,7 @@ import { usePlayerState } from '../../hooks/usePlayerState';
 import { useLyrics } from '../../hooks/useLyrics';
 import { useLyricsOffset } from '../../hooks/useLyricsOffset';
 import { useSmoothedPosition } from '../../hooks/useSmoothedPosition';
+import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
 import type { Lyrics, LyricLine } from '../../lib/types';
 import { CachedImage } from '../CachedImage';
 import { MarqueeText } from '../MarqueeText';
@@ -247,6 +248,10 @@ interface CoverProps {
 const Cover: FC<CoverProps> = ({ track, size }) => {
   void size; // kept for API compatibility; both modes now share one size
   const sideLength = coverSide;
+  const counterpartArtwork = useAudioCounterpartArtwork(
+    track.videoId,
+    track.artworkUrl,
+  );
   return (
     <div
       style={{
@@ -262,16 +267,13 @@ const Cover: FC<CoverProps> = ({ track, size }) => {
       }}
     >
       <CachedImage
-        // Song cover (album art from YTM, surfaced via track.artworkUrl
-        // by the bridge's fetchPlayerState scrape) is the preferred
-        // source. Only fall back to the YouTube video thumbnail if no
-        // album-art URL is available — and even then, swap in via
-        // onError if the album-art URL itself ever fails to load
-        // (e.g. a signed lh3 URL expiring).
-        src={
-          track.artworkUrl ||
-          (track.videoId ? `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg` : undefined)
-        }
+        // Prefer the audio counterpart's album cover when YTM has matched
+        // the playing music video to a song (most popular tracks have
+        // both). Falls back to the bridge's captured artworkUrl, then
+        // to the canonical YouTube video thumbnail. The counterpart
+        // hook returns the bridge URL until the lookup resolves, so
+        // there's no flash of "wrong cover".
+        src={counterpartArtwork || (track.videoId ? `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg` : undefined)}
         alt={`${track.title} artwork`}
         // Hero cover is the one place where letterboxing a 16:9 video
         // thumbnail looks better than aggressive center-cropping — at

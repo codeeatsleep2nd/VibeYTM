@@ -232,6 +232,16 @@ export const browseApi = {
       limit,
       playlistId: playlistId ?? null,
     }),
+  /**
+   * For tracks that have both a music-video and an audio counterpart on
+   * YTM, return the audio counterpart's album-art URL. Used by
+   * `useAudioCounterpartArtwork` to swap the music-video 16:9 frame
+   * the bridge captured for the song's square album cover. `null` when
+   * the track has no counterpart (already the audio side, or YTM
+   * hasn't matched it).
+   */
+  getAudioCounterpartArtwork: (videoId: string) =>
+    invoke<string | null>('get_audio_counterpart_artwork', { videoId }),
 };
 
 export async function playFirstFromPlaylist(playlistId: string): Promise<void> {
