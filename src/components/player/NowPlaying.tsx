@@ -4,6 +4,8 @@ import { useLyrics } from '../../hooks/useLyrics';
 import { useLyricsOffset } from '../../hooks/useLyricsOffset';
 import { useSmoothedPosition } from '../../hooks/useSmoothedPosition';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import { albumArtOrNothing } from '../../lib/artwork';
+import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
 import type { Lyrics, LyricLine } from '../../lib/types';
 import { CachedImage } from '../CachedImage';
 import { MarqueeText } from '../MarqueeText';
@@ -266,38 +268,28 @@ const Cover: FC<CoverProps> = ({ track, size }) => {
         transition: 'width var(--duration-slow) var(--ease-out)',
       }}
     >
-      <CachedImage
-        // Prefer the audio counterpart's album cover when YTM has matched
-        // the playing music video to a song (most popular tracks have
-        // both). Falls back to the bridge's captured artworkUrl, then
-        // to the canonical YouTube video thumbnail. The counterpart
-        // hook returns the bridge URL until the lookup resolves, so
-        // there's no flash of "wrong cover".
-        src={counterpartArtwork || (track.videoId ? `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg` : undefined)}
-        alt={`${track.title} artwork`}
-        // Hero cover is the one place where letterboxing a 16:9 video
-        // thumbnail looks better than aggressive center-cropping — at
-        // 600+ px the bars read as "we kept the full music-video
-        // frame", not as broken artwork (issue #48).
-        autoFitForAspect
-        onError={(e) => {
-          // If the song-cover URL failed (404 or otherwise), fall
-          // back to the canonical video-thumbnail CDN. This keeps the
-          // hero from going blank when the album-art source expires.
-          if (track.videoId) {
-            const fallback = `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
-            if (e.currentTarget.src !== fallback) {
-              e.currentTarget.src = fallback;
-            }
-          }
-        }}
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-          display: 'block',
-        }}
-      />
+      {(() => {
+        // NEVER show a video thumbnail here. Use the audio counterpart's
+        // album cover when the hook has resolved one; otherwise the
+        // bridge's captured artworkUrl IF AND ONLY IF it's actually
+        // album art; otherwise a placeholder. Issue #48's "letterbox
+        // the music video" workaround is no longer needed because the
+        // music-video frame is gone from this surface entirely.
+        const url = albumArtOrNothing(counterpartArtwork ?? track.artworkUrl);
+        if (!url) return <ArtworkPlaceholder size={500} />;
+        return (
+          <CachedImage
+            src={url}
+            alt={`${track.title} artwork`}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+            }}
+          />
+        );
+      })()}
     </div>
   );
 };

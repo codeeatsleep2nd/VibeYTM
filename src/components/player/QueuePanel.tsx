@@ -1,6 +1,7 @@
 import { type FC, useEffect, useRef, useState } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
 import {
   browseApi,
   getActivePlaylistId,
@@ -71,78 +72,30 @@ function normalizeTitle(title: string | undefined): string {
 }
 
 /**
- * Build an ordered list of thumbnail URL fallbacks for a queue row.
+ * Build an ordered list of album-art URL fallbacks for a queue row.
  *
- * Preference order:
- *   1. **Song cover (album art) from `track.artworkUrl`** — anything
- *      hosted on `lh*.googleusercontent.com`, signed or not. That's
- *      YTM's album-art CDN: even with the `sqp=`/`rs=` signature
- *      params, the URL renders the actual album cover and matches the
- *      player bar / now-playing page. If a signed URL ever 404s mid-
- *      session, `<CachedImage>`'s `onError` advances to the next
- *      entry in the chain.
- *   2. **Other signature-less `track.artworkUrl`** values (e.g. plain
- *      `i.ytimg.com/vi/.../hqdefault.jpg`) — these are stable but
- *      they're already the video thumbnail, so the visual difference
- *      from the next bullet is moot.
- *   3. **Video thumbnail by videoId** — `i.ytimg.com/vi/{id}/...` in
- *      decreasing-quality order. Only reached when no album-art URL
- *      was passed.
- *
- * Net effect: if YTM gave us the song cover (in any form), we show
- * the song cover. Video thumbnails are a last resort.
- *
- * `CachedImage` stores resolved URLs in the Rust disk cache + in-
- * memory map, so subsequent renders are instant.
+ * **The user-facing rule: NEVER fall back to a YouTube video
+ * thumbnail (`i.ytimg.com/vi/...`).** The chain only contains album
+ * art (`lh*.googleusercontent.com` / `yt3.googleusercontent.com`).
+ * If we have nothing, we render `<ArtworkPlaceholder>` (a music-
+ * note glyph on a dark gradient) — that reads as "no cover yet"
+ * rather than "wrong image."
  */
-export function isAlbumArtUrl(url: string | null | undefined): boolean {
-  if (!url) return false;
-  return /^https?:\/\/lh\d+\.googleusercontent\.com\//.test(url);
+export { isAlbumArtUrl } from '../../lib/artwork';
+
+// Re-exported here for the existing test suite. Kept narrow on
+// purpose: the ONLY URLs we'll ever show are album art.
+export function isStableArtworkUrl(url: string | null | undefined): boolean {
+  return isAlbumArtUrlImpl(url);
 }
 
-export function isStableArtworkUrl(url: string | null | undefined): boolean {
-  if (!url) return false;
-  // Album art (any googleusercontent host) is always considered
-  // "stable enough" — even a signed variant renders the right image
-  // on first load, and we have onError fallbacks if it ever expires.
-  if (isAlbumArtUrl(url)) return true;
-  // Signed YT video CDN URLs (sqp=/rs=) expire fast — skip them so
-  // we don't waste a render cycle on a guaranteed 404.
-  if (url.includes('sqp=') || url.includes('&rs=') || url.includes('?rs=')) {
-    return false;
-  }
-  // Plain youtube video CDN paths without signatures are stable.
-  if (/^https?:\/\/i\.ytimg\.com\/vi\/[^?]+$/.test(url)) {
-    return true;
-  }
-  return false;
-}
+import { isAlbumArtUrl as isAlbumArtUrlImpl } from '../../lib/artwork';
 
 export function artworkChain(track: { videoId?: string; artworkUrl?: string | null }): string[] {
-  const chain: string[] = [];
-  // Song cover (album art) wins outright — push first, before
-  // anything else.
-  if (isAlbumArtUrl(track.artworkUrl)) {
-    chain.push(track.artworkUrl as string);
-  } else if (isStableArtworkUrl(track.artworkUrl)) {
-    // Stable but not album art (e.g. signature-less video CDN URL
-    // already provided by the bridge). Use it before generating
-    // duplicates from videoId.
-    chain.push(track.artworkUrl as string);
+  if (isAlbumArtUrlImpl(track.artworkUrl)) {
+    return [track.artworkUrl as string];
   }
-  if (track.videoId) {
-    const v = track.videoId;
-    const ytUrls = [
-      `https://i.ytimg.com/vi/${v}/hqdefault.jpg`,
-      `https://i.ytimg.com/vi/${v}/mqdefault.jpg`,
-      `https://i.ytimg.com/vi/${v}/default.jpg`,
-      `https://i.ytimg.com/vi/${v}/0.jpg`,
-    ];
-    for (const url of ytUrls) {
-      if (!chain.includes(url)) chain.push(url);
-    }
-  }
-  return chain;
+  return [];
 }
 
 /**
@@ -907,7 +860,7 @@ const QueueArtwork: FC<QueueArtworkProps> = ({ track, liveTrack }) => {
     setChainIdx(0);
   }, [sourceTrack.videoId, sourceTrack.artworkUrl]);
   const src = chain[chainIdx];
-  if (!src) return null;
+  if (!src) return <ArtworkPlaceholder size={40} />;
   return (
     <CachedImage
       key={src}

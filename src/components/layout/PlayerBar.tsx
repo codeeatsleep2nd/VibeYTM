@@ -2,6 +2,8 @@ import { type FC, type ReactNode, useEffect } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useLyrics, preloadLyrics } from '../../hooks/useLyrics';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import { albumArtOrNothing } from '../../lib/artwork';
+import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
 import {
   browseApi,
   getActivePlaylistId,
@@ -15,15 +17,14 @@ import { CachedImage } from '../CachedImage';
 import { MarqueeText } from '../MarqueeText';
 
 /**
- * Pick a reliable artwork URL for the player bar. The bridge sometimes
- * returns yt3.* avatar URLs with a `w\d+-h\d+` chunk rewritten to
- * `w512-h512`, which can 404. Always fall back to YouTube's thumbnail
- * service via the videoId, which is stable.
+ * Return an album-art URL for the player bar IF and only if it's
+ * actually album art. The user-facing rule is **never show a video
+ * thumbnail** — when no album art is available, we render the
+ * `<ArtworkPlaceholder>` (music note glyph) instead of falling back
+ * to `i.ytimg.com/vi/...`.
  */
-function pickArtwork(track: { artworkUrl?: string | null; videoId?: string }): string | undefined {
-  if (track.artworkUrl) return track.artworkUrl;
-  if (track.videoId) return `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
-  return undefined;
+function pickAlbumArt(track: { artworkUrl?: string | null }): string | undefined {
+  return albumArtOrNothing(track.artworkUrl);
 }
 
 interface PlayerBarProps {
@@ -321,23 +322,21 @@ export const PlayerBar: FC<PlayerBarProps> = ({
                 e.currentTarget.style.transform = 'scale(1)';
               }}
             >
-              <CachedImage
-                src={pickArtwork({ ...track, artworkUrl: counterpartArtwork ?? track.artworkUrl })}
-                alt={`${track.title} artwork`}
-                width={48}
-                height={48}
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                onError={(e) => {
-                  // If the cached/remote URL fails, swap to the YouTube
-                  // thumbnail service as a last resort.
-                  if (track.videoId) {
-                    const fallback = `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
-                    if (e.currentTarget.src !== fallback) {
-                      e.currentTarget.src = fallback;
-                    }
-                  }
-                }}
-              />
+              {(() => {
+                const url = pickAlbumArt({
+                  artworkUrl: counterpartArtwork ?? track.artworkUrl,
+                });
+                if (!url) return <ArtworkPlaceholder size={48} />;
+                return (
+                  <CachedImage
+                    src={url}
+                    alt={`${track.title} artwork`}
+                    width={48}
+                    height={48}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                );
+              })()}
             </button>
             <div style={{ minWidth: 0, flex: 1 }}>
               <MarqueeText
