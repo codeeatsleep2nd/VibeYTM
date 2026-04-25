@@ -72,27 +72,55 @@ function normalizeTitle(title: string | undefined): string {
 /**
  * Build an ordered list of thumbnail URL fallbacks for a queue row.
  *
- * We deliberately SKIP `track.artworkUrl` even when present: the bridge
- * captures it from `<ytmusic-player-queue-item>` thumbnail elements as a
- * signed YouTube CDN URL (with `sqp=`/`rs=` signature query params),
- * which expires after a short window. Trying it first wastes a
- * fetch-and-fail cycle on every queue render and leaves the thumbnail
- * flickering when the chain advances.
+ * Preference order:
+ *   1. A STABLE album-art URL passed in via `track.artworkUrl` —
+ *      specifically `lh3.googleusercontent.com/...` without `sqp=`/`rs=`
+ *      signature query params. This is the same source the player bar
+ *      and now-playing page use, so when the row's metadata came from
+ *      the /next-endpoint parser (which surfaces the canonical album
+ *      art) the queue thumbnail matches the bar exactly.
+ *   2. The signature-less YouTube video CDN, keyed by videoId. Used
+ *      when the row was DOM-scraped from `<ytmusic-player-queue-item>`
+ *      (bridge captures the signed thumbnail there, which expires
+ *      fast — we filter those out so they don't 404 mid-render).
  *
- * Instead we start from the canonical, signature-less CDN URLs keyed by
- * videoId. Those never expire, are aggressively edge-cached by Google,
- * and render reliably. CachedImage stores them in the Rust disk cache
- * and the in-memory `resolved` map, so subsequent renders are instant.
+ * `CachedImage` stores resolved URLs in the Rust disk cache + in-memory
+ * map, so subsequent renders are instant.
  */
-function artworkChain(track: { videoId?: string }): string[] {
-  if (!track.videoId) return [];
-  const v = track.videoId;
-  return [
-    `https://i.ytimg.com/vi/${v}/hqdefault.jpg`,
-    `https://i.ytimg.com/vi/${v}/mqdefault.jpg`,
-    `https://i.ytimg.com/vi/${v}/default.jpg`,
-    `https://i.ytimg.com/vi/${v}/0.jpg`,
-  ];
+export function isStableArtworkUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  // Signed YT CDN URLs carry sqp= and rs= query params and expire fast.
+  if (url.includes('sqp=') || url.includes('&rs=') || url.includes('?rs=')) {
+    return false;
+  }
+  // Album art from YTM's /next parser comes from googleusercontent
+  // hosts (lh3, lh4, lh5, ...). These are signature-less and stable.
+  if (/^https?:\/\/lh\d+\.googleusercontent\.com\//.test(url)) {
+    return true;
+  }
+  // Plain youtube CDN paths without signatures are also fine; rare in
+  // queue payloads but harmless to allow.
+  if (/^https?:\/\/i\.ytimg\.com\/vi\/[^?]+$/.test(url)) {
+    return true;
+  }
+  return false;
+}
+
+export function artworkChain(track: { videoId?: string; artworkUrl?: string | null }): string[] {
+  const chain: string[] = [];
+  if (isStableArtworkUrl(track.artworkUrl)) {
+    chain.push(track.artworkUrl as string);
+  }
+  if (track.videoId) {
+    const v = track.videoId;
+    chain.push(
+      `https://i.ytimg.com/vi/${v}/hqdefault.jpg`,
+      `https://i.ytimg.com/vi/${v}/mqdefault.jpg`,
+      `https://i.ytimg.com/vi/${v}/default.jpg`,
+      `https://i.ytimg.com/vi/${v}/0.jpg`,
+    );
+  }
+  return chain;
 }
 
 /**
@@ -618,7 +646,12 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
               key={displayTrack.videoId}
               className="vibeytm-queue-current-flash"
             >
-              <QueueRow track={nowPlayingTrack} highlighted nowPlaying />
+              <QueueRow
+                track={nowPlayingTrack}
+                highlighted
+                nowPlaying
+                liveTrack={track}
+              />
             </div>
           );
         })()}
@@ -663,6 +696,13 @@ interface QueueRowProps {
   /** When true, render at lower opacity (history rows). */
   dimmed?: boolean;
   onPlay?: () => void;
+  /**
+   * Optional live PlayerState track. Forwarded to `QueueArtwork` for
+   * the now-playing row so the queue thumbnail matches the player bar's
+   * canonical album-art URL even when the queue's own metadata came
+   * from a DOM scrape with a signed thumbnail.
+   */
+  liveTrack?: TrackInfo | null;
 }
 
 const QueueRow: FC<QueueRowProps> = ({
@@ -671,6 +711,7 @@ const QueueRow: FC<QueueRowProps> = ({
   nowPlaying = false,
   dimmed = false,
   onPlay,
+  liveTrack,
 }) => {
   const interactive = Boolean(onPlay) && !highlighted;
 
@@ -687,7 +728,7 @@ const QueueRow: FC<QueueRowProps> = ({
           position: 'relative',
         }}
       >
-        <QueueArtwork track={track} />
+        <QueueArtwork track={track} liveTrack={liveTrack} />
         {nowPlaying && <PlayingBarsOverlay />}
       </div>
       <div style={{ minWidth: 0, flex: 1, textAlign: 'left' }}>
@@ -799,6 +840,14 @@ const PlayingBarsOverlay: FC = () => (
 
 interface QueueArtworkProps {
   track: TrackInfo;
+  /**
+   * Optional override used by the now-playing row. When the queue's row
+   * metadata came from a DOM scrape (signed thumbnail URL filtered out
+   * by `artworkChain`), passing the live PlayerState track here lets
+   * the row pull the same stable album-art URL the player bar shows,
+   * keeping the two surfaces visually consistent.
+   */
+  liveTrack?: TrackInfo | null;
 }
 
 /**
@@ -808,16 +857,22 @@ interface QueueArtworkProps {
  * cause plain `<img>` loads of `i.ytimg.com` to silently fail in the
  * Tauri shell.
  *
- * The bridge often captures an empty `artworkUrl` for off-screen YTM
- * queue rows (lazy-rendered thumbnails); falling back to
- * hqdefault → mqdefault → default → 0.jpg keeps thumbnails populated.
+ * The bridge often captures an empty (or signed/expiring) `artworkUrl`
+ * for off-screen YTM queue rows; the chain falls back through the
+ * canonical video-thumbnail variants so the row never goes blank.
  */
-const QueueArtwork: FC<QueueArtworkProps> = ({ track }) => {
-  const chain = artworkChain(track);
+const QueueArtwork: FC<QueueArtworkProps> = ({ track, liveTrack }) => {
+  // Prefer the live PlayerState track's artworkUrl when it's available
+  // and matches the queue row's videoId — that's the bar's source and
+  // matches the now-playing page exactly. Falls through to the queue
+  // row's own track if not provided or mismatched.
+  const sourceTrack =
+    liveTrack && liveTrack.videoId === track.videoId ? liveTrack : track;
+  const chain = artworkChain(sourceTrack);
   const [chainIdx, setChainIdx] = useState(0);
   useEffect(() => {
     setChainIdx(0);
-  }, [track.videoId]);
+  }, [sourceTrack.videoId, sourceTrack.artworkUrl]);
   const src = chain[chainIdx];
   if (!src) return null;
   return (
