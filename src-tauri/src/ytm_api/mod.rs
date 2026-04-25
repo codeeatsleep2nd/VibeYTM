@@ -324,6 +324,33 @@ impl YtmApi {
         let next_body = serde_json::json!({ "videoId": video_id }).to_string();
         let mut next_data = self.fetch_next_cached(app, &next_body).await?;
 
+        // Audio-counterpart metadata (artist / title / duration) overrides
+        // anything the bridge captured from the music-video page. Music
+        // video titles are noisy ("Stayin' Alive (Official Music Video)
+        // [4K Remastered]" etc.) and corrupt LRCLIB queries. The
+        // counterpart's title/byline is the clean song version. Pulled
+        // from the SAME /next response — no extra bridge call.
+        let mut effective_artist: Option<String> = artist.map(str::to_string);
+        let mut effective_title: Option<String> = title.map(str::to_string);
+        let mut effective_duration: Option<f64> = duration_secs;
+        if let Some(meta) = extract_audio_counterpart_meta(&next_data, video_id) {
+            tracing::info!(
+                video_id,
+                clean_title = %meta.title,
+                clean_artist = %meta.artist,
+                "lyrics lookup: using audio counterpart's track metadata"
+            );
+            if !meta.title.is_empty() {
+                effective_title = Some(meta.title);
+            }
+            if !meta.artist.is_empty() {
+                effective_artist = Some(meta.artist);
+            }
+            if meta.duration_secs > 0.0 {
+                effective_duration = Some(meta.duration_secs);
+            }
+        }
+
         if let Some(audio_vid) = extract_audio_counterpart_video_id(&next_data, video_id) {
             if audio_vid != video_id {
                 tracing::info!(
@@ -368,9 +395,10 @@ impl YtmApi {
             return Ok(lyrics);
         }
 
-        if let (Some(artist), Some(title)) = (artist, title) {
+        if let (Some(artist), Some(title)) = (effective_artist.as_deref(), effective_title.as_deref()) {
             let clean_artist = clean_query_field(artist);
             let clean_title = clean_query_field(title);
+            let lookup_duration = effective_duration;
 
             // Race LRCLIB and NetEase in parallel. Whichever returns synced
             // lyrics first wins; `None` results wait for the other source
@@ -381,7 +409,7 @@ impl YtmApi {
             let title_l = clean_title.clone();
             let vid_l = video_id.to_string();
             let lrc_fut = async move {
-                match fetch_lrclib_synced(&artist_l, &title_l, duration_secs).await {
+                match fetch_lrclib_synced(&artist_l, &title_l, lookup_duration).await {
                     Ok(Some(body)) => Some((body, "LRCLIB")),
                     Ok(None) => {
                         tracing::info!(video_id = %vid_l, "LRCLIB had no synced lyrics");
@@ -2364,6 +2392,60 @@ fn extract_audio_counterpart_video_id(data: &Value, current_video_id: &str) -> O
     None
 }
 
+#[derive(Debug, Clone)]
+struct CounterpartMeta {
+    title: String,
+    artist: String,
+    duration_secs: f64,
+}
+
+/// Walk a `/next` response's playlist panel and return the audio
+/// counterpart's clean track metadata for the currently-playing
+/// track. Music-video pages tend to have noisy titles ("Stayin'
+/// Alive (Official Music Video) [4K Remastered]") and "Channel" as
+/// the artist, both of which corrupt LRCLIB queries. The audio
+/// counterpart's title/byline are the canonical song version, served
+/// from the same /next response under
+/// `playlistPanelVideoWrapperRenderer.counterpart[0].counterpartRenderer`.
+fn extract_audio_counterpart_meta(data: &Value, current_video_id: &str) -> Option<CounterpartMeta> {
+    let contents = data
+        .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")?
+        .as_array()?;
+    for entry in contents {
+        let Some(wrapper) = entry.get("playlistPanelVideoWrapperRenderer") else {
+            continue;
+        };
+        let primary_id = wrapper
+            .pointer("/primaryRenderer/playlistPanelVideoRenderer/videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if primary_id != current_video_id {
+            continue;
+        }
+        let cp = wrapper
+            .pointer("/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer")?;
+        let title = cp
+            .pointer("/title/runs")
+            .map(runs_text)
+            .unwrap_or_default();
+        let artist = cp
+            .pointer("/longBylineText/runs")
+            .or_else(|| cp.pointer("/shortBylineText/runs"))
+            .map(runs_text)
+            .unwrap_or_default();
+        let duration_secs = cp
+            .pointer("/lengthText/runs/0/text")
+            .and_then(|v| v.as_str())
+            .map(parse_duration_text)
+            .unwrap_or(0.0);
+        if title.is_empty() && artist.is_empty() && duration_secs <= 0.0 {
+            return None;
+        }
+        return Some(CounterpartMeta { title, artist, duration_secs });
+    }
+    None
+}
+
 /// Walk a `/next` response's playlist panel and return the audio
 /// counterpart's largest album-art thumbnail URL for the currently-
 /// playing track. Returns `None` if there's no counterpart (already
@@ -3250,6 +3332,69 @@ mod tests {
             }}}
         });
         assert!(extract_audio_counterpart_video_id(&data, "soloVid").is_none());
+    }
+
+    #[test]
+    fn extract_audio_counterpart_meta_returns_clean_song_title_and_artist() {
+        // Music video has a noisy "Stayin' Alive (Official Video)" title
+        // and "Bee Gees - Topic" / channel name as artist; the audio
+        // counterpart is the clean "Stayin' Alive" / "Bee Gees" pair
+        // with a real lengthText.
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "videoVID",
+                                "title": { "runs": [{ "text": "Stayin' Alive (Official Music Video)" }] },
+                                "longBylineText": { "runs": [{ "text": "Bee Gees - Topic" }] },
+                                "lengthText": { "runs": [{ "text": "4:45" }] },
+                                "thumbnail": { "thumbnails": [] }
+                            }},
+                            "counterpart": [{
+                                "counterpartRenderer": {
+                                    "playlistPanelVideoRenderer": {
+                                        "videoId": "audioVID",
+                                        "title": { "runs": [{ "text": "Stayin' Alive" }] },
+                                        "longBylineText": { "runs": [{ "text": "Bee Gees" }] },
+                                        "lengthText": { "runs": [{ "text": "4:09" }] },
+                                        "thumbnail": { "thumbnails": [] }
+                                    }
+                                }
+                            }]
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        let meta = extract_audio_counterpart_meta(&data, "videoVID").expect("must find meta");
+        assert_eq!(meta.title, "Stayin' Alive");
+        assert_eq!(meta.artist, "Bee Gees");
+        // 4:09 = 249 seconds
+        assert_eq!(meta.duration_secs as i64, 249);
+    }
+
+    #[test]
+    fn extract_audio_counterpart_meta_returns_none_for_unknown_video() {
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "xxx",
+                                "title": { "runs": [{ "text": "X" }] },
+                                "longBylineText": { "runs": [{ "text": "Y" }] },
+                                "lengthText": { "runs": [{ "text": "3:00" }] },
+                                "thumbnail": { "thumbnails": [] }
+                            }}
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        assert!(extract_audio_counterpart_meta(&data, "different").is_none());
     }
 
     #[test]

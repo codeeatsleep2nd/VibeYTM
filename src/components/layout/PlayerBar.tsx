@@ -1,6 +1,6 @@
 import { type FC, type ReactNode, useEffect } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
-import { useLyrics, preloadLyrics } from '../../hooks/useLyrics';
+import { preloadLyrics } from '../../hooks/useLyrics';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
 import { albumArtOrNothing } from '../../lib/artwork';
 import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
@@ -207,24 +207,16 @@ export const PlayerBar: FC<PlayerBarProps> = ({
     };
   }, [currentVideoId]);
   // Pre-probe lyrics so the LRC button can dim when a track has none.
-  // Use the hook's built-in 2s debounce (immediate=false): firing
-  // immediately on every track change competes with QueuePanel's
-  // /next refresh and saturates the bridge while YTM's audio webview
-  // is mid-navigation. NowPlaying still uses immediate=true for the
-  // user-opened panel.
-  const { status: lyricsAvailability } = useLyrics(
-    track
-      ? {
-          videoId: track.videoId,
-          artist: track.artist,
-          title: track.title,
-          durationSecs: track.durationSecs,
-        }
-      : null,
-    true,
-    false,
-  );
-  const lyricsMissing = lyricsAvailability === 'missing';
+  // No always-on lyrics probe here. Earlier versions called useLyrics
+  // (enabled=true) on every track change just to dim the LRC button
+  // when no lyrics existed. That fired the lyrics flow — including
+  // its /next call AND the audio-counterpart re-fetch /next call —
+  // even when the user never opened the panel. Per-track-change
+  // bridge load was 4+ /next calls; keeping the LRC button at full
+  // opacity is a fair trade for not saturating the channel. The
+  // lyrics fetch still runs lazily when NowPlaying mounts the panel
+  // (showLyrics + isOpen).
+  const lyricsMissing = false;
 
   const handleTogglePlay = () => {
     // Optimistic flip — instant UI feedback. Backend's next event reconciles.
