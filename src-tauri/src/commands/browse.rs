@@ -275,9 +275,20 @@ pub async fn get_audio_counterpart_artwork(
     app: AppHandle,
     api: State<'_, YtmApi>,
 ) -> Result<Option<String>, String> {
-    api.get_audio_counterpart_artwork(&app, &video_id)
+    tracing::info!(video_id = %video_id, "browse::get_audio_counterpart_artwork called");
+    let result = api
+        .get_audio_counterpart_artwork(&app, &video_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            tracing::warn!(error = %e, "browse::get_audio_counterpart_artwork failed");
+            e.to_string()
+        })?;
+    tracing::info!(
+        video_id = %video_id,
+        found = result.is_some(),
+        "browse::get_audio_counterpart_artwork done"
+    );
+    Ok(result)
 }
 
 #[tauri::command]

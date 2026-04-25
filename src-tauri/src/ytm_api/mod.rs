@@ -2281,8 +2281,12 @@ fn extract_audio_counterpart_video_id(data: &Value, current_video_id: &str) -> O
         if primary_id != current_video_id {
             continue;
         }
+        // YTM JSON shape:
+        //   playlistPanelVideoWrapperRenderer.counterpart[0]
+        //                                    .counterpartRenderer
+        //                                    .playlistPanelVideoRenderer
         let counterpart_id = wrapper
-            .pointer("/counterpartRenderer/0/playlistPanelVideoRenderer/videoId")
+            .pointer("/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer/videoId")
             .and_then(|v| v.as_str())
             .unwrap_or("");
         if counterpart_id.is_empty() || counterpart_id == current_video_id {
@@ -2312,8 +2316,13 @@ fn extract_audio_counterpart_thumbnail(data: &Value, current_video_id: &str) -> 
         if primary_id != current_video_id {
             continue;
         }
+        // YTM JSON shape:
+        //   playlistPanelVideoWrapperRenderer.counterpart[0]
+        //                                    .counterpartRenderer
+        //                                    .playlistPanelVideoRenderer
+        //                                    .thumbnail.thumbnails[].url
         let url = wrapper
-            .pointer("/counterpartRenderer/0/playlistPanelVideoRenderer/thumbnail/thumbnails")
+            .pointer("/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer/thumbnail/thumbnails")
             .and_then(|v| v.as_array())
             .and_then(|arr| arr.last())
             .and_then(|t| t.get("url"))
@@ -2381,9 +2390,14 @@ fn extract_upcoming_tracks(data: &Value, current_video_id: &str, limit: usize) -
     // when YTM has matched a music video (`MUSIC_VIDEO_TYPE_OMV`) to
     // its audio counterpart (`MUSIC_VIDEO_TYPE_ATV`). This is what
     // powers YTM's Song/Video toggle.
+    //
+    // YTM JSON shape (verified against live /next dumps):
+    //   playlistPanelVideoWrapperRenderer.counterpart[0]
+    //                                    .counterpartRenderer
+    //                                    .playlistPanelVideoRenderer
     let counterpart_renderer = |entry: &Value| -> Option<Value> {
         entry
-            .pointer("/playlistPanelVideoWrapperRenderer/counterpartRenderer/0/playlistPanelVideoRenderer")
+            .pointer("/playlistPanelVideoWrapperRenderer/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer")
             .cloned()
     };
     let video_id_of = |r: &Value| -> String {
@@ -3113,14 +3127,18 @@ mod tests {
                                     { "url": primary_thumb }
                                 ]}
                             }},
-                            "counterpartRenderer": [{ "playlistPanelVideoRenderer": {
-                                "videoId": counterpart_id,
-                                "title": { "runs": [{ "text": "Little Lies" }] },
-                                "longBylineText": { "runs": [{ "text": "Fleetwood Mac" }] },
-                                "thumbnail": { "thumbnails": [
-                                    { "url": counterpart_thumb }
-                                ]}
-                            }}]
+                            "counterpart": [{
+                                "counterpartRenderer": {
+                                    "playlistPanelVideoRenderer": {
+                                        "videoId": counterpart_id,
+                                        "title": { "runs": [{ "text": "Little Lies" }] },
+                                        "longBylineText": { "runs": [{ "text": "Fleetwood Mac" }] },
+                                        "thumbnail": { "thumbnails": [
+                                            { "url": counterpart_thumb }
+                                        ]}
+                                    }
+                                }
+                            }]
                         }}
                     ]}}}
                 }}}]}
@@ -3189,10 +3207,14 @@ mod tests {
                     "lengthText": { "runs": [{ "text": "3:00" }] },
                     "thumbnail": { "thumbnails": [{ "url": "https://i.ytimg.com/vi/vidA/sd.jpg?sqp=x" }]}
                 }},
-                "counterpartRenderer": [{ "playlistPanelVideoRenderer": {
-                    "videoId": "audA",
-                    "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/audA=w512" }]}
-                }}]
+                "counterpart": [{
+                    "counterpartRenderer": {
+                        "playlistPanelVideoRenderer": {
+                            "videoId": "audA",
+                            "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/audA=w512" }]}
+                        }
+                    }
+                }]
             }
         });
         let without = json!({
