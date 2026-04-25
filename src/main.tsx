@@ -16,7 +16,21 @@ if (typeof window !== 'undefined') {
     console.error('[window.error]', e.error || e.message);
   });
   window.addEventListener('unhandledrejection', (e) => {
-    debug.error('window.unhandledrejection', String(e.reason), (e.reason as Error)?.stack);
+    const reason = String(e.reason);
+    // Filter out a known, harmless Tauri plugin-events race:
+    // `listeners[eventId].handlerId` is undefined when the plugin
+    // dispatches an event after its listener registry entry was
+    // already removed. The error originates inside Tauri's
+    // injected user-script and we can't fix it here. Noisy
+    // bursts (6+ per ms during track-change) drown out real
+    // errors in the log if surfaced.
+    if (
+      reason.includes("listeners[eventId].handlerId") ||
+      (e.reason as Error)?.stack?.includes('user-script:')
+    ) {
+      return;
+    }
+    debug.error('window.unhandledrejection', reason, (e.reason as Error)?.stack);
     // eslint-disable-next-line no-console
     console.error('[window.unhandledrejection]', e.reason);
   });
