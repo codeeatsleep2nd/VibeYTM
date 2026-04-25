@@ -458,8 +458,37 @@
     var items = container.querySelectorAll('ytmusic-player-queue-item');
     var out = [];
     var seen = Object.create(null);
+    var seenWrappers = new WeakSet();
     for (var i = 0; i < items.length; i++) {
       var el = items[i];
+
+      // Counterpart dedupe: when YTM has matched a music video to its
+      // audio counterpart, the queue renders BOTH siblings inside one
+      // wrapper element (typically `ytmusic-player-queue-item-renderer`,
+      // historically also `ytmusic-player-queue-item-wrapper`). They
+      // have different videoIds, so the videoId-based `seen` map below
+      // can't catch the duplication on its own. Instead, track each
+      // wrapper element we've already accepted a child from, and skip
+      // any subsequent siblings from the same wrapper. The first child
+      // is what YTM marks as the user-preferred variant — typically the
+      // audio counterpart in audio mode, the video in video mode —
+      // which is also the one the player will actually play.
+      var wrapper = el.parentElement;
+      while (wrapper && wrapper !== container) {
+        var tag = (wrapper.tagName || '').toLowerCase();
+        if (
+          tag === 'ytmusic-player-queue-item-wrapper' ||
+          tag === 'ytmusic-player-queue-item-renderer'
+        ) {
+          break;
+        }
+        wrapper = wrapper.parentElement;
+      }
+      if (wrapper && wrapper !== container) {
+        if (seenWrappers.has(wrapper)) continue;
+        seenWrappers.add(wrapper);
+      }
+
       var data = el.data || {};
       var vid = '';
       try {
