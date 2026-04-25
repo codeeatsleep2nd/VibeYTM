@@ -70,6 +70,22 @@ describe('ReloadOverlay visual contracts', () => {
     expect(wrapper![1]).not.toMatch(/pointer-events:\s*none/);
   });
 
+  it('NEVER applies a CSS transform to the children-wrapping layer', () => {
+    // `transform: scale(...)` creates a stacking context that
+    // WKWebView mishandles for hit-testing — clicks on some children
+    // stop registering. An earlier attempt to add `scale(0.98)` to
+    // hide the blur halo broke clicks across Home / Explore /
+    // Library. The blur is enough on its own; transform is forbidden.
+    const html = renderToStaticMarkup(
+      <ReloadOverlay>
+        <div>content</div>
+      </ReloadOverlay>,
+    );
+    const wrapper = html.match(/<div\s+style="([^"]*filter:\s*blur\(10px\)[^"]*)"/);
+    expect(wrapper).not.toBeNull();
+    expect(wrapper![1]).not.toMatch(/transform\s*:/);
+  });
+
   it('renders the spinner overlay (role="status") on top of the children', () => {
     const html = renderToStaticMarkup(
       <ReloadOverlay>

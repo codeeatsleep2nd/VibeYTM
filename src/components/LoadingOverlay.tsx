@@ -61,16 +61,16 @@ export const ReloadOverlay: FC<ReloadOverlayProps> = ({ children }) => (
         height: '100%',
         width: '100%',
         // 10 px blur on the cached content while the refresh is in
-        // flight. CSS `filter` does NOT affect hit testing — clicks
-        // still pass through to the children — so the cards remain
-        // fully interactive even though they look soft.
+        // flight. CSS `filter` does NOT block pointer events on its
+        // own, so the cards remain fully interactive even though they
+        // look soft.
         filter: 'blur(10px)',
-        // Tiny scale-down avoids the blur "halo" leaking past the
-        // viewport edge.
-        transform: 'scale(0.98)',
-        transformOrigin: 'center center',
-        transition:
-          'filter var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out)',
+        // Don't add `transform` here. `transform: scale(...)` creates
+        // a stacking context that WKWebView mishandles for hit-
+        // testing — clicks on the children stop registering for some
+        // cards. The blur halo at the viewport edge is acceptable;
+        // breaking clicks is not.
+        transition: 'filter var(--duration-normal) var(--ease-out)',
       }}
     >
       {children}

@@ -262,6 +262,11 @@ const Cover: FC<CoverProps> = ({ track, size }) => {
           (track.videoId ? `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg` : undefined)
         }
         alt={`${track.title} artwork`}
+        // Hero cover is the one place where letterboxing a 16:9 video
+        // thumbnail looks better than aggressive center-cropping — at
+        // 600+ px the bars read as "we kept the full music-video
+        // frame", not as broken artwork (issue #48).
+        autoFitForAspect
         style={{
           width: '100%',
           height: '100%',

@@ -10,10 +10,21 @@ interface CachedImageProps {
   onError?: (e: React.SyntheticEvent<HTMLImageElement>) => void;
   loading?: 'lazy' | 'eager';
   /**
-   * When true (default for `objectFit: cover` style), if the source image is
-   * non-square (e.g. a 16:9 video thumbnail), swap the fit to `contain` so
-   * the full image is visible instead of aggressively cropped (issue #48).
-   * Pass `false` to preserve the exact style you set.
+   * Opt-in: when true, if the source image is non-square (e.g. a 16:9
+   * YouTube video thumbnail) and the caller asked for `objectFit:
+   * cover`, swap to `objectFit: contain` so the full image is visible
+   * inside the square frame instead of being aggressively cropped.
+   *
+   * **Default is FALSE.** Letterboxing a 16:9 thumbnail inside a small
+   * square (queue rows, song rows, album cards) produces a thin sliver
+   * with dead bars top/bottom that reads as "broken thumbnail" — Apple
+   * Music / Spotify / YTM itself all center-crop their small thumbs.
+   * The now-playing hero cover is the only place where letterboxing
+   * is the right call (issue #48); that single caller opts in.
+   *
+   * If you flip this default again, EVERY thumbnail across the app
+   * regresses to rectangle — see `src/components/CachedImage.test.tsx`
+   * for the locked-in contract.
    */
   autoFitForAspect?: boolean;
 }
@@ -65,7 +76,7 @@ export const CachedImage: FC<CachedImageProps> = ({
   style,
   onError,
   loading = 'lazy',
-  autoFitForAspect = true,
+  autoFitForAspect = false,
 }) => {
   const [displayUrl, setDisplayUrl] = useState<string | undefined>(undefined);
   const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
@@ -121,10 +132,16 @@ export const CachedImage: FC<CachedImageProps> = ({
     return null;
   }
 
-  // When the caller requested `objectFit: cover` but the source is decidedly
-  // non-square (video thumbnails, typically ~16:9), switch to `contain` so the
-  // whole image is visible inside the square frame instead of being aggressively
-  // cropped — the exact complaint in issue #48.
+  // Auto-fit is opt-in (`autoFitForAspect={true}`). When the caller asked
+  // for `objectFit: cover` AND the source is decidedly non-square
+  // (e.g. a 16:9 YouTube video thumbnail), swap to `objectFit: contain`
+  // so the full image is visible inside the square frame instead of
+  // being aggressively cropped — the original complaint in issue #48.
+  //
+  // The default is FALSE: thumbnails (queue rows, song rows, album
+  // cards, player-bar art) keep `cover` and center-crop, which is how
+  // every other music client renders small artwork. Only the now-
+  // playing hero cover opts in.
   const effectiveStyle: CSSProperties = (() => {
     if (!autoFitForAspect || !style || style.objectFit !== 'cover') return style ?? {};
     if (naturalAspect === null) return style;
