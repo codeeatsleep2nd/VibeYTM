@@ -1,6 +1,7 @@
 import { type FC, useEffect, useMemo, useRef, useState } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import { lookupTrackArtwork } from '../../lib/trackArtworkRegistry';
 import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
 import {
   browseApi,
@@ -393,10 +394,17 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
     return map;
   }, [fetchedUpcoming, track?.videoId, track?.artworkUrl]);
   const renderQueue = useMemo(() => {
-    if (artworkOverrides.size === 0) return baseRenderQueue;
     return baseRenderQueue.map((row) => {
       if (!row.videoId) return row;
-      const better = artworkOverrides.get(row.videoId);
+      // Tier 1: per-session map populated from /next + live track.
+      // Tier 2: cross-component registry (PlaylistDetail / LibraryPage
+      //         / etc. populate this on fetch). Lets the queue row
+      //         show the same album art the user just saw on the
+      //         playlist detail page, even when /next didn't return
+      //         it for this row.
+      const better =
+        artworkOverrides.get(row.videoId) ??
+        lookupTrackArtwork(row.videoId);
       if (better && better !== row.artworkUrl) {
         return { ...row, artworkUrl: better };
       }

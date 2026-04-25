@@ -1,6 +1,7 @@
 import { type FC, useEffect, useState } from 'react';
 import type { PlaylistDetail } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
+import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
 import { SongRow } from '../browse/SongRow';
 import { CachedImage } from '../CachedImage';
 import { LoadingSpinner } from '../LoadingOverlay';
@@ -80,6 +81,12 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     ])
       .then(([data, currentState]) => {
         if (cancelled) return;
+        // Stash every track's album-art URL into the cross-component
+        // registry so the queue panel can show the right cover for
+        // any of these tracks even when /next's response doesn't
+        // surface them. Same flow for albums (MPRE browseIds also
+        // route through getPlaylist).
+        rememberTrackArtworks(data.tracks);
         setPlaylist(data);
         // Seed the saved-state from the server so the button renders the
         // correct label on first paint (issue #55). Without this the button

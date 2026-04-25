@@ -7,6 +7,7 @@ import type {
 } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
 import { readCache, writeCache } from '../../lib/persistentCache';
+import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
 import { CachedImage } from '../CachedImage';
@@ -90,6 +91,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
             if (!cancelled) {
               setSongs(data);
               writeCache(PERSIST_KEYS.songs, data);
+              rememberTrackArtworks(data);
             }
             break;
           }
