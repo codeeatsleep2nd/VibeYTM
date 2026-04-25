@@ -2352,15 +2352,75 @@ fn parse_playlist_from_two_row(two_row: &Value) -> Option<PlaylistSummary> {
 /// mentions lyrics. Title matching is case-insensitive so non-English locales
 /// don't silently drop to `None` — YTM localizes the tab label but keeps the
 /// lyrics browse IDs identifiable on the lyrics-tab position (second tab).
+/// Test whether a thumbnail URL is YTM album art
+/// (`lh*.googleusercontent.com`) versus a YouTube video frame
+/// (`i.ytimg.com/vi/...`). Used to identify the AUDIO renderer in a
+/// counterpart pair regardless of which side `primaryRenderer`
+/// happens to be on.
+fn is_album_art_url(url: &str) -> bool {
+    if let Some(rest) = url.strip_prefix("https://lh") {
+        // Match lh3., lh4., lh5., ... googleusercontent.com prefix.
+        if let Some(dot) = rest.find('.') {
+            let digits = &rest[..dot];
+            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                return rest[dot..].starts_with(".googleusercontent.com/");
+            }
+        }
+    }
+    false
+}
+
+/// Pull the largest thumbnail URL from a `playlistPanelVideoRenderer`
+/// (or any renderer with the same `thumbnail.thumbnails[]` shape).
+fn renderer_thumbnail(renderer: &Value) -> Option<String> {
+    renderer
+        .pointer("/thumbnail/thumbnails")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.last())
+        .and_then(|t| t.get("url"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+/// In a counterpart pair, return the renderer that represents the
+/// AUDIO side — the one whose thumbnail is album art on
+/// `lh*.googleusercontent.com`. Returns `None` if neither side is
+/// album art (both are video frames; track is fully UGC) or if the
+/// wrapper has no counterpart at all.
+///
+/// The "primary" vs "counterpart" labels in YTM's response are
+/// **playback-direction**-dependent — when the user is in audio mode
+/// the audio renderer is primary and the video is counterpart; in
+/// video mode, the inverse. So picking by label alone is wrong; we
+/// need to identify by content.
+fn pick_audio_renderer<'a>(wrapper: &'a Value) -> Option<&'a Value> {
+    let primary = wrapper.pointer("/primaryRenderer/playlistPanelVideoRenderer");
+    let counterpart = wrapper.pointer("/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer");
+    let primary_is_audio = primary
+        .and_then(renderer_thumbnail)
+        .map(|u| is_album_art_url(&u))
+        .unwrap_or(false);
+    if primary_is_audio {
+        return primary;
+    }
+    let counterpart_is_audio = counterpart
+        .and_then(renderer_thumbnail)
+        .map(|u| is_album_art_url(&u))
+        .unwrap_or(false);
+    if counterpart_is_audio {
+        return counterpart;
+    }
+    None
+}
+
 /// Walk a `/next` response's playlist panel and return the audio
-/// counterpart's videoId for the currently-playing track if YTM has
+/// renderer's videoId for the currently-playing track if YTM has
 /// matched a `MUSIC_VIDEO_TYPE_OMV` (music video) to a
-/// `MUSIC_VIDEO_TYPE_ATV` (audio track). Returns `None` if the track
-/// has no counterpart (already an audio track, or YTM hasn't matched
-/// it). The result is suitable for re-issuing /next to land on the
-/// audio variant — that's what surfaces the lyrics tab YTM hides on
-/// many music-video pages, and the album-art thumbnail YTM omits
-/// from the video page in favor of the 16:9 frame.
+/// `MUSIC_VIDEO_TYPE_ATV` (audio track). Returns `None` if the
+/// playing track is already the audio variant (no extra hop needed)
+/// OR if YTM hasn't matched it at all (UGC). The result is suitable
+/// for re-issuing /next to land on the audio variant — that's what
+/// surfaces the lyrics tab YTM hides on music-video pages.
 fn extract_audio_counterpart_video_id(data: &Value, current_video_id: &str) -> Option<String> {
     let contents = data
         .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")?
@@ -2376,18 +2436,16 @@ fn extract_audio_counterpart_video_id(data: &Value, current_video_id: &str) -> O
         if primary_id != current_video_id {
             continue;
         }
-        // YTM JSON shape:
-        //   playlistPanelVideoWrapperRenderer.counterpart[0]
-        //                                    .counterpartRenderer
-        //                                    .playlistPanelVideoRenderer
-        let counterpart_id = wrapper
-            .pointer("/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer/videoId")
+        let audio = pick_audio_renderer(wrapper)?;
+        let audio_id = audio
+            .pointer("/videoId")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        if counterpart_id.is_empty() || counterpart_id == current_video_id {
+        if audio_id.is_empty() || audio_id == current_video_id {
+            // Already on the audio side; nothing to switch to.
             return None;
         }
-        return Some(counterpart_id.to_string());
+        return Some(audio_id.to_string());
     }
     None
 }
@@ -2422,18 +2480,20 @@ fn extract_audio_counterpart_meta(data: &Value, current_video_id: &str) -> Optio
         if primary_id != current_video_id {
             continue;
         }
-        let cp = wrapper
-            .pointer("/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer")?;
-        let title = cp
+        // Pick the AUDIO renderer (regardless of whether it's primary
+        // or counterpart) so we always read clean song metadata, never
+        // the noisy music-video title / channel-name artist.
+        let audio = pick_audio_renderer(wrapper)?;
+        let title = audio
             .pointer("/title/runs")
             .map(runs_text)
             .unwrap_or_default();
-        let artist = cp
+        let artist = audio
             .pointer("/longBylineText/runs")
-            .or_else(|| cp.pointer("/shortBylineText/runs"))
+            .or_else(|| audio.pointer("/shortBylineText/runs"))
             .map(runs_text)
             .unwrap_or_default();
-        let duration_secs = cp
+        let duration_secs = audio
             .pointer("/lengthText/runs/0/text")
             .and_then(|v| v.as_str())
             .map(parse_duration_text)
@@ -2446,10 +2506,13 @@ fn extract_audio_counterpart_meta(data: &Value, current_video_id: &str) -> Optio
     None
 }
 
-/// Walk a `/next` response's playlist panel and return the audio
-/// counterpart's largest album-art thumbnail URL for the currently-
-/// playing track. Returns `None` if there's no counterpart (already
-/// an audio track, or YTM hasn't matched it).
+/// Walk a `/next` response's playlist panel and return the AUDIO
+/// renderer's largest album-art thumbnail URL for the currently-
+/// playing track — picked by scanning BOTH primary and counterpart
+/// for the lh*.googleusercontent.com host (album-art CDN), since
+/// YTM swaps which side is "primary" depending on the user's audio /
+/// video preference. Returns `None` if neither side is album art
+/// (UGC track, or no counterpart at all).
 fn extract_audio_counterpart_thumbnail(data: &Value, current_video_id: &str) -> Option<String> {
     let contents = data
         .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")?
@@ -2465,19 +2528,8 @@ fn extract_audio_counterpart_thumbnail(data: &Value, current_video_id: &str) -> 
         if primary_id != current_video_id {
             continue;
         }
-        // YTM JSON shape:
-        //   playlistPanelVideoWrapperRenderer.counterpart[0]
-        //                                    .counterpartRenderer
-        //                                    .playlistPanelVideoRenderer
-        //                                    .thumbnail.thumbnails[].url
-        let url = wrapper
-            .pointer("/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer/thumbnail/thumbnails")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.last())
-            .and_then(|t| t.get("url"))
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        return url;
+        let audio = pick_audio_renderer(wrapper)?;
+        return renderer_thumbnail(audio);
     }
     None
 }
@@ -2534,21 +2586,6 @@ fn extract_upcoming_tracks(data: &Value, current_video_id: &str, limit: usize) -
             .or_else(|| entry.pointer("/playlistPanelVideoWrapperRenderer/primaryRenderer/playlistPanelVideoRenderer"))
             .cloned()
     };
-    // The audio/song "counterpart" — same track, different videoId,
-    // hosted under the lh*.googleusercontent.com album-art CDN. Present
-    // when YTM has matched a music video (`MUSIC_VIDEO_TYPE_OMV`) to
-    // its audio counterpart (`MUSIC_VIDEO_TYPE_ATV`). This is what
-    // powers YTM's Song/Video toggle.
-    //
-    // YTM JSON shape (verified against live /next dumps):
-    //   playlistPanelVideoWrapperRenderer.counterpart[0]
-    //                                    .counterpartRenderer
-    //                                    .playlistPanelVideoRenderer
-    let counterpart_renderer = |entry: &Value| -> Option<Value> {
-        entry
-            .pointer("/playlistPanelVideoWrapperRenderer/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer")
-            .cloned()
-    };
     let video_id_of = |r: &Value| -> String {
         r.get("videoId")
             .and_then(|v| v.as_str())
@@ -2603,20 +2640,18 @@ fn extract_upcoming_tracks(data: &Value, current_video_id: &str, limit: usize) -
             .and_then(|v| v.as_str())
             .map(parse_duration_text)
             .unwrap_or(0.0);
-        // Prefer the audio/song counterpart's album-art thumbnail
-        // (lh*.googleusercontent.com) over the music video's 16:9
-        // frame whenever the counterpart is present. The user wants
-        // the song cover, not the video thumbnail — and YTM gives us
-        // the audio counterpart's metadata in the same /next response
-        // via `playlistPanelVideoWrapperRenderer.counterpartRenderer`.
-        // The videoId stays as the primary (video) one so playback
-        // continues without a navigation hiccup; only the cover image
-        // source is swapped.
-        let counterpart = counterpart_renderer(entry);
-        let artwork_url = counterpart
-            .as_ref()
-            .and_then(thumbnail_of)
-            .or_else(|| thumbnail_of(&r));
+        // Pick the AUDIO renderer's thumbnail regardless of whether
+        // it's the primary or the counterpart. YTM swaps which side
+        // is "primary" depending on the user's audio/video preference,
+        // so picking by label alone is wrong: we'd sometimes return
+        // the music-video frame as the "counterpart" of the playing
+        // audio track. Identify the audio side by content (album-art
+        // host = lh*.googleusercontent.com).
+        let wrapper = entry.get("playlistPanelVideoWrapperRenderer");
+        let audio_thumb = wrapper
+            .and_then(pick_audio_renderer)
+            .and_then(renderer_thumbnail);
+        let artwork_url = audio_thumb.or_else(|| thumbnail_of(&r));
 
         out.push(TrackInfo {
             video_id,
@@ -3340,6 +3375,10 @@ mod tests {
         // and "Bee Gees - Topic" / channel name as artist; the audio
         // counterpart is the clean "Stayin' Alive" / "Bee Gees" pair
         // with a real lengthText.
+        // Primary is the music video (i.ytimg.com video frame thumbnail);
+        // counterpart is the audio side (lh3.googleusercontent.com album
+        // art). pick_audio_renderer must identify the counterpart as
+        // audio by content (album-art host), not by JSON label.
         let data = json!({
             "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
                 "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
@@ -3350,7 +3389,9 @@ mod tests {
                                 "title": { "runs": [{ "text": "Stayin' Alive (Official Music Video)" }] },
                                 "longBylineText": { "runs": [{ "text": "Bee Gees - Topic" }] },
                                 "lengthText": { "runs": [{ "text": "4:45" }] },
-                                "thumbnail": { "thumbnails": [] }
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://i.ytimg.com/vi/videoVID/hq720.jpg?sqp=foo&rs=bar" }
+                                ]}
                             }},
                             "counterpart": [{
                                 "counterpartRenderer": {
@@ -3359,7 +3400,9 @@ mod tests {
                                         "title": { "runs": [{ "text": "Stayin' Alive" }] },
                                         "longBylineText": { "runs": [{ "text": "Bee Gees" }] },
                                         "lengthText": { "runs": [{ "text": "4:09" }] },
-                                        "thumbnail": { "thumbnails": [] }
+                                        "thumbnail": { "thumbnails": [
+                                            { "url": "https://lh3.googleusercontent.com/audioCover=w512-h512" }
+                                        ]}
                                     }
                                 }
                             }]
@@ -3373,6 +3416,98 @@ mod tests {
         assert_eq!(meta.artist, "Bee Gees");
         // 4:09 = 249 seconds
         assert_eq!(meta.duration_secs as i64, 249);
+    }
+
+    #[test]
+    fn extract_audio_counterpart_thumbnail_returns_audio_when_video_is_primary() {
+        // Same fixture orientation as above: primary = video, counterpart = audio.
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "videoVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://i.ytimg.com/vi/videoVID/hq720.jpg?sqp=x&rs=y" }
+                                ]}
+                            }},
+                            "counterpart": [{ "counterpartRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "audioVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://lh3.googleusercontent.com/audioCover=w512-h512" }
+                                ]}
+                            }}}]
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        let url = extract_audio_counterpart_thumbnail(&data, "videoVID")
+            .expect("must find audio thumbnail");
+        assert!(url.starts_with("https://lh3.googleusercontent.com/"), "got {url}");
+    }
+
+    #[test]
+    fn extract_audio_counterpart_thumbnail_returns_audio_when_audio_is_primary() {
+        // Inverse orientation: user is in audio mode, so primary = audio (lh3
+        // album art) and counterpart = video. The audio renderer is the
+        // primary itself; we should return the primary's lh3 thumbnail,
+        // NOT the counterpart's i.ytimg video frame.
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "audioVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://lh3.googleusercontent.com/audioCover=w512-h512" }
+                                ]}
+                            }},
+                            "counterpart": [{ "counterpartRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "videoVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://i.ytimg.com/vi/videoVID/hq720.jpg?sqp=x&rs=y" }
+                                ]}
+                            }}}]
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        let url = extract_audio_counterpart_thumbnail(&data, "audioVID")
+            .expect("must find audio thumbnail");
+        assert!(url.starts_with("https://lh3.googleusercontent.com/"), "got {url}");
+    }
+
+    #[test]
+    fn extract_audio_counterpart_video_id_returns_none_when_already_audio() {
+        // User is on the audio side (primary = audio). There's no need to
+        // switch — the videoId hop should return None.
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "audioVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://lh3.googleusercontent.com/audio=w512" }
+                                ]}
+                            }},
+                            "counterpart": [{ "counterpartRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "videoVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://i.ytimg.com/vi/videoVID/hq720.jpg?sqp=x&rs=y" }
+                                ]}
+                            }}}]
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        assert!(extract_audio_counterpart_video_id(&data, "audioVID").is_none());
     }
 
     #[test]
