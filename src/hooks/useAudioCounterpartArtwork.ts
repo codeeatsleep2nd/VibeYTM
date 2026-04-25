@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { browseApi } from '../lib/ipc';
+import { debug } from '../lib/debug';
 
 // Module-level cache keyed by videoId so concurrent components
 // (PlayerBar + NowPlaying + QueuePanel's now-playing row) share a
@@ -44,6 +45,11 @@ export function useAudioCounterpartArtwork(
     override: videoId && cache.has(videoId) ? cache.get(videoId) ?? null : null,
   }));
   if (state.videoId !== videoId) {
+    debug.log('useAudioCounterpartArtwork', 'videoId changed', {
+      from: state.videoId,
+      to: videoId,
+      cacheHit: !!(videoId && cache.has(videoId)),
+    });
     setState({
       videoId,
       override: videoId && cache.has(videoId) ? cache.get(videoId) ?? null : null,
@@ -72,15 +78,12 @@ export function useAudioCounterpartArtwork(
     promise.then((result) => {
       inflight.delete(videoId);
       if (result === fetchSentinel) {
-        // Transient failure (IPC error, bridge timeout, etc.). Do
-        // NOT cache — the next render that needs this videoId
-        // should retry from scratch. The user is left with the
-        // fallback (video thumbnail) until then; better than
-        // pinning it forever.
+        debug.warn('useAudioCounterpartArtwork', 'IPC failed', { videoId });
         return;
       }
       const url = result as string | null;
       cache.set(videoId, url);
+      debug.log('useAudioCounterpartArtwork', 'IPC resolved', { videoId, hasUrl: !!url });
       if (cancelled) return;
       // Only commit if the player is still on this videoId — a skip
       // mid-fetch makes the result stale and we don't want to flash

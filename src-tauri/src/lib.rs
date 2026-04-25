@@ -135,6 +135,7 @@ pub fn run() {
             commands::browse::get_upcoming_tracks,
             commands::browse::get_audio_counterpart_artwork,
             commands::cache::cache_fetch_image,
+            commands::debug::debug_log,
             commands::cache::cache_clear,
             commands::cache::cache_stats,
             commands::cache::cache_get_track,

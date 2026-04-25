@@ -459,6 +459,19 @@
     var out = [];
     var seen = Object.create(null);
     var seenWrappers = new WeakSet();
+    var lastAcceptedTitle = '';
+    function normalizeForDedupe(s) {
+      // Strip MV / official / lyric-video / language-tag / OST decorations
+      // so a music-video sibling with a noisy title compares equal to its
+      // audio counterpart. Conservative: only collapse when the cores
+      // match exactly after stripping a known-noise vocabulary.
+      var t = (s || '').toLowerCase();
+      // Drop known decorations / parens / brackets and run together.
+      t = t.replace(/[【〔《[(『「]\s*[^】〕》\])』」]*\s*[】〕》\])』」]/g, ' ');
+      t = t.replace(/\b(official\s+(music\s+)?video|music\s+video|mv|lyric(s)?\s+video|hd|4k|remaster(ed)?|audio|hq|topic)\b/g, ' ');
+      t = t.replace(/[\s\-–—|｜:,.!?'"]+/g, ' ');
+      return t.trim();
+    }
     for (var i = 0; i < items.length; i++) {
       var el = items[i];
 

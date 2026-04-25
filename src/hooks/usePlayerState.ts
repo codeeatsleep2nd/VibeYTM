@@ -3,6 +3,7 @@ import type { PlayerState, PlaybackStatus, RepeatMode, TrackInfo } from '../lib/
 import { bootstrapActivePlaylistFromState, playerApi } from '../lib/ipc';
 import { EVENTS } from '../lib/events';
 import { useTauriEvent } from './useTauriEvent';
+import { debug } from '../lib/debug';
 
 // Drop VOLUME_CHANGED echoes that arrive within this window of a local
 // optimistic set, so fast drags (and click-to-jump) aren't overwritten by
@@ -77,6 +78,10 @@ export function usePlayerState(): UsePlayerState {
   }, []);
 
   useTauriEvent<TrackInfo>(EVENTS.TRACK_CHANGED, (track) => {
+    debug.log('usePlayerState', 'TRACK_CHANGED', {
+      videoId: track?.videoId,
+      title: track?.title?.slice(0, 40),
+    });
     // Reset position alongside the track swap. The bridge emits TRACK_CHANGED
     // and POSITION_UPDATED from separate cycles, so without this the progress
     // bar briefly renders with the old position over the new (shorter)
