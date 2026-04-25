@@ -20,6 +20,18 @@ Apple Music-style YouTube Music desktop app.
 - Frontend-only changes (`src/**/*.{ts,tsx,css}`) are picked up by Vite HMR — do NOT restart for those unless module-level state needs to be reset (e.g. changes to a module exporting mutable singletons).
 - After restarting, verify the build came up cleanly via the task output before reporting work as done.
 
+## Verification Discipline
+- NEVER ask the user to debug, test, or verify a fix unless the action genuinely cannot be performed without human input (e.g. interactive system dialogs, listening to audio, judging visual aesthetics).
+- For everything else, verify the fix yourself before declaring it done:
+  - Read the dev-server task output at `/private/tmp/claude-501/.../tasks/<task-id>.output` for runtime logs (track changes, /next calls, queue updates, errors).
+  - Inspect dumped YTM API responses at `/tmp/vibeytm-resp-*.json` to confirm what the backend actually received and parsed.
+  - Run the full validation suite: `pnpm typecheck`, `cd src-tauri && cargo check`, `cargo test --lib` (currently 78 tests).
+  - Trace the previously-fixed code paths against the latest diff to confirm no regression of earlier bugs.
+- When extra runtime visibility is needed, add a debug line via the bridge's `log()` ring (writes to `window.__VIBEYTM_DEBUG__`, surfaced by the Rust poller in dev-server output) — do NOT instruct the user to open WebView devtools and paste output.
+- If something truly cannot be verified without the user (e.g. "does the lyric sync feel right by ear?"), say so explicitly: "I cannot verify X — please report what you observe" — instead of generically asking them to test.
+- Before touching any file that has been the subject of repeated bug reports (especially `QueuePanel.tsx`, the bridge, and `playerApi`), re-read the full file and write down the invariants it depends on. Don't edit only the diff target.
+- After each round of fixes, walk every previously-reported bug related to that area against the current code and confirm in the response that each prior fix is still in place — line numbers cited.
+
 ## Architecture
 - Two WebView model: visible React UI + hidden YouTube Music audio engine
 - Event-driven: tokio broadcast bus connects all components
@@ -47,3 +59,10 @@ Apple Music-style YouTube Music desktop app.
 - State: `Arc<RwLock<PlayerState>>` managed by Tauri
 - Integrations: subscribe to event bus, react independently
 - Types: Rust structs mirror TypeScript interfaces (camelCase serde)
+
+## WKWebView quirks (Tauri visible window)
+The visible React UI runs in macOS WKWebView via Tauri. It does not behave identically to Chromium:
+
+- **Click targets MUST be real `<button>` elements.** `<div role="button" tabIndex={0} onClick={...}>` looks a11y-equivalent and passes type-checking, but in this build the synthetic React `onClick` is silently dropped — mouse hover/enter/leave still fires, but the click never reaches React. This regresses every card on Home/Explore/Library/Search at once and is invisible until you actually try clicking. If you must avoid nested `<button>/<button>` HTML, change the INNER element to `<span role="button" onClick={...}>`, never the outer one. Verified 2026-04-24 via diagnostic IPC.
+- **`pointer-events: none` on a stale-while-revalidate overlay kills clicks on cached children.** `ReloadOverlay` and similar wrappers must keep children interactive during refresh. Put `pointerEvents: 'none'` on a small corner spinner only, never on the wrapper around the still-visible content. The YTM bridge can stall ~30 s during audio-webview navigation; for that whole window every card becomes click-dead if the overlay blocks events.
+- **Background fetches need a settle delay after track change.** YTM's hidden audio webview navigates on every track change, which hangs `fetch()` calls inside it for ~3-15 s. Anything that calls `get_upcoming_tracks` / `get_lyrics` / `next` on track-change should wait ~1.5-2 s before firing so it doesn't pile onto the stuck channel and starve user-driven IPCs (`get_playlist`, `search`) that the user is clicking right then.

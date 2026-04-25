@@ -422,16 +422,42 @@
   }
 
   /**
-   * Read the authoritative playing queue from YTM's DOM. This is what YTM
-   * will actually play on next/prev — respecting shuffle, radio continuation,
-   * and any manual reordering. The separate /next HTTP call can diverge from
-   * this, so the Playing-queue UI needs the DOM as source of truth.
+   * Read the authoritative playing queue exactly as YTM holds it.
+   *
+   * Source of truth: `player.getPlaylist()` returns the array of videoIds
+   * YTM will actually play, in order. That's the canonical answer to
+   * "what's the queue?" — the same data that drives YTM's nextVideo() and
+   * its own queue-panel rendering. Anything sourced from the DOM scrape
+   * alone could include nested template clones, hidden lazy-mounted rows,
+   * or stale items.
+   *
+   * We then enrich each id with metadata (title, artist, thumbnail) from
+   * the DOM `<ytmusic-player-queue-item>` whose videoId matches. Items
+   * without matching DOM nodes still appear (with whatever fields YTM has
+   * — at minimum the videoId for the YouTube CDN thumbnail fallback).
    *
    * Returns an array of { videoId, title, artist, artworkUrl, durationSecs }.
    */
+  /**
+   * Scrape YTM's queue panel DOM. Verified at runtime: in a list/radio
+   * context the scoped container holds the FULL queue (e.g. 93 items),
+   * with no leak from outside the scope. The YouTube iframe-API
+   * `player.getPlaylist()` reports 0 in YTM, so it cannot be the source
+   * of truth — DOM is.
+   *
+   * Scope is `ytmusic-player-queue #contents` to exclude the
+   * now-playing-strip's `<ytmusic-player-queue-item>` and any template
+   * clones elsewhere in the DOM. A scrape-time dedup-by-videoId is
+   * applied as belt-and-suspenders against transient renders.
+   */
   function readYtmQueue() {
-    var items = document.querySelectorAll('ytmusic-player-queue-item');
+    var container =
+      document.querySelector('ytmusic-player-queue #contents') ||
+      document.querySelector('ytmusic-player-queue');
+    if (!container) return [];
+    var items = container.querySelectorAll('ytmusic-player-queue-item');
     var out = [];
+    var seen = Object.create(null);
     for (var i = 0; i < items.length; i++) {
       var el = items[i];
       var data = el.data || {};
@@ -449,6 +475,8 @@
         }
       }
       if (!vid) continue;
+      if (seen[vid]) continue;
+      seen[vid] = true;
       var titleEl = el.querySelector('.song-title, yt-formatted-string.song-title');
       var bylineEl = el.querySelector('.byline, yt-formatted-string.byline');
       var thumb = el.querySelector('yt-img-shadow img, img');
@@ -469,10 +497,24 @@
   // window.__TAURI__ binding (only __TAURI_INTERNALS__), so an invoke()-push
   // path is unavailable here — pull is the only reliable pattern.
   window.__VIBEYTM_QUEUE__ = [];
+  var lastLoggedQueueFingerprint = '';
   function pushQueueIfChanged() {
     try {
       var q = readYtmQueue();
       window.__VIBEYTM_QUEUE__ = q;
+      // Also log a one-line summary into the bridge debug ring so the Rust
+      // poller surfaces it in the dev-server output. Lets us reason about
+      // exactly what the panel is rendering without WebView devtools.
+      var fp = q.map(function (t) { return t.videoId; }).join('|');
+      if (fp !== lastLoggedQueueFingerprint) {
+        lastLoggedQueueFingerprint = fp;
+        var summary = q.slice(0, 10).map(function (t, i) {
+          return '[' + (i + 1) + '] ' + (t.videoId || '?') + ' ' +
+            (t.title || '').slice(0, 40);
+        }).join(' | ');
+        log('queue (' + q.length + ' items): ' + summary +
+          (q.length > 10 ? ' …' : ''));
+      }
     } catch (e) {
       // Queue DOM can transiently be missing during navigation; try again next tick.
     }
@@ -495,6 +537,12 @@
       log('queue observer failed: ' + e);
     }
   }
+
+  // (Diagnostic SELFTEST removed after verification — confirmed YTM's
+  // player.nextVideo() skips same-title-different-videoId entries in its
+  // DOM queue. The QueuePanel's title-based dedup with seedCurrent handles
+  // exactly this case, producing an Up-Next list that matches YTM's actual
+  // playback path. See: scripts/inject/ytm-player-bridge.js git log.)
 
   function waitForPlayer() {
     var p = getPlayer();

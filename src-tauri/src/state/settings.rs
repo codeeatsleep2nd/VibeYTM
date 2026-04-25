@@ -24,6 +24,16 @@ pub struct AppSettings {
 pub struct GeneralSettings {
     pub close_to_tray: bool,
     pub background_playback: bool,
+    /// Volume the user last left the app at, in the range [0.0, 1.0].
+    /// Used to restore audio level on next startup and to push back into
+    /// YTM whenever YTM's <video> element resets it across track changes.
+    /// Defaults to 1.0 (full volume) on a clean install.
+    #[serde(default = "default_volume")]
+    pub last_volume: f64,
+}
+
+fn default_volume() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -46,6 +56,7 @@ impl Default for AppSettings {
             general: GeneralSettings {
                 close_to_tray: true,
                 background_playback: true,
+                last_volume: default_volume(),
             },
             integrations: IntegrationSettings {
                 notifications_enabled: true,

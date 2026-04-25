@@ -21,6 +21,18 @@ pub struct PersistedSession {
     pub track: Option<TrackInfo>,
     pub position_secs: f64,
     pub volume: f64,
+    /// The playlist/album/radio context the user last had active. Used at
+    /// next launch to restore YTM's queue (when the user presses Play
+    /// we re-navigate with `&list=<active_playlist_id>` so YTM rebuilds
+    /// the same queue context).
+    #[serde(default)]
+    pub active_playlist_id: Option<String>,
+    /// Snapshot of the last-known queue (DOM-scraped from YTM by the
+    /// bridge). Restored into `PlayerState.queue` so the panel renders
+    /// content immediately on startup, before YTM has had time to rebuild
+    /// the live queue.
+    #[serde(default)]
+    pub queue: Vec<TrackInfo>,
 }
 
 fn session_path(app: &AppHandle) -> Option<PathBuf> {
@@ -70,6 +82,8 @@ pub fn flush_now(app: &AppHandle, state: &SharedPlayerState) {
             track: player.track.clone(),
             position_secs: player.position_secs,
             volume: player.volume,
+            active_playlist_id: player.active_playlist_id.clone(),
+            queue: player.queue.clone(),
         }
     };
     save_sync(app, &snapshot);
@@ -82,6 +96,8 @@ pub async fn apply(state: &SharedPlayerState, session: PersistedSession) {
     player.track = session.track;
     player.position_secs = session.position_secs;
     player.volume = session.volume;
+    player.active_playlist_id = session.active_playlist_id;
+    player.queue = session.queue;
 }
 
 /// Spawn a background task that snapshots current state to disk every
@@ -98,6 +114,8 @@ pub fn spawn_saver(app: AppHandle, state: SharedPlayerState) {
                     track: player.track.clone(),
                     position_secs: player.position_secs,
                     volume: player.volume,
+                    active_playlist_id: player.active_playlist_id.clone(),
+                    queue: player.queue.clone(),
                 }
             };
             if last_saved.as_ref() == Some(&snapshot) {

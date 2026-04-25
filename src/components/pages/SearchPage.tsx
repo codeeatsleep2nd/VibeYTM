@@ -410,16 +410,18 @@ export const SearchPage: FC<SearchPageProps> = ({
       </div>
 
       {/*
-        Results region wrapped in a relative container so a reload can blur
-        the previous results while a spinner overlays on top — instead of
-        wiping them to a "Searching…" placeholder.
+        Results region wrapped in a relative container so a reload can show
+        a corner spinner while results stay interactive — stale-while-
+        revalidate. The previous version disabled pointer events on the
+        whole results panel while `isLoading=true`, which made every card
+        in the search results unclickable for the entire duration of any
+        YTM bridge stall (~30s during webview navigation).
       */}
       <div style={{ position: 'relative', minHeight: '200px' }}>
       <div
         style={{
-          filter: isLoading && results ? 'blur(10px)' : 'none',
-          pointerEvents: isLoading ? 'none' : 'auto',
-          transition: 'filter var(--duration-normal) var(--ease-out)',
+          // Keep results fully interactive during reload — no blur, no
+          // pointer-events block. The corner spinner below signals load.
         }}
       >
 

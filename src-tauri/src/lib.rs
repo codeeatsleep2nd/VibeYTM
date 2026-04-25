@@ -50,6 +50,7 @@ pub fn run() {
                         .unwrap_or(state::settings::GeneralSettings {
                             close_to_tray: true,
                             background_playback: true,
+                            last_volume: 1.0,
                         });
                     // Flush the last-played session to disk right now so the
                     // next launch can restore it even when the user closes
@@ -144,10 +145,18 @@ pub fn run() {
             // Load persisted settings before registering integrations so a
             // future preference that gates an integration would see it.
             let loaded_settings = state::settings::load(app.handle());
+            // Restore the last-used volume into PlayerState before the
+            // poller comes online — the poller's track-changed branch then
+            // pushes this back into YTM whenever YTM resets `<video>.volume`
+            // across navigations, so the user hears the same level they
+            // last set even on a fresh launch.
+            let restored_volume = loaded_settings.general.last_volume;
             {
                 let settings_clone = settings_state.clone();
+                let player_clone = player_state.clone();
                 tauri::async_runtime::block_on(async move {
                     *settings_clone.write().await = loaded_settings;
+                    player_clone.write().await.volume = restored_volume;
                 });
             }
 

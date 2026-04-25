@@ -332,9 +332,22 @@ const LyricsPanel: FC<LyricsPanelProps> = ({
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--color-text-tertiary)',
+          gap: 'var(--space-3)',
         }}
       >
-        Loading lyrics…
+        <div
+          role="status"
+          aria-label="Loading lyrics"
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: '50%',
+            border: '3px solid var(--color-surface-3)',
+            borderTopColor: 'var(--color-accent)',
+            animation: 'vibeytm-spin 0.9s linear infinite',
+          }}
+        />
+        <div style={{ fontSize: 'var(--text-sm)' }}>Loading lyrics…</div>
       </div>
     );
   }

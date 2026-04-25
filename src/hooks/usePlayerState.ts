@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PlayerState, PlaybackStatus, RepeatMode, TrackInfo } from '../lib/types';
-import { playerApi } from '../lib/ipc';
+import { bootstrapActivePlaylistFromState, playerApi } from '../lib/ipc';
 import { EVENTS } from '../lib/events';
 import { useTauriEvent } from './useTauriEvent';
 
@@ -67,6 +67,10 @@ export function usePlayerState(): UsePlayerState {
   useEffect(() => {
     playerApi.getState().then((s) => {
       setState(s);
+      // Sync the module-level activePlaylistId from the restored session so
+      // QueuePanel's effect (which depends on it) sees the right context
+      // immediately after a cold start.
+      bootstrapActivePlaylistFromState(s);
     }).catch(() => {
       // Backend not ready yet — keep defaults
     });

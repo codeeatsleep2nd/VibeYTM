@@ -33,36 +33,33 @@ interface ReloadOverlayProps {
   children: ReactNode;
 }
 
-// Keeps previously-rendered content visible but blurred while a refetch is
-// in flight, with a centered spinner on top. Use when re-fetching data the
-// user has already seen — avoids the content-vanishing flash caused by
-// swapping in a "Loading…" placeholder.
+// Keeps previously-rendered content visible — and INTERACTIVE — while a
+// refetch is in flight. A small corner spinner signals the load without
+// blocking clicks. The previous version blurred the children and put
+// `pointerEvents: 'none'` on both layers, which made every card on the
+// page unclickable for the entire duration of the network call. With
+// the YTM bridge occasionally hanging for ~30s during webview
+// navigation, that turned into a reproducible "all cards unclickable"
+// outage. Stale-while-revalidate only works if `stale` stays usable.
 export const ReloadOverlay: FC<ReloadOverlayProps> = ({ children }) => (
   <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+    {children}
     <div
       aria-hidden
       style={{
-        height: '100%',
-        width: '100%',
-        filter: 'blur(10px)',
-        pointerEvents: 'none',
-        overflow: 'hidden',
-      }}
-    >
-      {children}
-    </div>
-    <div
-      style={{
         position: 'absolute',
-        inset: 0,
+        top: 'var(--space-3)',
+        right: 'var(--space-4)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'oklch(10% 0.005 270 / 0.35)',
+        // The spinner sits in a corner badge — it must not intercept
+        // clicks meant for the cards underneath it.
         pointerEvents: 'none',
+        zIndex: 5,
       }}
     >
-      <Spinner />
+      <Spinner size={20} />
     </div>
   </div>
 );

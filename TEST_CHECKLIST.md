@@ -12,6 +12,12 @@ Apply to: Home, Search (Albums/Artists tabs), Explore, Library, Playlist detail
 - [ ] Clicking play icon on a single-track card → plays that track
 - [ ] Parser must detect `musicTwoRowItemRenderer` with watchEndpoint as Song, not Album
 - [ ] React keys use `${id || 'fallback'}-${index}` pattern to prevent collisions
+- [ ] **Card click target MUST be a real `<button>` element, NOT `<div role="button">`** — see "WKWebView quirk: div role=button swallows onClick" below
+
+### WKWebView quirks — REGRESSION TRAPS
+- [ ] **Click targets are real `<button>` elements**: `<div role="button" tabIndex={0}>` looks equivalent and passes a11y, but in this Tauri WKWebView build the synthetic React onClick is silently dropped (mouse hover still fires; only click is broken). Verified with diagnostic IPC — zero pings landed despite repeated clicks. ALWAYS use a real `<button>`. If you need to avoid nested-button HTML, swap the INNER element to a `<span role="button" onClick={...}>` rather than swapping the outer wrapper.
+- [ ] **No `pointer-events: none` on stale-while-revalidate overlays**: `ReloadOverlay`-style wrappers must NOT block pointer events on cached children during a refresh — that turns every card into a click-dead surface for the duration of any YTM bridge stall (~30 s during webview navigation). Use a small corner spinner that itself has `pointerEvents: 'none'`, but leave the children fully interactive.
+- [ ] **Background fetches debounced past YTM webview navigation**: every track change forces YTM's audio webview to navigate, hanging in-flight `fetch()` calls for ~3-15 s. Background calls (queue refresh, lyrics preload, current-track lyrics probe) must wait ~1.5-2 s after a track change so they don't saturate the bridge channel and starve user-driven IPCs (`get_playlist`, `search`).
 
 ### Playlist Card Click Rules (CRITICAL)
 - [ ] Click anywhere on card (NOT play icon) → opens playlist detail page, NO auto-play

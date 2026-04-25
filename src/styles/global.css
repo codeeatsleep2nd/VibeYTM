@@ -71,3 +71,49 @@ input {
     transform: rotate(360deg);
   }
 }
+
+/* Three-bar "now playing" indicator overlaid on the queue's current row.
+   Each bar is staggered via inline animation-delay; this keyframe just
+   defines the bounce. */
+@keyframes vibeytm-bar {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* Entrance animation for the queue's now-playing row. Re-mounts on each
+   track change (via React key={videoId}), so this fires every Next/Prev
+   click — a clear visual cue that the cursor advanced. Paired with the
+   custom rAF-driven scroll in QueuePanel.tsx so the row appears to slide
+   into place at exactly the same speed as the list scrolls under it. */
+@keyframes vibeytm-queue-current-flash {
+  0% {
+    transform: translateY(14px) scale(0.97);
+    opacity: 0;
+    box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
+  }
+  35% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    box-shadow: 0 8px 24px oklch(72% 0.18 280 / 0.28),
+                inset 0 0 0 1.5px oklch(72% 0.18 280 / 0.55);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
+  }
+}
+
+.vibeytm-queue-current-flash {
+  animation: vibeytm-queue-current-flash 720ms cubic-bezier(0.22, 1, 0.36, 1);
+  border-radius: var(--radius-sm);
+  /* Promote to its own layer so the box-shadow and transform animate on
+     the compositor — keeps the row's content rendering crisp and avoids
+     repaints in surrounding rows. */
+  will-change: transform, box-shadow, opacity;
+}

@@ -1360,3 +1360,57 @@ see `git log` for the exhaustive list.
     in TS `src/lib/types.ts`.
   - New commands: `get_lyrics(video_id, artist?, title?, duration_secs?)`,
     `get_upcoming_tracks(video_id, limit?)`.
+
+### v0.9.2 — WKWebView click-target rule + interactive reload overlay
+
+- **Card click target must be a real `<button>`** (`src/components/browse/AlbumCard.tsx`).
+  An attempt to clean up nested-button HTML by switching the outer wrapper
+  to `<div role="button" tabIndex={0}>` looked semantically equivalent
+  and passed type-checking, but in this Tauri WKWebView build the
+  synthetic React `onClick` was silently dropped on every card —
+  `onMouseEnter`/`Leave` still fired, only the click event was lost.
+  Verified with a diagnostic IPC ping (`cache_stats` invocation count
+  stayed at zero across many clicks). Reverting the outer to `<button>`
+  fixed it instantly. Codified in `CLAUDE.md` ("WKWebView quirks"
+  section) and `TEST_CHECKLIST.md` ("WKWebView quirks — REGRESSION
+  TRAPS"). **If you must avoid nested-button HTML, change the INNER
+  element to `<span role="button" onClick={...}>`, never the outer.**
+
+- **`ReloadOverlay` no longer blocks pointer events**
+  (`src/components/LoadingOverlay.tsx`). The blur-the-children + spinner
+  pattern from v0.9.0 placed `pointerEvents: 'none'` on the wrapper
+  around the cached children. While intended to suppress interaction
+  during reload, in practice it made every card on every page click-
+  dead for the duration of any YTM bridge stall (~30 s during webview
+  navigation). Replaced with a small corner-positioned spinner whose
+  own `pointerEvents: 'none'` lets it sit non-interactively over fully
+  clickable stale content — true stale-while-revalidate.
+
+- **Background fetches debounced past YTM webview navigation**.
+  YTM's hidden audio webview navigates on every track change, hanging
+  in-flight `fetch()` calls inside it for ~3-15 s. Three background
+  calls (PlayerBar's lyrics preprobe, PlayerBar's lyrics preload-for-
+  next, QueuePanel's `get_upcoming_tracks`) all fired within ~2 ms of
+  each track change and stacked up timing out simultaneously, starving
+  the bridge channel and making user-driven IPCs (`get_playlist`,
+  `search`) feel unresponsive. Added a 1.5-2 s settle delay on each.
+
+- **PlayerBar lyrics preload reads `getPlannedNext()` first**
+  (`src/components/layout/PlayerBar.tsx`). Replaces the per-track-change
+  `getUpcomingTracks(currentVideoId, 2)` HTTP fetch with a synchronous
+  read from the visible queue's published Up Next #1. Eliminates an
+  extra `/next` round-trip and guarantees the preloaded lyrics match
+  exactly what the user's Next-click will play.
+
+- **7-day localStorage cache for browse data** (`src/lib/persistentCache.ts`).
+  Home shelves, Explore shelves, and Library (playlists/songs/albums/
+  artists) now persist their last-known-good payloads under
+  `vibeytm:browse:v1:*`. `useState` initializers hydrate from
+  localStorage so the grid renders with clickable cards before the
+  network call returns — important on cold start when the bridge
+  may be hanging through its first webview navigation.
+
+- **Toggle-now-playing also clears LRC active state** (`src/App.tsx`).
+  Closing the playing page via the cover-image button also flips
+  `isLyricsOpen` to false, so the LRC button in the player bar drops
+  its accent state in lockstep with the panel dismissing.

@@ -1,7 +1,14 @@
 import { type FC, type ReactNode, useEffect } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useLyrics, preloadLyrics } from '../../hooks/useLyrics';
-import { browseApi, playerApi } from '../../lib/ipc';
+import {
+  browseApi,
+  getActivePlaylistId,
+  getPlannedNext,
+  getPlannedPrevious,
+  playerApi,
+  setPredictedTrack,
+} from '../../lib/ipc';
 import type { RepeatMode } from '../../lib/types';
 import { CachedImage } from '../CachedImage';
 import { MarqueeText } from '../MarqueeText';
@@ -131,42 +138,71 @@ export const PlayerBar: FC<PlayerBarProps> = ({
   const { track, status, positionSecs, volume, isShuffled, repeatMode, isLiked, applyOptimistic, markSeek } = state;
   const isPlaying = status === 'playing';
 
-  // Preload lyrics for the next two upcoming tracks so the LRC panel opens
-  // instantly when the user skips forward. YTM's upcoming queue isn't in
-  // our PlayerState — it lives in the `next` endpoint's playlist panel —
-  // so we ask the backend to fetch it for the current track, then fire
-  // preloadLyrics on each result. De-duped by the shared useLyrics cache.
+  // Preload lyrics for the upcoming track so the LRC panel opens instantly
+  // when the user skips forward. Prefer the visible queue's Up Next #1
+  // (published by QueuePanel via `setPlannedQueue`) — synchronous lookup,
+  // no HTTP. Falls back to /next-endpoint only when the planned queue is
+  // empty (cold start).
+  //
+  // CRITICAL: defer by 2s after a track change. When YTM's audio webview
+  // navigates to a new song, in-flight fetch() calls hang for the duration
+  // of the navigation (~3-15s). Firing background preloads at the same
+  // moment as the navigation saturates the bridge channel and makes
+  // user-driven clicks (playlist/album cards → get_playlist) appear
+  // unresponsive while the queue drains. Letting the webview settle first
+  // keeps the channel clear for foreground actions.
   const currentVideoId = track?.videoId;
   useEffect(() => {
     if (!currentVideoId) return;
+
     let cancelled = false;
-    browseApi
-      .getUpcomingTracks(currentVideoId, 3)
-      .then((tracks) => {
-        if (cancelled) return;
-        for (const t of tracks.slice(0, 2)) {
-          if (!t.videoId || t.videoId === currentVideoId) continue;
-          preloadLyrics({
-            videoId: t.videoId,
-            artist: t.artist,
-            title: t.title,
-            durationSecs: t.durationSecs,
-          });
-        }
-      })
-      .catch(() => {
-        // Preload is best-effort — a failed upcoming-tracks lookup just
-        // means lyrics won't be warm when the user skips. Safe to swallow.
-      });
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+
+      const planned = getPlannedNext();
+      if (planned?.videoId) {
+        preloadLyrics({
+          videoId: planned.videoId,
+          artist: planned.artist,
+          title: planned.title,
+          durationSecs: planned.durationSecs,
+        });
+        return;
+      }
+
+      browseApi
+        .getUpcomingTracks(currentVideoId, 2)
+        .then((tracks) => {
+          if (cancelled) return;
+          const next = tracks.find(
+            (t) => t.videoId && t.videoId !== currentVideoId,
+          );
+          if (next) {
+            preloadLyrics({
+              videoId: next.videoId,
+              artist: next.artist,
+              title: next.title,
+              durationSecs: next.durationSecs,
+            });
+          }
+        })
+        .catch(() => {
+          // Preload is best-effort — a failed upcoming-tracks lookup
+          // just means lyrics won't be warm when the user skips.
+        });
+    }, 2000);
+
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [currentVideoId]);
-  // Pre-probe lyrics as soon as a track loads. `immediate=true` skips the
-  // track-change debounce so the fetch starts the instant playback begins —
-  // by the time the user clicks LRC, the result is usually ready (served
-  // from disk cache on a second visit, or already in-flight from the
-  // parallel LRCLIB + NetEase race on a first visit).
+  // Pre-probe lyrics so the LRC button can dim when a track has none.
+  // Use the hook's built-in 2s debounce (immediate=false): firing
+  // immediately on every track change competes with QueuePanel's
+  // /next refresh and saturates the bridge while YTM's audio webview
+  // is mid-navigation. NowPlaying still uses immediate=true for the
+  // user-opened panel.
   const { status: lyricsAvailability } = useLyrics(
     track
       ? {
@@ -177,7 +213,7 @@ export const PlayerBar: FC<PlayerBarProps> = ({
         }
       : null,
     true,
-    true,
+    false,
   );
   const lyricsMissing = lyricsAvailability === 'missing';
 
@@ -335,7 +371,24 @@ export const PlayerBar: FC<PlayerBarProps> = ({
           <TransportButton
             label={'\u23EE'}
             ariaLabel="Previous"
-            onClick={() => playerApi.previous()}
+            // Play whatever's at the bottom of the visible history.
+            // `setPredictedTrack` is module-level so QueuePanel (a
+            // separate `usePlayerState()` instance) sees the new track
+            // synchronously and lands the playing-bars animation on it
+            // immediately — no waiting for the IPC / bridge round-trip.
+            // Falls back to YTM's previousVideo() when the panel hasn't
+            // computed a planned previous (cold start, queue empty).
+            onClick={() => {
+              const prev = getPlannedPrevious();
+              if (prev?.videoId) {
+                setPredictedTrack(prev);
+                applyOptimistic({ track: prev, positionSecs: 0 });
+                const pl = getActivePlaylistId() ?? undefined;
+                playerApi.playTrack(prev.videoId, pl).catch(() => {});
+              } else {
+                playerApi.previous();
+              }
+            }}
           />
           <button
             onClick={handleTogglePlay}
@@ -364,7 +417,25 @@ export const PlayerBar: FC<PlayerBarProps> = ({
           <TransportButton
             label={'\u23ED'}
             ariaLabel="Next"
-            onClick={() => playerApi.next()}
+            // Play exactly the track shown as Up Next #1 in the queue
+            // panel. `setPredictedTrack` is module-level so QueuePanel
+            // (a separate `usePlayerState()` instance) sees the new
+            // track synchronously and lands the playing-bars animation
+            // + now-playing row on it immediately — before the IPC
+            // round-trip / Rust placeholder / bridge poll have a chance
+            // to settle. Falls back to YTM's nextVideo() only when no
+            // planned next is available (cold start, end of queue).
+            onClick={() => {
+              const next = getPlannedNext();
+              if (next?.videoId) {
+                setPredictedTrack(next);
+                applyOptimistic({ track: next, positionSecs: 0 });
+                const pl = getActivePlaylistId() ?? undefined;
+                playerApi.playTrack(next.videoId, pl).catch(() => {});
+              } else {
+                playerApi.next();
+              }
+            }}
           />
           <TransportButton
             label={<RepeatIcon mode={repeatMode} />}

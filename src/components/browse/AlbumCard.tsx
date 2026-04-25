@@ -21,8 +21,26 @@ export const AlbumCard: FC<AlbumCardProps> = ({
 }) => {
   const [isHovered, setIsHovered] = useState(false);
 
+  // KEEP THIS A REAL <button>. An earlier refactor swapped the outer
+  // wrapper to <div role="button" tabIndex={0}>, which looked equivalent
+  // (same a11y semantics, no nested-button HTML concern) but in this
+  // Tauri WKWebView build the synthetic onClick was silently swallowed
+  // for every card on every page. mouse hover still fired, but the click
+  // never reached React. Verified by adding a tracing log to a
+  // diagnostic IPC and confirming zero pings landed for any number of
+  // user clicks.
+  //
+  // The lesson: in this WKWebView, `<div role="button">` is NOT a drop-in
+  // replacement for `<button>`. Always use a real <button> for click
+  // targets. The play overlay below is a child <button> — HTML5
+  // technically forbids nested buttons but WKWebView accepts the
+  // arrangement here without dropping events from either node, so we
+  // keep it for parity with the rest of the codebase. If a future
+  // change ever needs to truly avoid nesting, swap the INNER to a
+  // <span role="button"> rather than touching the outer.
   return (
     <button
+      type="button"
       onClick={onClick}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}

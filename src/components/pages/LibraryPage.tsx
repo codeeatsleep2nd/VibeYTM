@@ -6,9 +6,22 @@ import type {
   ArtistSummary,
 } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
+import { readCache, writeCache } from '../../lib/persistentCache';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
 import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
+
+// Per-tab persistence keys for the 7-day localStorage cache. Library
+// summaries (playlistId / browseId / channelId / videoId) drive card
+// click handlers, so persisting the last-known-good list means the
+// grid renders instantly with clickable cards on cold restart while a
+// background refresh updates anything that's changed.
+const PERSIST_KEYS = {
+  playlists: 'library:playlists',
+  songs: 'library:songs',
+  albums: 'library:albums',
+  artists: 'library:artists',
+} as const;
 
 export type LibraryTab = 'playlists' | 'songs' | 'albums' | 'artists';
 
@@ -39,10 +52,21 @@ export const LibraryPage: FC<LibraryPageProps> = ({
   onSearchArtist,
   refreshKey = 0,
 }) => {
-  const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
-  const [songs, setSongs] = useState<TrackInfo[]>([]);
-  const [albums, setAlbums] = useState<AlbumSummary[]>([]);
-  const [artists, setArtists] = useState<ArtistSummary[]>([]);
+  // Hydrate from localStorage so the grid is interactive on the first
+  // render. The fetchData effect below will refresh from the network and
+  // overwrite — this is purely a "render-while-revalidate" optimization.
+  const [playlists, setPlaylists] = useState<PlaylistSummary[]>(
+    () => readCache<PlaylistSummary[]>(PERSIST_KEYS.playlists) ?? [],
+  );
+  const [songs, setSongs] = useState<TrackInfo[]>(
+    () => readCache<TrackInfo[]>(PERSIST_KEYS.songs) ?? [],
+  );
+  const [albums, setAlbums] = useState<AlbumSummary[]>(
+    () => readCache<AlbumSummary[]>(PERSIST_KEYS.albums) ?? [],
+  );
+  const [artists, setArtists] = useState<ArtistSummary[]>(
+    () => readCache<ArtistSummary[]>(PERSIST_KEYS.artists) ?? [],
+  );
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -54,22 +78,34 @@ export const LibraryPage: FC<LibraryPageProps> = ({
         switch (activeTab) {
           case 'playlists': {
             const data = await browseApi.getLibraryPlaylists();
-            if (!cancelled) setPlaylists(data);
+            if (!cancelled) {
+              setPlaylists(data);
+              writeCache(PERSIST_KEYS.playlists, data);
+            }
             break;
           }
           case 'songs': {
             const data = await browseApi.getLibrarySongs();
-            if (!cancelled) setSongs(data);
+            if (!cancelled) {
+              setSongs(data);
+              writeCache(PERSIST_KEYS.songs, data);
+            }
             break;
           }
           case 'albums': {
             const data = await browseApi.getLibraryAlbums();
-            if (!cancelled) setAlbums(data);
+            if (!cancelled) {
+              setAlbums(data);
+              writeCache(PERSIST_KEYS.albums, data);
+            }
             break;
           }
           case 'artists': {
             const data = await browseApi.getLibraryArtists();
-            if (!cancelled) setArtists(data);
+            if (!cancelled) {
+              setArtists(data);
+              writeCache(PERSIST_KEYS.artists, data);
+            }
             break;
           }
         }

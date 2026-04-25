@@ -54,10 +54,14 @@ const App: FC = () => {
     if (now - lastToggleAtRef.current < 450) return;
     lastToggleAtRef.current = now;
     setIsNowPlayingOpen((prev) => {
-      // Leave isLyricsOpen alone on close — reopening the overlay should
-      // restore whichever sub-view (cover vs. lyrics) the user was last on.
-      // The queue is an independent surface, so we don't touch it here.
-      return !prev;
+      const next = !prev;
+      // When closing, also clear the LRC selected status so the bottom
+      // bar's lyrics button no longer renders as active. Without this,
+      // the LRC button stays highlighted after the user has dismissed
+      // the playing page, making its state look out of sync with what's
+      // actually on screen.
+      if (!next) setIsLyricsOpen(false);
+      return next;
     });
   }, []);
 

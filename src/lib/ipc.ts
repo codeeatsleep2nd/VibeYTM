@@ -51,6 +51,86 @@ function setActivePlaylistId(id: string | null): void {
   for (const listener of activePlaylistListeners) listener(id);
 }
 
+/**
+ * Bootstrap the module-level activePlaylistId from a restored PlayerState
+ * (called once on app startup after `playerApi.getState()` returns the
+ * persisted session). Idempotent — only fires when the value actually
+ * changes from its current value.
+ */
+export function bootstrapActivePlaylistFromState(state: PlayerState): void {
+  const stateAny = state as PlayerState & { activePlaylistId?: string | null };
+  if (stateAny.activePlaylistId !== undefined) {
+    setActivePlaylistId(stateAny.activePlaylistId ?? null);
+  }
+}
+
+// --- Predicted-track overlay -------------------------------------------
+//
+// When the user clicks Next/Previous (or any synchronous "play this
+// specific track" button), we know the FULL track metadata immediately
+// — long before the IPC round-trip / Rust placeholder / bridge poller
+// can update `usePlayerState`'s shared `track`. Set it here and any
+// React subscriber can read it as a synchronous override so the queue
+// panel's now-playing row + playing-bars animation land on the new
+// track on the same frame as the click.
+//
+// Cleared automatically when `usePlayerState`'s real track catches up
+// to the predicted videoId.
+
+let predictedTrack: TrackInfo | null = null;
+type PredictedTrackListener = (track: TrackInfo | null) => void;
+const predictedTrackListeners = new Set<PredictedTrackListener>();
+
+export function getPredictedTrack(): TrackInfo | null {
+  return predictedTrack;
+}
+
+export function setPredictedTrack(track: TrackInfo | null): void {
+  if (
+    predictedTrack === track ||
+    (predictedTrack && track && predictedTrack.videoId === track.videoId)
+  ) {
+    return;
+  }
+  predictedTrack = track;
+  for (const listener of predictedTrackListeners) listener(track);
+}
+
+export function subscribePredictedTrack(
+  listener: PredictedTrackListener,
+): () => void {
+  predictedTrackListeners.add(listener);
+  return () => {
+    predictedTrackListeners.delete(listener);
+  };
+}
+
+// --- Visible queue planner ---------------------------------------------
+//
+// QueuePanel computes its visible Up-Next list (after freeze + dedup +
+// slicing) and writes it here. PlayerBar's Next/Previous buttons read
+// this so they navigate to whatever the user is actually seeing rather
+// than handing control to YTM's `nextVideo()`, whose internal queue can
+// drift from ours when its song-radio regenerates.
+
+let plannedUpcoming: TrackInfo[] = [];
+let plannedHistory: TrackInfo[] = [];
+
+export function setPlannedQueue(history: TrackInfo[], upcoming: TrackInfo[]): void {
+  plannedHistory = history;
+  plannedUpcoming = upcoming;
+}
+
+export function getPlannedNext(): TrackInfo | null {
+  return plannedUpcoming[0] ?? null;
+}
+
+export function getPlannedPrevious(): TrackInfo | null {
+  return plannedHistory.length > 0
+    ? plannedHistory[plannedHistory.length - 1]
+    : null;
+}
+
 export const playerApi = {
   play: () => invoke('play'),
   pause: () => invoke('pause'),

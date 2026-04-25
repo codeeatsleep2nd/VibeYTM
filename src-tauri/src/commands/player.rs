@@ -6,6 +6,7 @@ use crate::cache::Cache;
 use crate::events::bus::EventBus;
 use crate::events::types::AppEvent;
 use crate::state::player::{AccountInfo, PlaybackStatus, PlayerState, RepeatMode, SharedPlayerState, TrackInfo};
+use crate::state::settings::{self, SharedSettings};
 
 #[tauri::command]
 pub async fn on_track_changed(
@@ -248,6 +249,10 @@ pub async fn play_track(
         player.track = Some(track.clone());
         player.status = PlaybackStatus::Playing;
         player.position_secs = 0.0;
+        // Stash the watch-list context so the periodic session saver can
+        // persist it; on next launch the queue can be rebuilt by routing
+        // YTM through the same `&list=` parameter.
+        player.active_playlist_id = playlist_id.clone();
     }
 
     bus.emit(AppEvent::TrackChanged(track.clone()));
@@ -261,11 +266,23 @@ pub async fn play_track(
 pub async fn set_volume(
     level: f64,
     state: State<'_, SharedPlayerState>,
+    settings_state: State<'_, SharedSettings>,
     app: AppHandle,
 ) -> Result<(), String> {
     let clamped = level.clamp(0.0, 1.0);
-    let mut player = state.write().await;
-    player.volume = clamped;
+    {
+        let mut player = state.write().await;
+        player.volume = clamped;
+    }
+    // Persist so the next launch restores this level. Fire-and-forget the
+    // disk write — JSON is tiny and writes happen only on user-driven
+    // changes (slider drags / clicks), not on every poller cycle.
+    let snapshot = {
+        let mut s = settings_state.write().await;
+        s.general.last_volume = clamped;
+        s.clone()
+    };
+    settings::save(&app, &snapshot);
     // Forward to YTM
     if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
         let args = format!("{{\"level\":{}}}", clamped);

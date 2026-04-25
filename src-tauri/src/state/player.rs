@@ -52,6 +52,10 @@ pub struct PlayerState {
     pub repeat_mode: RepeatMode,
     pub is_shuffled: bool,
     pub queue: Vec<TrackInfo>,
+    /// The playlist/album/radio context the user last started playing
+    /// from. Persisted across restarts so the queue rebuild after launch
+    /// uses the same `&list=…` parameter as the prior session.
+    pub active_playlist_id: Option<String>,
     pub account: Option<AccountInfo>,
     /// Tri-state YTM sign-in status. None = unknown (bridge not yet loaded),
     /// Some(true) = signed in, Some(false) = signed out. Used on app launch
@@ -71,6 +75,7 @@ impl Default for PlayerState {
             repeat_mode: RepeatMode::None,
             is_shuffled: false,
             queue: Vec::new(),
+            active_playlist_id: None,
             account: None,
             logged_in: None,
         }
