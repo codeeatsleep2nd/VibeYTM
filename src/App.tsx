@@ -182,6 +182,15 @@ const App: FC = () => {
         setViewingPlaylist(null);
         setIsNowPlayingOpen(false);
         setIsQueueOpen(false);
+        // Also close LRC explicitly. Inside NowPlaying, the lyrics
+        // column sets `pointer-events: auto` when `showLyrics` is true,
+        // which overrides the parent overlay's `pointer-events: none`
+        // when the overlay is closed. Without this line the lyrics
+        // column stays click-active over the new page (right side
+        // of Home/Explore/Library) and steals clicks. This is the
+        // "unclickable area where the play queue / lyrics page
+        // appears" bug.
+        setIsLyricsOpen(false);
         // Settings tab toggles: clicking it while open returns to the
         // previous view instead of re-rendering the same page.
         if (path === 'settings' && currentPath === 'settings') {

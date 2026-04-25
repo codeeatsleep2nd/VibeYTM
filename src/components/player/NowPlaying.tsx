@@ -153,7 +153,12 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false }) 
               height: '100%',
               minWidth: 0,
               overflow: 'hidden',
-              pointerEvents: showLyrics ? 'auto' : 'none',
+              // AND with `isOpen`: the parent overlay sets pointer-events
+              // `none` when the page is closed, but a child that sets
+              // `auto` overrides the parent. Without `isOpen` here, a
+              // closed-but-LRC-still-on overlay would leak click-stealing
+              // pointer-events over the new page after sidebar nav.
+              pointerEvents: isOpen && showLyrics ? 'auto' : 'none',
               transition:
                 'flex-basis 420ms cubic-bezier(0.22, 1, 0.36, 1), margin-left 420ms cubic-bezier(0.22, 1, 0.36, 1), padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
             }}

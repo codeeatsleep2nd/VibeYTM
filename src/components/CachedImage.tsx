@@ -1,4 +1,4 @@
-import { type CSSProperties, type FC, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, type FC, useEffect, useState } from 'react';
 import { cacheApi } from '../lib/ipc';
 
 interface CachedImageProps {
@@ -110,34 +110,28 @@ if (import.meta.hot) {
   });
 }
 
-// IntersectionObserver gate: defer the IPC fetch until the image is
-// within ~600 px of the viewport. With 600 px of margin the image
-// typically resolves and decodes before the user actually sees it,
-// so progressive loading feels seamless rather than "scroll, wait,
-// scroll, wait."
-const VIEWPORT_PRELOAD_PX = 600;
-
 /**
- * Image that fetches via the Rust disk cache, with two layers of
- * back-pressure to keep cache-cleared cold starts smooth:
- *
- *   1. **IntersectionObserver gate.** The fetch only starts once the
- *      placeholder is within ~600 px of the viewport. Off-screen
- *      images defer until scrolled toward, so visible content loads
- *      first.
- *   2. **Concurrency limit.** At most 6 `cacheApi.fetchImage` IPCs are
- *      in flight at any time. Excess calls queue. This stops the
- *      Tauri main-thread bridge and reqwest connection pool from
- *      saturating when many images pop into view at once.
+ * Image that fetches via the Rust disk cache, with a concurrency
+ * limit to keep cache-cleared cold starts smooth: at most 6
+ * `cacheApi.fetchImage` IPCs are in flight at any time. Excess calls
+ * queue. This stops the Tauri main-thread bridge and reqwest
+ * connection pool from saturating when ~150-200 images mount at once
+ * on Home/Explore/Library after a cache wipe.
  *
  * The component pre-decodes the image off-DOM so it appears in one
  * shot — never half-painted, never with a progressive flicker. Falls
  * back to the remote URL directly if the cache layer fails so the UI
  * never shows a broken image.
  *
- * Pass `loading="eager"` to bypass the intersection gate (the fetch
- * starts immediately on mount). Use this for above-the-fold heroes
- * where you'd rather pay the cost upfront than risk a flash.
+ * Why no IntersectionObserver gate: an earlier version added a
+ * `<span>` placeholder for IO to observe so off-screen images would
+ * defer fetching until scrolled toward. In this WKWebView build, that
+ * inline-block placeholder span inside `<button>` AlbumCards
+ * interfered with click hit-testing — cards regressed to unclickable
+ * for a third time today. The concurrency limit alone is enough back-
+ * pressure for cache-cleared cold starts; the bridge drains a batch
+ * of 6 at a time and the visual effect is "images appear in waves"
+ * rather than "many fail to load."
  */
 export const CachedImage: FC<CachedImageProps> = ({
   src,
@@ -151,49 +145,6 @@ export const CachedImage: FC<CachedImageProps> = ({
 }) => {
   const [displayUrl, setDisplayUrl] = useState<string | undefined>(undefined);
   const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
-  // True once the placeholder has crossed the viewport-preload margin
-  // for the first time. Eager-loading callers start true.
-  const [isVisible, setIsVisible] = useState(loading === 'eager');
-  const placeholderRef = useRef<HTMLSpanElement | null>(null);
-
-  // If a `src` is already resolved in the in-memory cache, skip the
-  // intersection gate entirely — there's nothing to fetch, and we'd
-  // rather paint immediately than wait for an observer callback. This
-  // is the hot path for navigation between pages that share images.
-  useEffect(() => {
-    if (!src) return;
-    if (resolved.has(src)) setIsVisible(true);
-  }, [src]);
-
-  // Observe the placeholder until it crosses the preload margin. Once
-  // it does, flip `isVisible` permanently — even if the user scrolls
-  // away, we've already kicked off the fetch and don't want to undo
-  // that work.
-  useEffect(() => {
-    if (isVisible) return;
-    const el = placeholderRef.current;
-    if (!el) return;
-    if (typeof IntersectionObserver === 'undefined') {
-      // Older runtimes / SSR: degrade to eager so the user sees an
-      // image at all.
-      setIsVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setIsVisible(true);
-            observer.disconnect();
-            break;
-          }
-        }
-      },
-      { rootMargin: `${VIEWPORT_PRELOAD_PX}px` },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [isVisible]);
 
   useEffect(() => {
     if (!src) {
@@ -201,7 +152,6 @@ export const CachedImage: FC<CachedImageProps> = ({
       setNaturalAspect(null);
       return;
     }
-    if (!isVisible) return;
 
     let cancelled = false;
 
@@ -241,25 +191,10 @@ export const CachedImage: FC<CachedImageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [src, isVisible]);
+  }, [src]);
 
   if (!displayUrl) {
-    // Render an empty placeholder span sized like the image. Spans
-    // avoid layout-shift while still giving the IntersectionObserver
-    // something to track. Inline-block keeps it from collapsing
-    // inside flex/grid parents that size by `width: 100%`.
-    return (
-      <span
-        ref={placeholderRef}
-        aria-hidden
-        style={{
-          display: 'inline-block',
-          width: typeof width === 'number' ? `${width}px` : style?.width ?? '100%',
-          height: typeof height === 'number' ? `${height}px` : style?.height ?? '100%',
-          background: 'transparent',
-        }}
-      />
-    );
+    return null;
   }
 
   // Auto-fit is opt-in (`autoFitForAspect={true}`). When the caller asked
