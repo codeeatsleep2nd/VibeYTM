@@ -9,4 +9,5 @@ export const EVENTS = {
   LIKE_CHANGED: 'player:like-changed',
   LOGIN_CHANGED: 'player:login-changed',
   ACCOUNT_CHANGED: 'player:account-changed',
+  QUEUE_CHANGED: 'player:queue-changed',
 } as const;

@@ -2,6 +2,7 @@ import { type FC, type ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { PlayerBar } from './PlayerBar';
 import { NowPlaying } from '../player/NowPlaying';
+import { QueuePanel } from '../player/QueuePanel';
 
 interface AppShellProps {
   currentPath: string;
@@ -10,6 +11,8 @@ interface AppShellProps {
   onToggleNowPlaying: () => void;
   lyricsOpen: boolean;
   onToggleLyrics: () => void;
+  queueOpen: boolean;
+  onToggleQueue: () => void;
   children: ReactNode;
 }
 
@@ -20,6 +23,8 @@ export const AppShell: FC<AppShellProps> = ({
   onToggleNowPlaying,
   lyricsOpen,
   onToggleLyrics,
+  queueOpen,
+  onToggleQueue,
   children,
 }) => (
   <div
@@ -65,6 +70,8 @@ export const AppShell: FC<AppShellProps> = ({
       nowPlayingOpen={nowPlayingOpen}
       lyricsOpen={lyricsOpen}
       onToggleLyrics={onToggleLyrics}
+      queueOpen={queueOpen}
+      onToggleQueue={onToggleQueue}
     />
 
     <NowPlaying
@@ -72,5 +79,7 @@ export const AppShell: FC<AppShellProps> = ({
       onClose={onToggleNowPlaying}
       showLyrics={lyricsOpen}
     />
+
+    <QueuePanel isOpen={queueOpen} onClose={onToggleQueue} />
   </div>
 );

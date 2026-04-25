@@ -96,6 +96,7 @@ pub fn run() {
             commands::on_track_changed,
             commands::on_playback_status_changed,
             commands::on_position_updated,
+            commands::player::on_queue_changed,
             commands::get_player_state,
             commands::player::get_account_info,
             commands::player::get_login_state,

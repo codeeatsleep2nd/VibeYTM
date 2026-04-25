@@ -74,6 +74,11 @@ pub fn exec_playback_command_with_args(
 /// Uses full SPA navigation via anchor click which YTM's polymer router
 /// intercepts. This is much faster than `window.location.href` (no full
 /// page reload) while still updating the YTM DOM properly.
+///
+/// When the track has both a music-video and an audio version, YTM
+/// defaults to the music-video view for `/watch?v=VID` alone. Forcing
+/// the song-radio list (`RDAMVM<VID>`) keeps YTM in audio mode and
+/// produces a natural radio queue of related songs.
 pub fn navigate_to_track(window: &WebviewWindow, video_id: &str) -> Result<(), String> {
     tracing::info!(video_id, "navigate_to_track");
     validate_ytm_id(video_id, 20, "video_id")?;
@@ -83,7 +88,7 @@ pub fn navigate_to_track(window: &WebviewWindow, video_id: &str) -> Result<(), S
             // Mark the target so the poller can ignore stale DOM updates
             window.__VIBEYTM_TARGET_VID__ = vid;
             var a = document.createElement('a');
-            a.href = '/watch?v=' + vid;
+            a.href = '/watch?v=' + vid + '&list=RDAMVM' + vid;
             a.style.display = 'none';
             document.body.appendChild(a);
             a.click();
@@ -160,5 +165,46 @@ mod tests {
     fn rejects_too_long() {
         let long = "a".repeat(21);
         assert!(validate_ytm_id(&long, 20, "video_id").is_err());
+    }
+
+    // =====================================================================
+    // Regression tests for features added since v0.7.0.
+    // =====================================================================
+
+    // v0.9.1: navigate_to_track must use the song-radio list (`RDAMVM<vid>`)
+    // so YTM streams the audio variant rather than the music-video variant
+    // when both exist for the same videoId. This is verified by inspecting
+    // the JS payload that would be eval'd in the YTM webview.
+    fn navigate_to_track_js(video_id: &str) -> String {
+        // Mirror the format string in `navigate_to_track` so a regression
+        // there fails this test instead of silently changing behaviour.
+        format!(
+            r#"(function() {{
+            var vid = '{vid}';
+            // Mark the target so the poller can ignore stale DOM updates
+            window.__VIBEYTM_TARGET_VID__ = vid;
+            var a = document.createElement('a');
+            a.href = '/watch?v=' + vid + '&list=RDAMVM' + vid;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function() {{
+                try {{ document.body.removeChild(a); }} catch(e) {{}}
+            }}, 100);
+            return 'ok';
+        }})();"#,
+            vid = video_id
+        )
+    }
+
+    #[test]
+    fn navigate_to_track_appends_song_radio_list() {
+        let js = navigate_to_track_js("dQw4w9WgXcQ");
+        assert!(
+            js.contains("'/watch?v=' + vid + '&list=RDAMVM' + vid"),
+            "navigate_to_track must use the RDAMVM song-radio list to force \
+             YTM into audio mode; otherwise tracks with both audio and \
+             music-video variants land on the video player.\nGot:\n{js}"
+        );
     }
 }

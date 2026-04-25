@@ -375,6 +375,7 @@ export const SearchPage: FC<SearchPageProps> = ({
           display: 'flex',
           gap: 'var(--space-2)',
           overflowX: 'auto',
+          overflowY: 'hidden',
           scrollbarWidth: 'none',
         }}
       >
@@ -644,7 +645,7 @@ export const SearchPage: FC<SearchPageProps> = ({
                     artworkUrl={playlist.artworkUrl}
                     title={playlist.title}
                     subtitle={
-                      playlist.trackCount !== undefined
+                      playlist.trackCount != null
                         ? `${playlist.trackCount} tracks`
                         : ''
                     }
@@ -672,6 +673,7 @@ export const SearchPage: FC<SearchPageProps> = ({
                   display: 'flex',
                   gap: 'var(--space-5)',
                   overflowX: 'auto',
+                  overflowY: 'hidden',
                   paddingBottom: 'var(--space-2)',
                 }}
               >

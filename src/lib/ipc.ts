@@ -18,6 +18,39 @@ export const cacheApi = {
   convertToAssetUrl: (path: string) => convertFileSrc(path),
 };
 
+// Last playlist/album the user explicitly started playing. YTM's `next`
+// endpoint needs this to return the full album/playlist queue instead of
+// the single-track auto-radio, so the Queue panel can show every song.
+// Cleared whenever a track is played without a playlist context.
+//
+// Exposed as a tiny subscribable so React components (e.g. QueuePanel) can
+// re-run effects when it changes — even when the currently-playing videoId
+// stays the same (e.g. user clicks Play-All on a list whose first track is
+// already playing). Without this, an effect keyed only on currentVideoId
+// would never refetch with the new playlist context.
+let activePlaylistId: string | null = null;
+type ActivePlaylistListener = (id: string | null) => void;
+const activePlaylistListeners = new Set<ActivePlaylistListener>();
+
+export function getActivePlaylistId(): string | null {
+  return activePlaylistId;
+}
+
+export function subscribeActivePlaylist(
+  listener: ActivePlaylistListener,
+): () => void {
+  activePlaylistListeners.add(listener);
+  return () => {
+    activePlaylistListeners.delete(listener);
+  };
+}
+
+function setActivePlaylistId(id: string | null): void {
+  if (id === activePlaylistId) return;
+  activePlaylistId = id;
+  for (const listener of activePlaylistListeners) listener(id);
+}
+
 export const playerApi = {
   play: () => invoke('play'),
   pause: () => invoke('pause'),
@@ -29,7 +62,20 @@ export const playerApi = {
   getState: () => invoke<PlayerState>('get_player_state'),
   getAccountInfo: () => invoke<AccountInfo | null>('get_account_info'),
   getLoginState: () => invoke<boolean | null>('get_login_state'),
-  playTrack: (videoId: string, playlistId?: string) => invoke('play_track', { videoId, playlistId: playlistId ?? null }),
+  playTrack: (videoId: string, playlistId?: string) => {
+    // When no explicit playlist is provided, fall back to YTM's auto Song
+    // Radio (`RDAMVM<videoId>`). That's the same list the navigation URL
+    // uses to keep YTM in audio mode — surfacing it as the active playlist
+    // means /next returns the radio queue YTM is actually playing, so the
+    // Playing-queue panel never goes empty for a "single track" play.
+    const effectivePlaylist =
+      playlistId ?? (videoId ? `RDAMVM${videoId}` : null);
+    setActivePlaylistId(effectivePlaylist);
+    return invoke('play_track', {
+      videoId,
+      playlistId: playlistId ?? null,
+    });
+  },
   addToQueue: (track: TrackInfo) => invoke('add_to_queue', { track }),
   removeFromQueue: (index: number) => invoke('remove_from_queue', { index }),
   clearQueue: () => invoke('clear_queue'),
@@ -91,13 +137,28 @@ export const browseApi = {
       title: params.title ?? null,
       durationSecs: params.durationSecs ?? null,
     }),
-  getUpcomingTracks: (videoId: string, limit = 3) =>
-    invoke<TrackInfo[]>('get_upcoming_tracks', { videoId, limit }),
+  getUpcomingTracks: (videoId: string, limit = 3, playlistId?: string | null) =>
+    invoke<TrackInfo[]>('get_upcoming_tracks', {
+      videoId,
+      limit,
+      playlistId: playlistId ?? null,
+    }),
 };
 
 export async function playFirstFromPlaylist(playlistId: string): Promise<void> {
   const detail = await browseApi.getPlaylist(playlistId);
   if (detail.tracks.length > 0 && detail.tracks[0].videoId) {
-    await playerApi.playTrack(detail.tracks[0].videoId, playlistId);
+    // Albums use an MPRE browseId that YTM doesn't accept as a `&list=`
+    // watch parameter; swap to the matching OLAK audioPlaylistId. For
+    // anything else (PL/OLAK/RDCLAK/LM/etc.) the input is already a valid
+    // watch list — DON'T substitute audioPlaylistId because that field can
+    // be a recommendation/radio playlist extracted from elsewhere in the
+    // response and switching to it would land us on the wrong queue.
+    const isAlbumBrowseId = playlistId.startsWith('MPRE');
+    const watchList =
+      isAlbumBrowseId && detail.audioPlaylistId
+        ? detail.audioPlaylistId
+        : playlistId;
+    await playerApi.playTrack(detail.tracks[0].videoId, watchList);
   }
 }

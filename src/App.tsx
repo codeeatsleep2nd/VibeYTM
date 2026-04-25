@@ -26,6 +26,7 @@ const App: FC = () => {
   const [currentPath, setCurrentPath] = useState('home');
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
+  const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
   // Flips true once the Home page has finished its first real render (or we
@@ -53,9 +54,9 @@ const App: FC = () => {
     if (now - lastToggleAtRef.current < 450) return;
     lastToggleAtRef.current = now;
     setIsNowPlayingOpen((prev) => {
-      // Closing the overlay also tears down the lyrics view — otherwise the
-      // next open would flash the lyrics layout before the user asked for it.
-      if (prev) setIsLyricsOpen(false);
+      // Leave isLyricsOpen alone on close — reopening the overlay should
+      // restore whichever sub-view (cover vs. lyrics) the user was last on.
+      // The queue is an independent surface, so we don't touch it here.
       return !prev;
     });
   }, []);
@@ -63,11 +64,21 @@ const App: FC = () => {
   // Lyrics button opens the Now Playing page if it isn't already, then flips
   // the lyrics view on/off within it.
   const toggleLyrics = useCallback(() => {
+    // Clicking LRC always dismisses the queue drawer, whether lyrics is
+    // being opened or closed — the two surfaces shouldn't coexist since
+    // the queue sits over the lyrics column.
+    setIsQueueOpen(false);
     setIsLyricsOpen((prev) => {
       const next = !prev;
       if (next) setIsNowPlayingOpen(true);
       return next;
     });
+  }, []);
+
+  // Independent surface: opening it does not open Now Playing, and closing
+  // Now Playing does not affect it. It renders over whatever page is behind.
+  const toggleQueue = useCallback(() => {
+    setIsQueueOpen((prev) => !prev);
   }, []);
 
   const openPlaylistDetail = useCallback((playlistId: string) => {
@@ -166,6 +177,7 @@ const App: FC = () => {
       onNavigate={(path) => {
         setViewingPlaylist(null);
         setIsNowPlayingOpen(false);
+        setIsQueueOpen(false);
         // Settings tab toggles: clicking it while open returns to the
         // previous view instead of re-rendering the same page.
         if (path === 'settings' && currentPath === 'settings') {
@@ -184,6 +196,8 @@ const App: FC = () => {
       onToggleNowPlaying={toggleNowPlaying}
       lyricsOpen={isLyricsOpen}
       onToggleLyrics={toggleLyrics}
+      queueOpen={isQueueOpen}
+      onToggleQueue={toggleQueue}
     >
       {/*
         The underlying page (home/search/explore/library/settings) stays

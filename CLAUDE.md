@@ -15,6 +15,11 @@ Apple Music-style YouTube Music desktop app.
 - `cargo check` — Rust type check (run from src-tauri/)
 - `cargo test` — Rust tests (run from src-tauri/)
 
+## Dev Workflow
+- After every code change that requires a restart to take effect (any Rust source under `src-tauri/`, anything under `scripts/inject/` injected into the YTM webview, `tauri.conf.json`, or `Cargo.toml`), automatically restart `pnpm tauri dev` without waiting for the user to ask. Standard pattern: `pkill -f "tauri dev" 2>/dev/null; pkill -f "VibeYTM" 2>/dev/null; sleep 1; pnpm tauri dev` (run in background).
+- Frontend-only changes (`src/**/*.{ts,tsx,css}`) are picked up by Vite HMR — do NOT restart for those unless module-level state needs to be reset (e.g. changes to a module exporting mutable singletons).
+- After restarting, verify the build came up cleanly via the task output before reporting work as done.
+
 ## Architecture
 - Two WebView model: visible React UI + hidden YouTube Music audio engine
 - Event-driven: tokio broadcast bus connects all components

@@ -154,6 +154,10 @@ export function usePlayerState(): UsePlayerState {
     setState((prev) => ({ ...prev, isLiked }));
   });
 
+  useTauriEvent<TrackInfo[]>(EVENTS.QUEUE_CHANGED, (queue) => {
+    setState((prev) => ({ ...prev, queue }));
+  });
+
   // When the user signs out of YouTube Music, the player controller bar
   // still shows the last track's metadata until the page is reloaded
   // (issue #37). Reset the entire player slice to defaults so the sidebar

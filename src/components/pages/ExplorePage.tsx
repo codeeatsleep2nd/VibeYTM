@@ -267,6 +267,7 @@ function renderShelfContent(
             display: 'flex',
             gap: 'var(--space-5)',
             overflowX: 'auto',
+            overflowY: 'hidden',
             paddingBottom: 'var(--space-2)',
           }}
         >
@@ -333,7 +334,7 @@ function renderShelfContent(
               artworkUrl={playlist.artworkUrl}
               title={playlist.title}
               subtitle={
-                playlist.trackCount !== undefined
+                playlist.trackCount != null
                   ? `${playlist.trackCount} tracks`
                   : ''
               }

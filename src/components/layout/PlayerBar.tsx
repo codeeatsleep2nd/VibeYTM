@@ -23,6 +23,8 @@ interface PlayerBarProps {
   nowPlayingOpen?: boolean;
   onToggleLyrics?: () => void;
   lyricsOpen?: boolean;
+  onToggleQueue?: () => void;
+  queueOpen?: boolean;
 }
 
 const formatTime = (secs: number): string => {
@@ -122,6 +124,8 @@ export const PlayerBar: FC<PlayerBarProps> = ({
   nowPlayingOpen = false,
   onToggleLyrics,
   lyricsOpen = false,
+  onToggleQueue,
+  queueOpen = false,
 }) => {
   const state = usePlayerState();
   const { track, status, positionSecs, volume, isShuffled, repeatMode, isLiked, applyOptimistic, markSeek } = state;
@@ -521,6 +525,38 @@ export const PlayerBar: FC<PlayerBarProps> = ({
             }}
           >
             LRC
+          </button>
+        )}
+
+        {onToggleQueue && (
+          <button
+            onClick={onToggleQueue}
+            aria-label={queueOpen ? 'Hide queue' : 'Show queue'}
+            aria-pressed={queueOpen}
+            title="Playing queue"
+            style={{
+              fontSize: 'var(--text-base)',
+              color: queueOpen ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+              padding: 'var(--space-1) var(--space-2)',
+              borderRadius: 'var(--radius-sm)',
+              transition: `color var(--duration-fast) var(--ease-out),
+                           transform var(--duration-fast) var(--ease-out)`,
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'scale(1.1)';
+              if (!queueOpen) {
+                e.currentTarget.style.color = 'var(--color-text-primary)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+              if (!queueOpen) {
+                e.currentTarget.style.color = 'var(--color-text-tertiary)';
+              }
+            }}
+          >
+            {'☰'}
           </button>
         )}
 

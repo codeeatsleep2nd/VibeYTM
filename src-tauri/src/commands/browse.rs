@@ -238,13 +238,19 @@ pub async fn remove_playlist_from_library(
 pub async fn get_upcoming_tracks(
     video_id: String,
     limit: Option<usize>,
+    playlist_id: Option<String>,
     app: AppHandle,
     api: State<'_, YtmApi>,
 ) -> Result<Vec<TrackInfo>, String> {
-    let limit = limit.unwrap_or(3).min(10);
-    tracing::info!(video_id = %video_id, limit, "browse::get_upcoming_tracks called");
+    let limit = limit.unwrap_or(3).min(200);
+    tracing::info!(
+        video_id = %video_id,
+        limit,
+        playlist_id = ?playlist_id,
+        "browse::get_upcoming_tracks called"
+    );
     let result = api
-        .get_upcoming_tracks(&app, &video_id, limit)
+        .get_upcoming_tracks(&app, &video_id, limit, playlist_id.as_deref())
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "browse::get_upcoming_tracks failed");

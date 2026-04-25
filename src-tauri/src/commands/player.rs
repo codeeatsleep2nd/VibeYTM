@@ -33,6 +33,26 @@ pub async fn on_track_changed(
     Ok(())
 }
 
+/// Called from the YTM bridge whenever its DOM queue observer detects a
+/// change. Stores the authoritative queue (the order YTM will actually play
+/// tracks in, including shuffle state) so the Playing-queue UI can show the
+/// real up-next list instead of re-fetching a separate /next snapshot that
+/// may diverge from YTM's internal ordering.
+#[tauri::command]
+pub async fn on_queue_changed(
+    queue: Vec<TrackInfo>,
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    {
+        let mut player = state.write().await;
+        player.queue = queue.clone();
+    }
+    app.emit("player:queue-changed", &queue)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn on_playback_status_changed(
     status: PlaybackStatus,

@@ -390,6 +390,112 @@
     stuckSinceMs = Date.now();
   }
 
+  /**
+   * Force YTM onto the audio ("Song") variant whenever a track offers both.
+   * YTM surfaces an AV toggle (`<ytmusic-av-toggle>`) for tracks that have
+   * both an audio track and a music video. We always prefer audio, so if
+   * the video tab is the selected one, click the song tab to switch back.
+   * No-op when the toggle isn't present (audio-only tracks).
+   */
+  function forceAudioMode() {
+    try {
+      var toggle = document.querySelector('ytmusic-av-toggle');
+      if (!toggle) return;
+      var songTab = toggle.querySelector('.song-button, [aria-label="Song" i], tp-yt-paper-tab:first-of-type');
+      var videoTab = toggle.querySelector('.video-button, [aria-label="Video" i], tp-yt-paper-tab:nth-of-type(2)');
+      if (!songTab || !videoTab) return;
+      var videoSelected =
+        videoTab.getAttribute('aria-selected') === 'true' ||
+        videoTab.classList.contains('selected') ||
+        videoTab.hasAttribute('selected');
+      var songSelected =
+        songTab.getAttribute('aria-selected') === 'true' ||
+        songTab.classList.contains('selected') ||
+        songTab.hasAttribute('selected');
+      if (videoSelected && !songSelected) {
+        songTab.click();
+        log('forceAudioMode: switched to Song');
+      }
+    } catch (e) {
+      // DOM may briefly be in an inconsistent state during navigation.
+    }
+  }
+
+  /**
+   * Read the authoritative playing queue from YTM's DOM. This is what YTM
+   * will actually play on next/prev — respecting shuffle, radio continuation,
+   * and any manual reordering. The separate /next HTTP call can diverge from
+   * this, so the Playing-queue UI needs the DOM as source of truth.
+   *
+   * Returns an array of { videoId, title, artist, artworkUrl, durationSecs }.
+   */
+  function readYtmQueue() {
+    var items = document.querySelectorAll('ytmusic-player-queue-item');
+    var out = [];
+    for (var i = 0; i < items.length; i++) {
+      var el = items[i];
+      var data = el.data || {};
+      var vid = '';
+      try {
+        vid = data.videoId || (data.renderer
+          && data.renderer.playlistPanelVideoRenderer
+          && data.renderer.playlistPanelVideoRenderer.videoId) || '';
+      } catch (e) {}
+      if (!vid) {
+        var thumbImg = el.querySelector('yt-img-shadow img, img');
+        if (thumbImg && thumbImg.src) {
+          var m = thumbImg.src.match(/\/vi\/([^/]+)\//);
+          if (m) vid = m[1];
+        }
+      }
+      if (!vid) continue;
+      var titleEl = el.querySelector('.song-title, yt-formatted-string.song-title');
+      var bylineEl = el.querySelector('.byline, yt-formatted-string.byline');
+      var thumb = el.querySelector('yt-img-shadow img, img');
+      out.push({
+        videoId: vid,
+        title: titleEl ? (titleEl.textContent || '').trim() : '',
+        artist: bylineEl ? (bylineEl.textContent || '').trim() : '',
+        album: '',
+        artworkUrl: thumb && thumb.src ? thumb.src : '',
+        durationSecs: 0,
+      });
+    }
+    return out;
+  }
+
+  // Expose the latest queue read on a global so the Rust poller can pick it
+  // up the same way it reads player state. The YTM webview has no
+  // window.__TAURI__ binding (only __TAURI_INTERNALS__), so an invoke()-push
+  // path is unavailable here — pull is the only reliable pattern.
+  window.__VIBEYTM_QUEUE__ = [];
+  function pushQueueIfChanged() {
+    try {
+      var q = readYtmQueue();
+      window.__VIBEYTM_QUEUE__ = q;
+    } catch (e) {
+      // Queue DOM can transiently be missing during navigation; try again next tick.
+    }
+  }
+
+  function observeQueue() {
+    var container = document.querySelector('ytmusic-player-queue #contents')
+      || document.querySelector('ytmusic-player-queue');
+    if (!container) {
+      // Queue DOM isn't mounted yet — retry. YTM lazily renders it.
+      setTimeout(observeQueue, 1000);
+      return;
+    }
+    try {
+      var obs = new MutationObserver(function () { pushQueueIfChanged(); });
+      obs.observe(container, { childList: true, subtree: true, characterData: true });
+      log('queue observer attached');
+      pushQueueIfChanged();
+    } catch (e) {
+      log('queue observer failed: ' + e);
+    }
+  }
+
   function waitForPlayer() {
     var p = getPlayer();
     if (p) {
@@ -397,6 +503,11 @@
       attachPlayerErrorListener(p);
       setInterval(update, 150);
       setInterval(checkStuck, 1000);
+      setInterval(forceAudioMode, 500);
+      observeQueue();
+      // Belt and suspenders: the observer may miss edge cases (e.g. the
+      // queue container gets re-created). Poll every 2s as a fallback.
+      setInterval(pushQueueIfChanged, 2000);
       update();
     } else {
       log('waiting for player...');

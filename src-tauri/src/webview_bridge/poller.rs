@@ -52,6 +52,29 @@ struct BridgeState {
     account: Option<BridgeAccount>,
     #[serde(default)]
     debug: Vec<String>,
+    /// Queue items scraped from `<ytmusic-player-queue>` by the bridge.
+    /// Source of truth for the Playing-queue UI's Up-Next list — reflects
+    /// the order YTM will actually play through next/prev (including
+    /// shuffle and radio continuation).
+    #[serde(default)]
+    queue: Vec<BridgeQueueItem>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct BridgeQueueItem {
+    #[serde(default)]
+    video_id: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    artist: String,
+    #[serde(default)]
+    album: String,
+    #[serde(default)]
+    artwork_url: String,
+    #[serde(default)]
+    duration_secs: f64,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
@@ -77,10 +100,11 @@ const READ_STATE_JS: &str = r#"
   var li = window.__VIBEYTM_LOGGED_IN__;
   var acc = window.__VIBEYTM_ACCOUNT__ || null;
   var dbg = (window.__VIBEYTM_DEBUG__ || []).slice(-20);
+  var q = window.__VIBEYTM_QUEUE__ || [];
   // loggedIn / account are tracked even when the player DOM is absent
   // (e.g. during the Google sign-in redirect), so always wrap them through.
-  if (s) { return JSON.stringify(Object.assign({}, s, { loggedIn: li, account: acc, debug: dbg })); }
-  if (li === true || li === false) { return JSON.stringify({ loginOnly: true, loggedIn: li, account: acc, debug: dbg }); }
+  if (s) { return JSON.stringify(Object.assign({}, s, { loggedIn: li, account: acc, debug: dbg, queue: q })); }
+  if (li === true || li === false) { return JSON.stringify({ loginOnly: true, loggedIn: li, account: acc, debug: dbg, queue: q }); }
   return "null";
 })();
 "#;
@@ -98,6 +122,10 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
     let last_status = Arc::new(TokioMutex::new(String::new()));
     let last_logged_in = Arc::new(TokioMutex::new(Option::<bool>::None));
     let last_account = Arc::new(TokioMutex::new(Option::<BridgeAccount>::None));
+    // Track the queue's videoId fingerprint so we only emit when the order
+    // (or any item's id) actually changes — avoids spamming queue events
+    // for unchanged metadata flicker.
+    let last_queue_fingerprint = Arc::new(TokioMutex::new(String::new()));
     #[cfg(debug_assertions)]
     let last_debug_len = Arc::new(TokioMutex::new(0usize));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -467,6 +495,42 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             }
             if prev_liked != bs.is_liked {
                 let _ = app.emit("player:like-changed", &bs.is_liked);
+            }
+
+            // Queue: emit only when the item-id sequence changes. Convert
+            // to the wire shape the frontend already consumes (TrackInfo).
+            let fingerprint = bs
+                .queue
+                .iter()
+                .map(|q| q.video_id.as_str())
+                .collect::<Vec<_>>()
+                .join("|");
+            let mut last_fp = last_queue_fingerprint.lock().await;
+            if *last_fp != fingerprint {
+                *last_fp = fingerprint;
+                let queue_payload: Vec<crate::state::player::TrackInfo> = bs
+                    .queue
+                    .iter()
+                    .map(|q| crate::state::player::TrackInfo {
+                        video_id: q.video_id.clone(),
+                        title: q.title.clone(),
+                        artist: q.artist.clone(),
+                        artist_id: None,
+                        album: q.album.clone(),
+                        album_id: None,
+                        artwork_url: if q.artwork_url.is_empty() {
+                            None
+                        } else {
+                            Some(q.artwork_url.clone())
+                        },
+                        duration_secs: q.duration_secs,
+                    })
+                    .collect();
+                {
+                    let mut ps = player_state.write().await;
+                    ps.queue = queue_payload.clone();
+                }
+                let _ = app.emit("player:queue-changed", &queue_payload);
             }
         }
     });

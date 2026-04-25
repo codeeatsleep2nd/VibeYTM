@@ -344,14 +344,23 @@ impl YtmApi {
 
     /// Fetch the upcoming tracks for a given videoId by calling YTM's
     /// `next` endpoint and parsing its queue panel. Used to warm the
-    /// lyrics cache for songs the user will play in a few seconds.
+    /// lyrics cache for songs the user will play in a few seconds and to
+    /// populate the playing-queue panel. When `playlist_id` is provided
+    /// YTM returns the full playlist/album queue; without it, the response
+    /// is the auto-generated song-radio seeded on the videoId alone.
     pub async fn get_upcoming_tracks(
         &self,
         app: &AppHandle,
         video_id: &str,
         limit: usize,
+        playlist_id: Option<&str>,
     ) -> anyhow::Result<Vec<TrackInfo>> {
-        let body = serde_json::json!({ "videoId": video_id }).to_string();
+        let body = match playlist_id {
+            Some(list) if !list.is_empty() => {
+                serde_json::json!({ "videoId": video_id, "playlistId": list }).to_string()
+            }
+            _ => serde_json::json!({ "videoId": video_id }).to_string(),
+        };
         let raw = ytm_api_call(app, "next", &body)
             .await
             .map_err(anyhow::Error::msg)?;
@@ -448,10 +457,25 @@ fn strip_noise_brackets(
     out
 }
 
+/// Maximum tolerated drift between YTM's reported track length and LRCLIB's
+/// recorded length, in seconds. Tracks whose duration disagrees by more than
+/// this are almost certainly a different recording (album vs single mix,
+/// live vs studio, edit vs extended) — the LRC timestamps would be anchored
+/// to a different zero, producing systematic per-track off-sync.
+const LRCLIB_DURATION_TOLERANCE_SECS: f64 = 2.0;
+
 /// Ask LRCLIB (https://lrclib.net) for synced LRC-format lyrics. Returns the
-/// raw LRC body on success, `None` when LRCLIB has no match, `Err` on
-/// transport failure. LRCLIB is a free, open, community-maintained database
-/// of synced lyrics keyed by artist/track/duration.
+/// raw LRC body on success, `None` when LRCLIB has no match (or no match
+/// within duration tolerance), `Err` on transport failure. LRCLIB is a free,
+/// open, community-maintained database of synced lyrics keyed by
+/// artist/track/duration.
+///
+/// We use `/api/search` over `/api/get` so we can iterate every candidate
+/// match and reject those whose duration disagrees with YTM's by more than
+/// `LRCLIB_DURATION_TOLERANCE_SECS`. `/api/get` returns the single
+/// best-effort match, which can be wrong-recording when the catalog has
+/// multiple variants (e.g. radio edit vs album cut) sharing the same
+/// title/artist.
 async fn fetch_lrclib_synced(
     artist: &str,
     title: &str,
@@ -462,6 +486,101 @@ async fn fetch_lrclib_synced(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()?;
+
+    // No duration → fall back to the single-result endpoint without
+    // strict matching (best we can do). Most YTM tracks expose duration.
+    let target_duration = match duration_secs.filter(|d| *d > 0.0) {
+        Some(d) => d,
+        None => {
+            return fetch_lrclib_get(&client, artist, title, None).await;
+        }
+    };
+
+    let resp = client
+        .get("https://lrclib.net/api/search")
+        .query(&[
+            ("artist_name", artist),
+            ("track_name", title),
+        ])
+        .header(
+            "User-Agent",
+            "VibeYTM/0.9.0 (https://github.com/dongli/VibeYTM)",
+        )
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("LRCLIB search returned HTTP {}", resp.status());
+    }
+    let candidates: Vec<Value> = resp.json().await?;
+
+    // Pick the candidate whose recorded duration is closest to YTM's, but
+    // only if it falls inside the tolerance window. Anything further away
+    // is a different recording with mismatched timing.
+    let mut best: Option<(f64, &Value)> = None;
+    for cand in &candidates {
+        let cand_dur = cand
+            .get("duration")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        if cand_dur <= 0.0 {
+            continue;
+        }
+        let diff = (cand_dur - target_duration).abs();
+        if diff > LRCLIB_DURATION_TOLERANCE_SECS {
+            continue;
+        }
+        // Reject instrumentals — they have no useful synced timing.
+        if cand
+            .get("instrumental")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let synced = cand
+            .get("syncedLyrics")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if synced.is_empty() {
+            continue;
+        }
+        if best.map_or(true, |(prev_diff, _)| diff < prev_diff) {
+            best = Some((diff, cand));
+        }
+    }
+
+    if let Some((_, cand)) = best {
+        if let Some(synced) = cand.get("syncedLyrics").and_then(|v| v.as_str()) {
+            tracing::info!(
+                artist = %artist,
+                title = %title,
+                target = %target_duration,
+                "LRCLIB matched within duration tolerance"
+            );
+            return Ok(Some(synced.to_string()));
+        }
+    }
+
+    tracing::info!(
+        artist = %artist,
+        title = %title,
+        target = %target_duration,
+        candidates = candidates.len(),
+        "LRCLIB had no candidate within duration tolerance"
+    );
+    Ok(None)
+}
+
+/// Single-track fetch via LRCLIB's `/api/get`. Used only when the caller
+/// has no duration to verify against — LRCLIB's own server-side match is
+/// then the only check we have.
+async fn fetch_lrclib_get(
+    client: &reqwest::Client,
+    artist: &str,
+    title: &str,
+    duration_secs: Option<f64>,
+) -> anyhow::Result<Option<String>> {
     let mut query: Vec<(&str, String)> = vec![
         ("artist_name", artist.to_string()),
         ("track_name", title.to_string()),
@@ -469,7 +588,6 @@ async fn fetch_lrclib_synced(
     if let Some(d) = duration_secs.filter(|d| *d > 0.0) {
         query.push(("duration", (d.round() as u64).to_string()));
     }
-
     let resp = client
         .get("https://lrclib.net/api/get")
         .query(&query)
@@ -479,20 +597,24 @@ async fn fetch_lrclib_synced(
         )
         .send()
         .await?;
-
     if resp.status().as_u16() == 404 {
         return Ok(None);
     }
     if !resp.status().is_success() {
         anyhow::bail!("LRCLIB returned HTTP {}", resp.status());
     }
-
     let body: Value = resp.json().await?;
-    // LRCLIB returns instrumental tracks with syncedLyrics=null, plainLyrics="".
-    if body.get("instrumental").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if body
+        .get("instrumental")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         return Ok(None);
     }
-    let synced = body.get("syncedLyrics").and_then(|v| v.as_str()).unwrap_or("");
+    let synced = body
+        .get("syncedLyrics")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if synced.is_empty() {
         return Ok(None);
     }
@@ -2119,10 +2241,14 @@ fn extract_lyrics_browse_id(data: &Value) -> Option<String> {
     None
 }
 
-/// Pull the next up-to-`limit` tracks from the `next`-response queue panel.
-/// Skips the entry matching `skip_video_id` so the current track isn't
-/// returned as its own upcoming.
-fn extract_upcoming_tracks(data: &Value, skip_video_id: &str, limit: usize) -> Vec<TrackInfo> {
+/// Pull the tracks that come AFTER the current track in the `next`-response
+/// queue panel. YTM's playlist panel returns the full playlist in order with
+/// the currently playing track marked at some internal position; `nextVideo`
+/// advances from that position. Returning the whole list minus the current
+/// track would put earlier album tracks at the top of the queue panel even
+/// though YTM won't play them next. So slice the contents starting AFTER the
+/// entry whose videoId matches the current track, and stop at `limit`.
+fn extract_upcoming_tracks(data: &Value, current_video_id: &str, limit: usize) -> Vec<TrackInfo> {
     let contents = data
         .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")
         .and_then(|v| v.as_array());
@@ -2130,25 +2256,46 @@ fn extract_upcoming_tracks(data: &Value, skip_video_id: &str, limit: usize) -> V
         return Vec::new();
     };
 
+    // YTM wraps each queue entry as either:
+    //   { playlistPanelVideoRenderer: { ... } }                 (older)
+    //   { playlistPanelVideoWrapperRenderer:
+    //       { primaryRenderer: { playlistPanelVideoRenderer: { ... } } } } (current)
+    let renderer = |entry: &Value| -> Option<Value> {
+        entry
+            .get("playlistPanelVideoRenderer")
+            .or_else(|| entry.pointer("/playlistPanelVideoWrapperRenderer/primaryRenderer/playlistPanelVideoRenderer"))
+            .cloned()
+    };
+    let video_id_of = |r: &Value| -> String {
+        r.get("videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+
+    // Locate the current track's index in the panel. If it isn't there
+    // (e.g. a pure song-radio seeded on videoId alone), fall back to
+    // returning everything minus the current track — the radio panel
+    // already excludes the seed from its top slot in practice.
+    let current_idx = contents.iter().position(|entry| {
+        renderer(entry)
+            .map(|r| video_id_of(&r) == current_video_id)
+            .unwrap_or(false)
+    });
+
+    let iter: Box<dyn Iterator<Item = &Value>> = match current_idx {
+        Some(idx) => Box::new(contents.iter().skip(idx + 1)),
+        None => Box::new(contents.iter()),
+    };
+
     let mut out: Vec<TrackInfo> = Vec::new();
-    for entry in contents {
+    for entry in iter {
         if out.len() >= limit {
             break;
         }
-        // YTM wraps each queue entry as either:
-        //   { playlistPanelVideoRenderer: { ... } }                 (older)
-        //   { playlistPanelVideoWrapperRenderer:
-        //       { primaryRenderer: { playlistPanelVideoRenderer: { ... } } } } (current)
-        let r = entry
-            .get("playlistPanelVideoRenderer")
-            .or_else(|| entry.pointer("/playlistPanelVideoWrapperRenderer/primaryRenderer/playlistPanelVideoRenderer"));
-        let Some(r) = r else { continue };
-        let video_id = r
-            .get("videoId")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if video_id.is_empty() || video_id == skip_video_id {
+        let Some(r) = renderer(entry) else { continue };
+        let video_id = video_id_of(&r);
+        if video_id.is_empty() || video_id == current_video_id {
             continue;
         }
         let title = r
@@ -2574,5 +2721,273 @@ mod tests {
             }
         });
         assert!(extract_library_save_toggle(&data).is_none());
+    }
+
+    // =====================================================================
+    // Regression tests for features added since v0.7.0.
+    // Each block is annotated with the version that introduced it.
+    // =====================================================================
+
+    // ---- v0.9.0: timed-lyrics LRC parsing --------------------------------
+
+    #[test]
+    fn parse_lrc_timestamp_accepts_mm_ss() {
+        assert_eq!(parse_lrc_timestamp("01:23"), Some(83_000));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_accepts_centisecond_fraction() {
+        // ".42" → 420 ms
+        assert_eq!(parse_lrc_timestamp("00:01.42"), Some(1_420));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_accepts_millisecond_fraction() {
+        // ".123" → 123 ms
+        assert_eq!(parse_lrc_timestamp("00:00.123"), Some(123));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_truncates_long_fraction() {
+        // "1234" → first three digits (123), then ms = 123
+        assert_eq!(parse_lrc_timestamp("00:00.1234"), Some(123));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_pads_single_fraction_digit() {
+        // ".5" → 500 ms (NOT 5 ms)
+        assert_eq!(parse_lrc_timestamp("00:00.5"), Some(500));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_rejects_metadata_keys() {
+        assert_eq!(parse_lrc_timestamp("ar:Artist Name"), None);
+        assert_eq!(parse_lrc_timestamp("ti:Song Title"), None);
+    }
+
+    #[test]
+    fn parse_lrc_emits_sorted_lines_with_end_ms_filled() {
+        let lrc = "[00:05.00]Hello\n[00:01.00]Earlier\n[00:10.00]Last\n";
+        let lines = parse_lrc(lrc);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].start_ms, 1_000);
+        assert_eq!(lines[0].end_ms, Some(5_000));
+        assert_eq!(lines[0].text, "Earlier");
+        assert_eq!(lines[1].start_ms, 5_000);
+        assert_eq!(lines[1].end_ms, Some(10_000));
+        assert_eq!(lines[1].text, "Hello");
+        // Last line stays open-ended so the player extends it to track end.
+        assert_eq!(lines[2].end_ms, None);
+    }
+
+    #[test]
+    fn parse_lrc_handles_repeating_timestamps_per_line() {
+        // LRC supports `[t1][t2]Text` — same text emitted at each timestamp.
+        let lrc = "[00:00.00][00:30.00]Chorus\n";
+        let lines = parse_lrc(lrc);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].start_ms, 0);
+        assert_eq!(lines[1].start_ms, 30_000);
+        assert_eq!(lines[0].text, "Chorus");
+        assert_eq!(lines[1].text, "Chorus");
+    }
+
+    #[test]
+    fn parse_lrc_skips_metadata_headers() {
+        let lrc = "[ar:The Artist]\n[ti:The Title]\n[00:01.00]Lyric\n";
+        let lines = parse_lrc(lrc);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "Lyric");
+    }
+
+    #[test]
+    fn parse_lrc_skips_blank_text_after_timestamp() {
+        // Empty payload still produces a marker line — keeps timing for fades.
+        let lrc = "[00:00.00]\n";
+        let lines = parse_lrc(lrc);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "");
+    }
+
+    // ---- v0.9.1: extract_upcoming_tracks slicing --------------------------
+    // The Playing-queue panel depends on slicing the playlist panel after
+    // the currently-playing track. Bug previously: removing every entry
+    // matching the current videoId returned tracks that came BEFORE the
+    // cursor, so the panel disagreed with what nextVideo() would play.
+
+    fn make_panel_entry(video_id: &str, title: &str) -> Value {
+        json!({
+            "playlistPanelVideoRenderer": {
+                "videoId": video_id,
+                "title": { "runs": [{ "text": title }] },
+                "longBylineText": { "runs": [{ "text": "Artist" }] },
+                "lengthText": { "runs": [{ "text": "3:30" }] },
+                "thumbnail": {
+                    "thumbnails": [{
+                        "url": format!("https://i.ytimg.com/vi/{video_id}/hq.jpg"),
+                        "width": 480, "height": 360
+                    }]
+                }
+            }
+        })
+    }
+
+    fn make_panel(video_ids: &[&str]) -> Value {
+        let contents: Vec<Value> = video_ids
+            .iter()
+            .map(|v| make_panel_entry(v, v))
+            .collect();
+        json!({
+            "contents": {
+                "singleColumnMusicWatchNextResultsRenderer": {
+                    "tabbedRenderer": {
+                        "watchNextTabbedResultsRenderer": {
+                            "tabs": [{
+                                "tabRenderer": {
+                                    "content": {
+                                        "musicQueueRenderer": {
+                                            "content": {
+                                                "playlistPanelRenderer": {
+                                                    "contents": contents
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }]
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_slices_after_current_in_playlist() {
+        let data = make_panel(&["v1", "v2", "v3", "v4", "v5"]);
+        let out = extract_upcoming_tracks(&data, "v2", 100);
+        let ids: Vec<&str> = out.iter().map(|t| t.video_id.as_str()).collect();
+        assert_eq!(ids, vec!["v3", "v4", "v5"]);
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_returns_empty_when_current_is_last() {
+        let data = make_panel(&["v1", "v2", "v3"]);
+        let out = extract_upcoming_tracks(&data, "v3", 100);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_falls_back_when_current_not_in_panel() {
+        // E.g. song-radio responses where the seed isn't in the queue panel.
+        // Behaviour: return everything except entries matching the current id.
+        let data = make_panel(&["a", "b", "c"]);
+        let out = extract_upcoming_tracks(&data, "ZZZ_NOT_PRESENT", 100);
+        let ids: Vec<&str> = out.iter().map(|t| t.video_id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_respects_limit() {
+        let data = make_panel(&["v1", "v2", "v3", "v4", "v5"]);
+        let out = extract_upcoming_tracks(&data, "v1", 2);
+        let ids: Vec<&str> = out.iter().map(|t| t.video_id.as_str()).collect();
+        assert_eq!(ids, vec!["v2", "v3"]);
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_returns_empty_for_missing_panel() {
+        let data = json!({ "contents": {} });
+        assert!(extract_upcoming_tracks(&data, "v1", 100).is_empty());
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_supports_wrapper_renderer() {
+        // YTM newer responses wrap entries in
+        // playlistPanelVideoWrapperRenderer / primaryRenderer.
+        let wrapped = json!({
+            "playlistPanelVideoWrapperRenderer": {
+                "primaryRenderer": {
+                    "playlistPanelVideoRenderer": {
+                        "videoId": "wrapped_vid",
+                        "title": { "runs": [{ "text": "Wrapped" }] },
+                        "longBylineText": { "runs": [{ "text": "Artist" }] },
+                        "lengthText": { "runs": [{ "text": "3:00" }] },
+                        "thumbnail": { "thumbnails": [] }
+                    }
+                }
+            }
+        });
+        let data = json!({
+            "contents": {
+                "singleColumnMusicWatchNextResultsRenderer": {
+                    "tabbedRenderer": {
+                        "watchNextTabbedResultsRenderer": {
+                            "tabs": [{
+                                "tabRenderer": {
+                                    "content": {
+                                        "musicQueueRenderer": {
+                                            "content": {
+                                                "playlistPanelRenderer": {
+                                                    "contents": [wrapped]
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }]
+                        }
+                    }
+                }
+            }
+        });
+        let out = extract_upcoming_tracks(&data, "different_seed", 100);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].video_id, "wrapped_vid");
+        assert_eq!(out[0].title, "Wrapped");
+    }
+
+    // ---- v0.8.0: extract_audio_playlist_id (album OLAK lookup) ------------
+    // Albums use an MPRE browseId that YTM does NOT accept as a watch
+    // `&list=` parameter. The detail response surfaces an OLAK* id; the
+    // Playing-queue panel and "Save to library" both depend on this.
+
+    #[test]
+    fn extract_audio_playlist_id_finds_olak_in_watch_endpoint() {
+        let data = json!({
+            "deeply": { "nested": {
+                "watchEndpoint": { "playlistId": "OLAK5uy_abcdef123" }
+            }}
+        });
+        assert_eq!(
+            extract_audio_playlist_id(&data),
+            Some("OLAK5uy_abcdef123".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_audio_playlist_id_finds_rdclak() {
+        let data = json!({
+            "watchPlaylistEndpoint": { "playlistId": "RDCLAK5uy_xyz" }
+        });
+        assert_eq!(
+            extract_audio_playlist_id(&data),
+            Some("RDCLAK5uy_xyz".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_audio_playlist_id_ignores_non_playable_prefixes() {
+        // VL prefix is for browse, not watch — should NOT be returned.
+        let data = json!({
+            "watchEndpoint": { "playlistId": "VLPLnonsense" }
+        });
+        assert_eq!(extract_audio_playlist_id(&data), None);
+    }
+
+    #[test]
+    fn extract_audio_playlist_id_returns_none_when_absent() {
+        let data = json!({ "no": "playlist", "ids": "here" });
+        assert_eq!(extract_audio_playlist_id(&data), None);
     }
 }

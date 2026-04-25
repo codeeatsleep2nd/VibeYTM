@@ -149,7 +149,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
                   artworkUrl={playlist.artworkUrl}
                   title={playlist.title}
                   subtitle={
-                    playlist.trackCount !== undefined
+                    playlist.trackCount != null
                       ? `${playlist.trackCount} tracks`
                       : ''
                   }
