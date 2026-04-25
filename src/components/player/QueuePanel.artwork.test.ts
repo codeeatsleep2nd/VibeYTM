@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { artworkChain, isStableArtworkUrl } from './QueuePanel';
+import { artworkChain, isAlbumArtUrl, isStableArtworkUrl } from './QueuePanel';
+
+describe('isAlbumArtUrl', () => {
+  it('matches any lh*.googleusercontent.com host', () => {
+    expect(isAlbumArtUrl('https://lh3.googleusercontent.com/abc=w512-h512')).toBe(true);
+    expect(isAlbumArtUrl('https://lh4.googleusercontent.com/abc')).toBe(true);
+    expect(isAlbumArtUrl('https://lh5.googleusercontent.com/abc')).toBe(true);
+  });
+
+  it('matches signed album-art URLs too — they are still album art', () => {
+    expect(
+      isAlbumArtUrl(
+        'https://lh3.googleusercontent.com/abc=w512-h512?sqp=foo&rs=bar',
+      ),
+    ).toBe(true);
+  });
+
+  it('returns false for video CDN and unknown hosts', () => {
+    expect(isAlbumArtUrl('https://i.ytimg.com/vi/abc/hqdefault.jpg')).toBe(false);
+    expect(isAlbumArtUrl('https://example.com/image.jpg')).toBe(false);
+    expect(isAlbumArtUrl(null)).toBe(false);
+    expect(isAlbumArtUrl('')).toBe(false);
+  });
+});
 
 describe('isStableArtworkUrl', () => {
   it('returns false for null / undefined / empty', () => {
@@ -21,15 +44,18 @@ describe('isStableArtworkUrl', () => {
     ).toBe(true);
   });
 
-  it('rejects signed YouTube CDN URLs (sqp= or rs= present)', () => {
-    expect(
-      isStableArtworkUrl(
-        'https://i.ytimg.com/vi/abc/hqdefault.jpg?sqp=-oaymw&rs=AMzJL3kabc',
-      ),
-    ).toBe(false);
+  it('accepts SIGNED album-art URLs (lh* host) — still album art', () => {
     expect(
       isStableArtworkUrl(
         'https://lh3.googleusercontent.com/abc=w512-h512?sqp=foo&rs=bar',
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects signed YouTube video CDN URLs (sqp= or rs= present)', () => {
+    expect(
+      isStableArtworkUrl(
+        'https://i.ytimg.com/vi/abc/hqdefault.jpg?sqp=-oaymw&rs=AMzJL3kabc',
       ),
     ).toBe(false);
   });
@@ -62,19 +88,25 @@ describe('artworkChain', () => {
     ]);
   });
 
-  it('puts a stable album-art URL FIRST when present', () => {
-    const album = 'https://lh3.googleusercontent.com/EwM=w512-h512-l90-rj';
-    const chain = artworkChain({ videoId: 'abc123', artworkUrl: album });
-    expect(chain[0]).toBe(album);
-    expect(chain[1]).toBe('https://i.ytimg.com/vi/abc123/hqdefault.jpg');
-    expect(chain).toHaveLength(5);
+  it('puts album-art URL FIRST when present (signed or unsigned)', () => {
+    const unsignedAlbum = 'https://lh3.googleusercontent.com/EwM=w512-h512-l90-rj';
+    expect(
+      artworkChain({ videoId: 'abc123', artworkUrl: unsignedAlbum })[0],
+    ).toBe(unsignedAlbum);
+
+    const signedAlbum =
+      'https://lh3.googleusercontent.com/EwM=w512-h512?sqp=foo&rs=bar';
+    expect(
+      artworkChain({ videoId: 'abc123', artworkUrl: signedAlbum })[0],
+    ).toBe(signedAlbum);
   });
 
-  it('skips a signed artworkUrl and falls back to videoId chain', () => {
-    const signed =
+  it('falls back to video-thumbnail chain when artworkUrl is a signed VIDEO CDN URL', () => {
+    // Signed video-CDN URLs expire too fast to be worth trying first;
+    // skip them and go straight to the canonical video thumbnail.
+    const signedVideo =
       'https://i.ytimg.com/vi/abc/hqdefault.jpg?sqp=-oaymw&rs=AMzJL3kabc';
-    const chain = artworkChain({ videoId: 'abc123', artworkUrl: signed });
-    expect(chain).toEqual([
+    expect(artworkChain({ videoId: 'abc123', artworkUrl: signedVideo })).toEqual([
       'https://i.ytimg.com/vi/abc123/hqdefault.jpg',
       'https://i.ytimg.com/vi/abc123/mqdefault.jpg',
       'https://i.ytimg.com/vi/abc123/default.jpg',
@@ -82,8 +114,25 @@ describe('artworkChain', () => {
     ]);
   });
 
-  it('returns just the album URL when stable but no videoId provided', () => {
+  it('places album art before any video thumbnail (the user-facing rule)', () => {
+    const album = 'https://lh3.googleusercontent.com/abc=w512-h512';
+    const chain = artworkChain({ videoId: 'abc123', artworkUrl: album });
+    const albumIdx = chain.indexOf(album);
+    const firstVideoThumb = chain.findIndex((u) =>
+      u.startsWith('https://i.ytimg.com/vi/'),
+    );
+    expect(albumIdx).toBeGreaterThanOrEqual(0);
+    expect(firstVideoThumb).toBeGreaterThan(albumIdx);
+  });
+
+  it('returns just the album URL when no videoId provided', () => {
     const album = 'https://lh3.googleusercontent.com/abc=w512-h512';
     expect(artworkChain({ artworkUrl: album })).toEqual([album]);
+  });
+
+  it('does not duplicate an artworkUrl that matches a videoId fallback', () => {
+    const dupe = 'https://i.ytimg.com/vi/abc123/hqdefault.jpg';
+    const chain = artworkChain({ videoId: 'abc123', artworkUrl: dupe });
+    expect(chain.filter((u) => u === dupe)).toHaveLength(1);
   });
 });

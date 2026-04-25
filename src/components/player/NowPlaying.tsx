@@ -257,6 +257,12 @@ const Cover: FC<CoverProps> = ({ track, size }) => {
       }}
     >
       <CachedImage
+        // Song cover (album art from YTM, surfaced via track.artworkUrl
+        // by the bridge's fetchPlayerState scrape) is the preferred
+        // source. Only fall back to the YouTube video thumbnail if no
+        // album-art URL is available — and even then, swap in via
+        // onError if the album-art URL itself ever fails to load
+        // (e.g. a signed lh3 URL expiring).
         src={
           track.artworkUrl ||
           (track.videoId ? `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg` : undefined)
@@ -267,6 +273,17 @@ const Cover: FC<CoverProps> = ({ track, size }) => {
         // 600+ px the bars read as "we kept the full music-video
         // frame", not as broken artwork (issue #48).
         autoFitForAspect
+        onError={(e) => {
+          // If the song-cover URL failed (404 or otherwise), fall
+          // back to the canonical video-thumbnail CDN. This keeps the
+          // hero from going blank when the album-art source expires.
+          if (track.videoId) {
+            const fallback = `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
+            if (e.currentTarget.src !== fallback) {
+              e.currentTarget.src = fallback;
+            }
+          }
+        }}
         style={{
           width: '100%',
           height: '100%',

@@ -73,33 +73,44 @@ function normalizeTitle(title: string | undefined): string {
  * Build an ordered list of thumbnail URL fallbacks for a queue row.
  *
  * Preference order:
- *   1. A STABLE album-art URL passed in via `track.artworkUrl` —
- *      specifically `lh3.googleusercontent.com/...` without `sqp=`/`rs=`
- *      signature query params. This is the same source the player bar
- *      and now-playing page use, so when the row's metadata came from
- *      the /next-endpoint parser (which surfaces the canonical album
- *      art) the queue thumbnail matches the bar exactly.
- *   2. The signature-less YouTube video CDN, keyed by videoId. Used
- *      when the row was DOM-scraped from `<ytmusic-player-queue-item>`
- *      (bridge captures the signed thumbnail there, which expires
- *      fast — we filter those out so they don't 404 mid-render).
+ *   1. **Song cover (album art) from `track.artworkUrl`** — anything
+ *      hosted on `lh*.googleusercontent.com`, signed or not. That's
+ *      YTM's album-art CDN: even with the `sqp=`/`rs=` signature
+ *      params, the URL renders the actual album cover and matches the
+ *      player bar / now-playing page. If a signed URL ever 404s mid-
+ *      session, `<CachedImage>`'s `onError` advances to the next
+ *      entry in the chain.
+ *   2. **Other signature-less `track.artworkUrl`** values (e.g. plain
+ *      `i.ytimg.com/vi/.../hqdefault.jpg`) — these are stable but
+ *      they're already the video thumbnail, so the visual difference
+ *      from the next bullet is moot.
+ *   3. **Video thumbnail by videoId** — `i.ytimg.com/vi/{id}/...` in
+ *      decreasing-quality order. Only reached when no album-art URL
+ *      was passed.
  *
- * `CachedImage` stores resolved URLs in the Rust disk cache + in-memory
- * map, so subsequent renders are instant.
+ * Net effect: if YTM gave us the song cover (in any form), we show
+ * the song cover. Video thumbnails are a last resort.
+ *
+ * `CachedImage` stores resolved URLs in the Rust disk cache + in-
+ * memory map, so subsequent renders are instant.
  */
+export function isAlbumArtUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  return /^https?:\/\/lh\d+\.googleusercontent\.com\//.test(url);
+}
+
 export function isStableArtworkUrl(url: string | null | undefined): boolean {
   if (!url) return false;
-  // Signed YT CDN URLs carry sqp= and rs= query params and expire fast.
+  // Album art (any googleusercontent host) is always considered
+  // "stable enough" — even a signed variant renders the right image
+  // on first load, and we have onError fallbacks if it ever expires.
+  if (isAlbumArtUrl(url)) return true;
+  // Signed YT video CDN URLs (sqp=/rs=) expire fast — skip them so
+  // we don't waste a render cycle on a guaranteed 404.
   if (url.includes('sqp=') || url.includes('&rs=') || url.includes('?rs=')) {
     return false;
   }
-  // Album art from YTM's /next parser comes from googleusercontent
-  // hosts (lh3, lh4, lh5, ...). These are signature-less and stable.
-  if (/^https?:\/\/lh\d+\.googleusercontent\.com\//.test(url)) {
-    return true;
-  }
-  // Plain youtube CDN paths without signatures are also fine; rare in
-  // queue payloads but harmless to allow.
+  // Plain youtube video CDN paths without signatures are stable.
   if (/^https?:\/\/i\.ytimg\.com\/vi\/[^?]+$/.test(url)) {
     return true;
   }
@@ -108,17 +119,27 @@ export function isStableArtworkUrl(url: string | null | undefined): boolean {
 
 export function artworkChain(track: { videoId?: string; artworkUrl?: string | null }): string[] {
   const chain: string[] = [];
-  if (isStableArtworkUrl(track.artworkUrl)) {
+  // Song cover (album art) wins outright — push first, before
+  // anything else.
+  if (isAlbumArtUrl(track.artworkUrl)) {
+    chain.push(track.artworkUrl as string);
+  } else if (isStableArtworkUrl(track.artworkUrl)) {
+    // Stable but not album art (e.g. signature-less video CDN URL
+    // already provided by the bridge). Use it before generating
+    // duplicates from videoId.
     chain.push(track.artworkUrl as string);
   }
   if (track.videoId) {
     const v = track.videoId;
-    chain.push(
+    const ytUrls = [
       `https://i.ytimg.com/vi/${v}/hqdefault.jpg`,
       `https://i.ytimg.com/vi/${v}/mqdefault.jpg`,
       `https://i.ytimg.com/vi/${v}/default.jpg`,
       `https://i.ytimg.com/vi/${v}/0.jpg`,
-    );
+    ];
+    for (const url of ytUrls) {
+      if (!chain.includes(url)) chain.push(url);
+    }
   }
   return chain;
 }
