@@ -28,31 +28,66 @@ export function useAudioCounterpartArtwork(
   videoId: string | undefined | null,
   fallback: string | undefined | null,
 ): string | undefined {
-  const [override, setOverride] = useState<string | null>(() =>
-    videoId && cache.has(videoId) ? cache.get(videoId)! : null,
-  );
+  // Track BOTH the videoId we last produced an `override` for AND the
+  // `override` itself in a single state object. When `videoId` changes
+  // we derive a fresh value SYNCHRONOUSLY during render — without
+  // this, the previous track's override would linger on screen until
+  // the new track's IPC resolves (commonly 0.5-2 s, longer on bridge
+  // saturation). React's "derive state from props during render"
+  // pattern: re-set state during render and React schedules a
+  // re-render with the new value before commit.
+  const [state, setState] = useState<{
+    videoId: string | undefined | null;
+    override: string | null;
+  }>(() => ({
+    videoId,
+    override: videoId && cache.has(videoId) ? cache.get(videoId) ?? null : null,
+  }));
+  if (state.videoId !== videoId) {
+    setState({
+      videoId,
+      override: videoId && cache.has(videoId) ? cache.get(videoId) ?? null : null,
+    });
+  }
 
   useEffect(() => {
-    if (!videoId) {
-      setOverride(null);
-      return;
-    }
-    if (cache.has(videoId)) {
-      setOverride(cache.get(videoId)!);
-      return;
-    }
+    if (!videoId) return;
+    if (cache.has(videoId)) return;
+
     let cancelled = false;
     const existing = inflight.get(videoId);
-    const promise =
+    // Distinguish a SUCCESSFUL "no counterpart" (Rust resolves Ok(None) →
+    // JS resolves null) from a TRANSIENT IPC FAILURE (rejected). Only
+    // the former is cached as null — failures need to remain retryable
+    // so a single bridge timeout doesn't leave the video thumbnail
+    // stuck on the player bar forever.
+    const fetchSentinel = Symbol('fetchFailed') as unknown as string;
+    const promise: Promise<string | null | typeof fetchSentinel> =
       existing ??
-      browseApi.getAudioCounterpartArtwork(videoId).catch(() => null);
+      browseApi
+        .getAudioCounterpartArtwork(videoId)
+        .catch(() => fetchSentinel);
     if (!existing) inflight.set(videoId, promise);
 
-    promise.then((url) => {
-      cache.set(videoId, url ?? null);
+    promise.then((result) => {
       inflight.delete(videoId);
+      if (result === fetchSentinel) {
+        // Transient failure (IPC error, bridge timeout, etc.). Do
+        // NOT cache — the next render that needs this videoId
+        // should retry from scratch. The user is left with the
+        // fallback (video thumbnail) until then; better than
+        // pinning it forever.
+        return;
+      }
+      const url = result as string | null;
+      cache.set(videoId, url);
       if (cancelled) return;
-      setOverride(url ?? null);
+      // Only commit if the player is still on this videoId — a skip
+      // mid-fetch makes the result stale and we don't want to flash
+      // the previous track's cover onto the new one.
+      setState((prev) =>
+        prev.videoId === videoId ? { videoId, override: url } : prev,
+      );
     });
 
     return () => {
@@ -60,5 +95,5 @@ export function useAudioCounterpartArtwork(
     };
   }, [videoId]);
 
-  return override ?? fallback ?? undefined;
+  return state.override ?? fallback ?? undefined;
 }

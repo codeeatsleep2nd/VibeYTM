@@ -276,6 +276,16 @@ pub async fn get_audio_counterpart_artwork(
     api: State<'_, YtmApi>,
 ) -> Result<Option<String>, String> {
     tracing::info!(video_id = %video_id, "browse::get_audio_counterpart_artwork called");
+    // Note: an earlier version of this command tried to abort when the
+    // player_state's `track.video_id` differed from the requested
+    // `video_id` ("the user must have skipped"). That was wrong:
+    // player_state lags the bridge by one poller cycle, so the
+    // request often arrives BEFORE player_state catches up to the
+    // new track — the abort fired incorrectly, returned Ok(None),
+    // and the frontend cached null for that videoId. The OnceCell
+    // de-dupe in `YtmApi::fetch_next_cached` already guarantees
+    // concurrent calls for the same body share one fetch, so
+    // there's no work-multiplication to defend against.
     let result = api
         .get_audio_counterpart_artwork(&app, &video_id)
         .await

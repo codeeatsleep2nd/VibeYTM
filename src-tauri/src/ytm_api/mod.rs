@@ -1,18 +1,96 @@
 pub mod types;
 
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use serde_json::Value;
 use tauri::AppHandle;
+use tokio::sync::OnceCell;
 
 use crate::state::player::TrackInfo;
 use crate::webview_bridge::api::ytm_api_call;
 
 use self::types::*;
 
-pub struct YtmApi;
+/// Rust-side cache + in-flight de-dupe for `/next` responses, keyed
+/// by request body (videoId+playlistId combination).
+///
+/// Why this exists: the YTM webview bridge stalls for ~3-15 s during
+/// a track-change navigation. With four commands each issuing their
+/// own /next fetch per track change (lyrics, lyrics-counterpart,
+/// audio-counterpart artwork, upcoming-tracks), the bridge channel
+/// saturates and they all time out together.
+///
+/// Strategy:
+///   * **In-flight de-dupe** — concurrent calls for the same body
+///     share a single fetch via `tokio::sync::OnceCell`. The first
+///     caller runs the closure; subsequent callers await the same
+///     Future and receive the cached result.
+///   * **TTL** — once filled, the OnceCell is reused for `NEXT_CACHE_TTL`.
+///     After expiry it's evicted on next access so the next caller
+///     creates a fresh cell.
+///   * **Failure transparency** — `get_or_try_init` does NOT cache on
+///     error, so a transient bridge timeout doesn't poison the entry;
+///     the next caller retries.
+const NEXT_CACHE_TTL: Duration = Duration::from_secs(45);
+
+type NextCell = Arc<OnceCell<Value>>;
+
+pub struct YtmApi {
+    next_cache: Mutex<HashMap<String, (Instant, NextCell)>>,
+}
 
 impl YtmApi {
     pub fn new() -> Self {
-        Self
+        Self {
+            next_cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Fetch a `/next` response for `body`, using the cache + in-flight
+    /// de-dupe described on `NEXT_CACHE_TTL`. The returned `Value` is a
+    /// clone of the cached entry — callers can mutate freely.
+    async fn fetch_next_cached(
+        &self,
+        app: &AppHandle,
+        body: &str,
+    ) -> anyhow::Result<Value> {
+        let cell = self.acquire_next_cell(body);
+        let value = cell
+            .get_or_try_init(|| async {
+                let raw = ytm_api_call(app, "next", body)
+                    .await
+                    .map_err(anyhow::Error::msg)?;
+                let parsed: Value = serde_json::from_str(&raw)?;
+                Ok::<_, anyhow::Error>(parsed)
+            })
+            .await?;
+        Ok(value.clone())
+    }
+
+    /// Get-or-create the OnceCell for a body. Evicts expired entries
+    /// during the same lock to keep the map bounded; this is cheap
+    /// because the map only grows by one entry per distinct request
+    /// body within the TTL window.
+    fn acquire_next_cell(&self, body: &str) -> NextCell {
+        let mut guard = self.next_cache.lock().expect("next_cache poisoned");
+        let now = Instant::now();
+        guard.retain(|_, (ts, cell)| {
+            // Keep entries that are still inside their TTL window AND
+            // have already produced a value. If the cell is empty (the
+            // initial fetch is still in flight or it failed), keep it
+            // briefly so concurrent followers can still attach.
+            let fresh = now.duration_since(*ts) < NEXT_CACHE_TTL;
+            fresh || cell.get().is_none()
+        });
+        if let Some((_, cell)) = guard.get(body) {
+            return cell.clone();
+        }
+        let cell: NextCell = Arc::new(OnceCell::new());
+        guard.insert(body.to_string(), (now, cell.clone()));
+        cell
     }
 
     /// Fetch up to N autocomplete suggestions for a partial query.
@@ -244,10 +322,7 @@ impl YtmApi {
         // it differs from the playing video, re-issue /next against it
         // before extracting the lyrics browseId.
         let next_body = serde_json::json!({ "videoId": video_id }).to_string();
-        let next_raw = ytm_api_call(app, "next", &next_body)
-            .await
-            .map_err(anyhow::Error::msg)?;
-        let mut next_data: Value = serde_json::from_str(&next_raw)?;
+        let mut next_data = self.fetch_next_cached(app, &next_body).await?;
 
         if let Some(audio_vid) = extract_audio_counterpart_video_id(&next_data, video_id) {
             if audio_vid != video_id {
@@ -257,10 +332,8 @@ impl YtmApi {
                     "lyrics lookup: switched from music video to audio counterpart"
                 );
                 let alt_body = serde_json::json!({ "videoId": &audio_vid }).to_string();
-                if let Ok(alt_raw) = ytm_api_call(app, "next", &alt_body).await {
-                    if let Ok(alt_data) = serde_json::from_str::<Value>(&alt_raw) {
-                        next_data = alt_data;
-                    }
+                if let Ok(alt_data) = self.fetch_next_cached(app, &alt_body).await {
+                    next_data = alt_data;
                 }
             }
         }
@@ -385,10 +458,7 @@ impl YtmApi {
             }
             _ => serde_json::json!({ "videoId": video_id }).to_string(),
         };
-        let raw = ytm_api_call(app, "next", &body)
-            .await
-            .map_err(anyhow::Error::msg)?;
-        let data: Value = serde_json::from_str(&raw)?;
+        let data = self.fetch_next_cached(app, &body).await?;
         Ok(extract_upcoming_tracks(&data, video_id, limit))
     }
 
@@ -402,10 +472,7 @@ impl YtmApi {
         video_id: &str,
     ) -> anyhow::Result<Option<String>> {
         let body = serde_json::json!({ "videoId": video_id }).to_string();
-        let raw = ytm_api_call(app, "next", &body)
-            .await
-            .map_err(anyhow::Error::msg)?;
-        let data: Value = serde_json::from_str(&raw)?;
+        let data = self.fetch_next_cached(app, &body).await?;
         Ok(extract_audio_counterpart_thumbnail(&data, video_id))
     }
 }
