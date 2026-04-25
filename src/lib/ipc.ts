@@ -175,6 +175,15 @@ export interface AppSettings {
   general: {
     closeToTray: boolean;
     backgroundPlayback: boolean;
+    /**
+     * Last user-set volume in [0.0, 1.0]. Persisted server-side so it
+     * survives restarts and is re-pushed into YTM whenever the audio
+     * webview navigates and resets its <video> element. Mirrors the
+     * Rust `GeneralSettings.last_volume` field — must be present here
+     * so spread updates (e.g. closeToTray toggle) round-trip through
+     * `set_settings` without losing the volume.
+     */
+    lastVolume: number;
   };
   integrations: {
     notificationsEnabled: boolean;
