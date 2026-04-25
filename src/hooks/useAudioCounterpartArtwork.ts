@@ -7,7 +7,23 @@ import { debug } from '../lib/debug';
 // single IPC fetch per track. Keeping it module-scoped means the
 // result also survives unmount/remount cycles within a session.
 const cache = new Map<string, string | null>();
-const inflight = new Map<string, Promise<string | null>>();
+
+// Sentinel used by the IPC promise to distinguish a transient failure
+// (`.catch` swallows the rejection and resolves to this) from a
+// genuine "no counterpart" (resolves to `null`). MUST be module-
+// level — concurrent components share `inflight`, so the same
+// promise's `.then` callback is called from multiple component
+// closures. If each closure created its own per-instance Symbol,
+// the `result === fetchSentinel` equality check would fail in
+// follower closures, the Symbol would fall through into
+// `cache.set(videoId, symbol)`, propagate to `isAlbumArtUrl(url)`'s
+// regex test, and throw "Cannot convert a symbol to a string".
+// Observed once in production as a UI-goes-black crash; the root
+// error boundary now catches it but the underlying bug must NOT
+// reappear. Symbol identity comparison is what makes this safe.
+const FETCH_FAILED: unique symbol = Symbol('vibeytm:fetchFailed');
+type FetchResult = string | null | typeof FETCH_FAILED;
+const inflight = new Map<string, Promise<FetchResult>>();
 
 /**
  * For tracks that have both a music-video and audio counterpart on
@@ -62,26 +78,27 @@ export function useAudioCounterpartArtwork(
 
     let cancelled = false;
     const existing = inflight.get(videoId);
-    // Distinguish a SUCCESSFUL "no counterpart" (Rust resolves Ok(None) →
-    // JS resolves null) from a TRANSIENT IPC FAILURE (rejected). Only
-    // the former is cached as null — failures need to remain retryable
-    // so a single bridge timeout doesn't leave the video thumbnail
-    // stuck on the player bar forever.
-    const fetchSentinel = Symbol('fetchFailed') as unknown as string;
-    const promise: Promise<string | null | typeof fetchSentinel> =
+    // Distinguish a SUCCESSFUL "no counterpart" (Rust resolves
+    // Ok(None) → JS resolves null) from a TRANSIENT IPC FAILURE
+    // (rejected). Only the former is cached as null — failures need
+    // to remain retryable so a single bridge timeout doesn't leave
+    // the video thumbnail stuck on the player bar forever. The
+    // `FETCH_FAILED` sentinel is module-level on purpose; see its
+    // declaration for the symbol-identity rationale.
+    const promise: Promise<FetchResult> =
       existing ??
       browseApi
         .getAudioCounterpartArtwork(videoId)
-        .catch(() => fetchSentinel);
+        .catch((): FetchResult => FETCH_FAILED);
     if (!existing) inflight.set(videoId, promise);
 
     promise.then((result) => {
       inflight.delete(videoId);
-      if (result === fetchSentinel) {
+      if (result === FETCH_FAILED) {
         debug.warn('useAudioCounterpartArtwork', 'IPC failed', { videoId });
         return;
       }
-      const url = result as string | null;
+      const url = result;
       cache.set(videoId, url);
       debug.log('useAudioCounterpartArtwork', 'IPC resolved', { videoId, hasUrl: !!url });
       if (cancelled) return;
