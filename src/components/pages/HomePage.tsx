@@ -6,6 +6,7 @@ import { readCache, writeCache, clearCache } from '../../lib/persistentCache';
 import { ShelfRow } from '../browse/ShelfRow';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
+import { CachedImage } from '../CachedImage';
 import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
 
 interface HomePageProps {
@@ -426,7 +427,7 @@ function renderShelfContent(
                   background: 'var(--color-surface-2)',
                 }}
               >
-                <img
+                <CachedImage
                   src={artist.avatarUrl}
                   alt={artist.name}
                   loading="lazy"

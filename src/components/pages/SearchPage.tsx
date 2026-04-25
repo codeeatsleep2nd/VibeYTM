@@ -712,7 +712,7 @@ export const SearchPage: FC<SearchPageProps> = ({
                         background: 'var(--color-surface-2)',
                       }}
                     >
-                      <img
+                      <CachedImage
                         src={artist.avatarUrl}
                         alt={artist.name}
                         loading="lazy"

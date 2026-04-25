@@ -1,4 +1,4 @@
-import { type CSSProperties, type FC, useEffect, useState } from 'react';
+import { type CSSProperties, type FC, useEffect, useRef, useState } from 'react';
 import { cacheApi } from '../lib/ipc';
 
 interface CachedImageProps {
@@ -38,6 +38,43 @@ const SQUARE_TOLERANCE = 0.05;
 const inflight = new Map<string, Promise<string | null>>();
 const resolved = new Map<string, string>();
 
+// ------------- Concurrency limiter for cacheApi.fetchImage IPCs ---------
+//
+// On a cache-cleared cold start, the home page mounts ~150-200
+// `<CachedImage>`s simultaneously. Without a limiter, each fires its
+// own `cacheApi.fetchImage(url)` Tauri IPC immediately, the IPC bus
+// serializes on the main thread, reqwest's connection pool gets
+// saturated, and a chunk of the requests time out and resolve to
+// null — leaving those images blank.
+//
+// Cap concurrent in-flight IPCs to a small number. Off-screen images
+// also wait their turn behind on-screen ones thanks to the
+// IntersectionObserver gate below, so visible content loads first
+// even when 200 images compete for 6 slots.
+const MAX_CONCURRENT_FETCHES = 6;
+let activeFetches = 0;
+const fetchQueue: Array<() => void> = [];
+
+function acquireFetchSlot(): Promise<void> {
+  return new Promise((resolve) => {
+    if (activeFetches < MAX_CONCURRENT_FETCHES) {
+      activeFetches++;
+      resolve();
+    } else {
+      fetchQueue.push(() => {
+        activeFetches++;
+        resolve();
+      });
+    }
+  });
+}
+
+function releaseFetchSlot(): void {
+  activeFetches--;
+  const next = fetchQueue.shift();
+  if (next) next();
+}
+
 async function resolveCached(url: string): Promise<string | null> {
   if (resolved.has(url)) {
     return resolved.get(url)!;
@@ -47,6 +84,7 @@ async function resolveCached(url: string): Promise<string | null> {
     return existing;
   }
   const p = (async () => {
+    await acquireFetchSlot();
     try {
       const path = await cacheApi.fetchImage(url);
       const asset = cacheApi.convertToAssetUrl(path);
@@ -56,17 +94,50 @@ async function resolveCached(url: string): Promise<string | null> {
       return null;
     } finally {
       inflight.delete(url);
+      releaseFetchSlot();
     }
   })();
   inflight.set(url, p);
   return p;
 }
 
+// Reset the limiter on hot reload so a stuck slot from a previous
+// module instance can't leak into the new one.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    activeFetches = 0;
+    fetchQueue.length = 0;
+  });
+}
+
+// IntersectionObserver gate: defer the IPC fetch until the image is
+// within ~600 px of the viewport. With 600 px of margin the image
+// typically resolves and decodes before the user actually sees it,
+// so progressive loading feels seamless rather than "scroll, wait,
+// scroll, wait."
+const VIEWPORT_PRELOAD_PX = 600;
+
 /**
- * Image that fetches via the Rust disk cache. Pre-decodes the image off the
- * main render so it appears in one shot — never half-painted, never with a
- * progressive flicker. Falls back to the remote URL directly if the cache
- * layer fails so the UI never shows a broken image.
+ * Image that fetches via the Rust disk cache, with two layers of
+ * back-pressure to keep cache-cleared cold starts smooth:
+ *
+ *   1. **IntersectionObserver gate.** The fetch only starts once the
+ *      placeholder is within ~600 px of the viewport. Off-screen
+ *      images defer until scrolled toward, so visible content loads
+ *      first.
+ *   2. **Concurrency limit.** At most 6 `cacheApi.fetchImage` IPCs are
+ *      in flight at any time. Excess calls queue. This stops the
+ *      Tauri main-thread bridge and reqwest connection pool from
+ *      saturating when many images pop into view at once.
+ *
+ * The component pre-decodes the image off-DOM so it appears in one
+ * shot — never half-painted, never with a progressive flicker. Falls
+ * back to the remote URL directly if the cache layer fails so the UI
+ * never shows a broken image.
+ *
+ * Pass `loading="eager"` to bypass the intersection gate (the fetch
+ * starts immediately on mount). Use this for above-the-fold heroes
+ * where you'd rather pay the cost upfront than risk a flash.
  */
 export const CachedImage: FC<CachedImageProps> = ({
   src,
@@ -80,6 +151,49 @@ export const CachedImage: FC<CachedImageProps> = ({
 }) => {
   const [displayUrl, setDisplayUrl] = useState<string | undefined>(undefined);
   const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
+  // True once the placeholder has crossed the viewport-preload margin
+  // for the first time. Eager-loading callers start true.
+  const [isVisible, setIsVisible] = useState(loading === 'eager');
+  const placeholderRef = useRef<HTMLSpanElement | null>(null);
+
+  // If a `src` is already resolved in the in-memory cache, skip the
+  // intersection gate entirely — there's nothing to fetch, and we'd
+  // rather paint immediately than wait for an observer callback. This
+  // is the hot path for navigation between pages that share images.
+  useEffect(() => {
+    if (!src) return;
+    if (resolved.has(src)) setIsVisible(true);
+  }, [src]);
+
+  // Observe the placeholder until it crosses the preload margin. Once
+  // it does, flip `isVisible` permanently — even if the user scrolls
+  // away, we've already kicked off the fetch and don't want to undo
+  // that work.
+  useEffect(() => {
+    if (isVisible) return;
+    const el = placeholderRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      // Older runtimes / SSR: degrade to eager so the user sees an
+      // image at all.
+      setIsVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setIsVisible(true);
+            observer.disconnect();
+            break;
+          }
+        }
+      },
+      { rootMargin: `${VIEWPORT_PRELOAD_PX}px` },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isVisible]);
 
   useEffect(() => {
     if (!src) {
@@ -87,6 +201,7 @@ export const CachedImage: FC<CachedImageProps> = ({
       setNaturalAspect(null);
       return;
     }
+    if (!isVisible) return;
 
     let cancelled = false;
 
@@ -126,10 +241,25 @@ export const CachedImage: FC<CachedImageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [src]);
+  }, [src, isVisible]);
 
   if (!displayUrl) {
-    return null;
+    // Render an empty placeholder span sized like the image. Spans
+    // avoid layout-shift while still giving the IntersectionObserver
+    // something to track. Inline-block keeps it from collapsing
+    // inside flex/grid parents that size by `width: 100%`.
+    return (
+      <span
+        ref={placeholderRef}
+        aria-hidden
+        style={{
+          display: 'inline-block',
+          width: typeof width === 'number' ? `${width}px` : style?.width ?? '100%',
+          height: typeof height === 'number' ? `${height}px` : style?.height ?? '100%',
+          background: 'transparent',
+        }}
+      />
+    );
   }
 
   // Auto-fit is opt-in (`autoFitForAspect={true}`). When the caller asked

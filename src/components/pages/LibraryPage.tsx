@@ -9,6 +9,7 @@ import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
 import { readCache, writeCache } from '../../lib/persistentCache';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
+import { CachedImage } from '../CachedImage';
 import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
 
 // Per-tab persistence keys for the 7-day localStorage cache. Library
@@ -292,7 +293,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
                     }}
                   >
                     {artist.avatarUrl && (
-                      <img
+                      <CachedImage
                         src={artist.avatarUrl}
                         alt={artist.name}
                         loading="lazy"
