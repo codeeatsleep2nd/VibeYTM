@@ -1,4 +1,4 @@
-import { type FC, useEffect, useRef, useState } from 'react';
+import { type FC, useEffect, useMemo, useRef, useState } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
 import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
@@ -366,7 +366,43 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
   // Render against the FROZEN queue (the bridge's liveQueue is funneled
   // through the freeze policy above). For cold starts where the bridge
   // hasn't populated yet, fall back to the /next-fetched list.
-  const renderQueue = frozenQueue.length > 0 ? frozenQueue : liveQueue;
+  //
+  // Album-art enrichment: the DOM scrape captures whatever `<img src>`
+  // YTM happens to render in the queue panel — for music-video tracks
+  // that's the i.ytimg.com 16:9 frame, which our `albumArtOrNothing`
+  // filter rejects → blank cover. The /next API parse
+  // (`fetchedUpcoming`) extracts the audio counterpart's lh3 album
+  // art via `pick_audio_renderer`, so for each queue row whose
+  // videoId matches an entry in `fetchedUpcoming`, override the
+  // artwork URL with the API-sourced one. Also fold in the live
+  // PlayerState track's album-art URL when present, so the now-
+  // playing row's `liveTrack` override is consistent with the
+  // upcoming rows. Net effect: queue rows show the song cover
+  // whenever YTM has one, not the music-video frame.
+  const baseRenderQueue = frozenQueue.length > 0 ? frozenQueue : liveQueue;
+  const artworkOverrides = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of fetchedUpcoming) {
+      if (t.videoId && t.artworkUrl) {
+        map.set(t.videoId, t.artworkUrl);
+      }
+    }
+    if (track?.videoId && track.artworkUrl) {
+      map.set(track.videoId, track.artworkUrl);
+    }
+    return map;
+  }, [fetchedUpcoming, track?.videoId, track?.artworkUrl]);
+  const renderQueue = useMemo(() => {
+    if (artworkOverrides.size === 0) return baseRenderQueue;
+    return baseRenderQueue.map((row) => {
+      if (!row.videoId) return row;
+      const better = artworkOverrides.get(row.videoId);
+      if (better && better !== row.artworkUrl) {
+        return { ...row, artworkUrl: better };
+      }
+      return row;
+    });
+  }, [baseRenderQueue, artworkOverrides]);
   let upcoming: TrackInfo[];
   if (displayTrack?.videoId && renderQueue.length > 0) {
     const idx = renderQueue.findIndex((t) => t.videoId === displayTrack.videoId);
