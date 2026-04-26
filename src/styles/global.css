@@ -119,31 +119,40 @@ input {
 }
 
 /* Apple-Music-style slider used by PlayerChrome (volume + Now-Playing-card
-   progress). Track stays thin (visible 3px line, 4px on hover); the click
-   area is decoupled — the input element itself is 12px tall so the hit
-   zone is comfortable without bloating the visible track. The fill-to-the-
-   left effect comes from a CSS gradient set inline as `backgroundImage`
-   (so the longhands `background-size` / `position` / `repeat` below stay
-   in effect and crop the gradient to a thin band). The thumb is invisible
-   at rest and reveals on hover/active. */
+   progress). Click area is the input itself (12px tall) for a generous
+   hit zone. The visible 3px track lives on the runnable-track pseudo-
+   element — keying the visible band to the runnable-track (NOT the
+   input's background) is what guarantees the thumb stays centered on the
+   track: WebKit positions the thumb relative to the runnable-track's
+   geometry, so they share the same Y origin by construction. The thumb
+   is invisible at rest and reveals on hover/active. The fill-to-the-left
+   effect is set inline as `backgroundImage` on the input (then surfaced
+   onto the runnable-track via inheritance via `background: inherit`). */
 input[type='range'][data-vibeytm-slider] {
   -webkit-appearance: none;
   appearance: none;
-  height: 12px; /* clickable area */
+  height: 12px; /* hit area */
   background-color: transparent;
-  background-size: 100% 3px; /* visible track height */
+  background-size: 100% 3px;
   background-position: center;
   background-repeat: no-repeat;
   border-radius: var(--radius-full);
   cursor: pointer;
   outline: none;
-  /* `background-image` is set inline (gradient with progress %) */
 }
 
+/* The runnable-track is the visible track. Keep it 3px tall so the thumb
+   (centered on this pseudo-element by WebKit) lands EXACTLY on the
+   visible band. The runnable-track's background inherits the input's
+   inline gradient via `background: inherit` so the fill stays in sync
+   with React's progress %. */
 input[type='range'][data-vibeytm-slider]::-webkit-slider-runnable-track {
-  height: 12px;
-  background: transparent;
+  height: 3px;
+  background: inherit;
+  background-size: 100% 100%;
   border-radius: var(--radius-full);
+  /* Smooth track-thickness animation alongside the thumb's hover state. */
+  transition: height var(--duration-fast) cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 input[type='range'][data-vibeytm-slider]::-webkit-slider-thumb {
@@ -151,15 +160,22 @@ input[type='range'][data-vibeytm-slider]::-webkit-slider-thumb {
   appearance: none;
   width: 12px;
   height: 12px;
-  margin-top: 0; /* track is 12px now; thumb centers naturally */
+  /* Centers a 12px thumb on a 3px runnable-track: -((12 - 3) / 2). */
+  margin-top: -4.5px;
   border-radius: var(--radius-full);
   background: var(--color-text-primary);
   border: none;
   opacity: 0;
-  transform: scale(0.8);
+  transform: scale(0.6);
+  /* Slightly longer + spring-y easing so the thumb feels deliberate instead
+     of snappy. Cubic-bezier matches Apple's standard "ease out expo" curve
+     used across SF Symbols animations. */
   transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
+    opacity var(--duration-normal) cubic-bezier(0.16, 1, 0.3, 1),
+    transform var(--duration-normal) cubic-bezier(0.16, 1, 0.3, 1),
+    width var(--duration-fast) cubic-bezier(0.16, 1, 0.3, 1),
+    height var(--duration-fast) cubic-bezier(0.16, 1, 0.3, 1),
+    margin-top var(--duration-fast) cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-thumb,
@@ -169,6 +185,10 @@ input[type='range'][data-vibeytm-slider]:focus-visible::-webkit-slider-thumb {
   transform: scale(1);
 }
 
-input[type='range'][data-vibeytm-slider]:hover {
-  background-size: 100% 4px; /* visible track grows on hover */
+input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-runnable-track {
+  height: 4px;
+}
+
+input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-thumb {
+  margin-top: -4px; /* recenter on the 4px hover-track */
 }

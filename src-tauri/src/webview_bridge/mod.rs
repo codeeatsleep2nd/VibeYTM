@@ -102,6 +102,52 @@ pub fn navigate_to_track(window: &WebviewWindow, video_id: &str) -> Result<(), S
     window.eval(&js).map_err(|e| e.to_string())
 }
 
+/// Navigate to a track and resume from a specific position. Used on
+/// app launch when the persisted session has a non-zero `position_secs`:
+/// the `&t=Ns` URL parameter tells YouTube to start at that offset.
+/// When `playlist_id` is provided we use it as the queue context;
+/// otherwise we fall back to the song-radio list (`RDAMVM<vid>`) so YTM
+/// stays in audio mode (matches `navigate_to_track`).
+pub fn navigate_to_track_at_position(
+    window: &WebviewWindow,
+    video_id: &str,
+    position_secs: u64,
+    playlist_id: Option<&str>,
+) -> Result<(), String> {
+    tracing::info!(video_id, position_secs, "navigate_to_track_at_position");
+    validate_ytm_id(video_id, 20, "video_id")?;
+    let list_id_owned: String;
+    let list_id: &str = match playlist_id {
+        Some(id) => {
+            validate_ytm_id(id, 100, "playlist_id")?;
+            id
+        }
+        None => {
+            list_id_owned = format!("RDAMVM{video_id}");
+            &list_id_owned
+        }
+    };
+    let js = format!(
+        r#"(function() {{
+            var vid = '{vid}';
+            window.__VIBEYTM_TARGET_VID__ = vid;
+            var a = document.createElement('a');
+            a.href = '/watch?v=' + vid + '&list={list}&t={pos}s';
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function() {{
+                try {{ document.body.removeChild(a); }} catch(e) {{}}
+            }}, 100);
+            return 'ok';
+        }})();"#,
+        vid = video_id,
+        list = list_id,
+        pos = position_secs
+    );
+    window.eval(&js).map_err(|e| e.to_string())
+}
+
 /// Play a track in the context of a playlist (for proper queue/next behavior).
 pub fn navigate_to_track_with_playlist(
     window: &WebviewWindow,

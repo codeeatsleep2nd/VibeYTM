@@ -48,9 +48,6 @@ export {
   Disc3 as AlbumsIcon,
   Mic2 as ArtistsIcon,
   Settings as SettingsIcon,
-  // Sidebar collapse toggle
-  PanelLeftClose as SidebarCollapseIcon,
-  PanelLeftOpen as SidebarExpandIcon,
 } from 'lucide-react';
 
 import { Heart } from 'lucide-react';

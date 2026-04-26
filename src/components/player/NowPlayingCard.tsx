@@ -1,6 +1,7 @@
 import { type FC } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import { useSmoothedPosition } from '../../hooks/useSmoothedPosition';
 import { albumArtOrNothing } from '../../lib/artwork';
 import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
 import { CachedImage } from '../CachedImage';
@@ -43,8 +44,15 @@ export const NowPlayingCard: FC<Props> = ({ onOpenNowPlaying, nowPlayingOpen }) 
   };
 
   const duration = track?.durationSecs ?? 0;
+  // rAF-interpolated position so the progress bar moves smoothly at ~60fps
+  // between the ~6Hz POSITION_UPDATED IPC ticks. The hook re-bases on every
+  // backend sample, so it can't drift; on Pause it freezes at the latest
+  // sample (no false advancement). Same hook NowPlaying uses for lyric sync.
+  const smoothedPositionSecs = useSmoothedPosition(positionSecs, isPlaying);
   const safePosition =
-    duration > 0 ? Math.min(positionSecs, duration) : positionSecs;
+    duration > 0
+      ? Math.min(smoothedPositionSecs, duration)
+      : smoothedPositionSecs;
   const progress =
     duration > 0 ? Math.min(1, Math.max(0, safePosition / duration)) : 0;
   const remaining = Math.max(0, duration - safePosition);
@@ -230,8 +238,12 @@ export const NowPlayingCard: FC<Props> = ({ onOpenNowPlaying, nowPlayingOpen }) 
             position: 'absolute',
             left: 0,
             right: 0,
-            bottom: -5, /* center the 12px input over the card's bottom edge */
+            bottom: 0,
             width: '100%',
+            // Track and thumb both centered in the 12px input, so the
+            // hover thumb sits ON the visible 3px band. Visible band is
+            // ~4-5px above the card's bottom edge — close enough to
+            // "embedded at bottom" without breaking thumb alignment.
             backgroundImage: `linear-gradient(to right, var(--color-text-secondary) ${
               progress * 100
             }%, var(--color-surface-3) ${progress * 100}%)`,

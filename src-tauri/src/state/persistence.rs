@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tokio::time::sleep;
 
-use crate::state::player::{SharedPlayerState, TrackInfo};
+use crate::state::player::{PendingRestore, SharedPlayerState, TrackInfo};
 
 const SESSION_FILE: &str = "last_session.json";
 const SAVE_INTERVAL: Duration = Duration::from_secs(5);
@@ -91,13 +91,23 @@ pub fn flush_now(app: &AppHandle, state: &SharedPlayerState) {
 
 /// Apply a loaded session to in-memory state. Position and volume are
 /// restored verbatim; playback status stays idle so nothing auto-plays.
+/// If a track was previously playing, queue a `pending_restore` so the
+/// next user-initiated `play` / `toggle_play` navigates the YTM webview
+/// to the saved track at the saved position (rather than no-op'ing on
+/// the YTM home page).
 pub async fn apply(state: &SharedPlayerState, session: PersistedSession) {
     let mut player = state.write().await;
+    let pending = session.track.as_ref().map(|t| PendingRestore {
+        video_id: t.video_id.clone(),
+        position_secs: session.position_secs,
+        playlist_id: session.active_playlist_id.clone(),
+    });
     player.track = session.track;
     player.position_secs = session.position_secs;
     player.volume = session.volume;
     player.active_playlist_id = session.active_playlist_id;
     player.queue = session.queue;
+    player.pending_restore = pending;
 }
 
 /// Spawn a background task that snapshots current state to disk every

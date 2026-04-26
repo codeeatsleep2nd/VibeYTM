@@ -10,8 +10,6 @@ import {
   PlaylistsIcon,
   SearchIcon,
   SettingsIcon,
-  SidebarCollapseIcon,
-  SidebarExpandIcon,
   SongsIcon,
 } from '../icons';
 
@@ -19,33 +17,25 @@ interface NavItemProps {
   label: string;
   icon: ReactNode;
   isActive: boolean;
-  collapsed: boolean;
   onClick: () => void;
 }
 
 /**
  * Apple-Music-style sidebar row. Active state is a subtle accent-tinted
- * background + accent-colored icon and label — NOT a solid red bar
- * (the project's earlier design used a full accent fill which dominated
- * the sidebar's hierarchy). Inactive icons are in secondary text gray;
- * hover gently brightens the row's background and bumps text to primary.
+ * background + accent-colored icon and label. Hover gently brightens
+ * the row's background and bumps text to primary.
  */
-const NavItem: FC<NavItemProps> = ({ label, icon, isActive, collapsed, onClick }) => (
+const NavItem: FC<NavItemProps> = ({ label, icon, isActive, onClick }) => (
   <button
     type="button"
     onClick={onClick}
     aria-current={isActive ? 'page' : undefined}
-    aria-label={collapsed ? label : undefined}
-    title={collapsed ? label : undefined}
     style={{
       display: 'flex',
       alignItems: 'center',
-      justifyContent: collapsed ? 'center' : 'flex-start',
       gap: 'var(--space-3)',
       width: '100%',
-      padding: collapsed
-        ? 'var(--space-2) 0'
-        : 'var(--space-2) var(--space-3)',
+      padding: 'var(--space-2) var(--space-3)',
       border: 'none',
       borderRadius: 'var(--radius-md)',
       background: isActive ? 'oklch(62% 0.24 25 / 0.12)' : 'transparent',
@@ -86,15 +76,13 @@ const NavItem: FC<NavItemProps> = ({ label, icon, isActive, collapsed, onClick }
     >
       {icon}
     </span>
-    {!collapsed && label}
+    {label}
   </button>
 );
 
 interface SidebarProps {
   currentPath: string;
   onNavigate: (path: string) => void;
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
 }
 
 const NAV_ITEMS: { path: string; label: string; icon: ReactNode }[] = [
@@ -126,12 +114,7 @@ const SectionLabel: FC<{ children: ReactNode }> = ({ children }) => (
   </div>
 );
 
-export const Sidebar: FC<SidebarProps> = ({
-  currentPath,
-  onNavigate,
-  collapsed,
-  onToggleCollapsed,
-}) => {
+export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
   const account = useAccountInfo();
   const loggedIn = useLoginState();
 
@@ -148,62 +131,11 @@ export const Sidebar: FC<SidebarProps> = ({
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        transition: 'width var(--duration-normal) var(--ease-out)',
       }}
     >
-      {/* Collapse toggle — top of sidebar */}
-      <div
-        style={{
-          padding: collapsed
-            ? 'var(--space-2) 0'
-            : 'var(--space-2) var(--space-3)',
-          display: 'flex',
-          justifyContent: collapsed ? 'center' : 'flex-end',
-        }}
-      >
-        <button
-          type="button"
-          onClick={onToggleCollapsed}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-pressed={collapsed}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '28px',
-            height: '28px',
-            padding: 0,
-            background: 'transparent',
-            border: 'none',
-            borderRadius: 'var(--radius-md)',
-            cursor: 'pointer',
-            color: 'var(--color-text-tertiary)',
-            transition:
-              'color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out)',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'oklch(100% 0 0 / 0.04)';
-            e.currentTarget.style.color = 'var(--color-text-primary)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'transparent';
-            e.currentTarget.style.color = 'var(--color-text-tertiary)';
-          }}
-        >
-          {collapsed ? (
-            <SidebarExpandIcon size={16} />
-          ) : (
-            <SidebarCollapseIcon size={16} />
-          )}
-        </button>
-      </div>
-
       <nav
         style={{
-          padding: collapsed
-            ? 'var(--space-1) var(--space-1)'
-            : 'var(--space-1) var(--space-3)',
+          padding: 'var(--space-3)',
           display: 'flex',
           flexDirection: 'column',
           gap: '2px',
@@ -215,7 +147,6 @@ export const Sidebar: FC<SidebarProps> = ({
             label={item.label}
             icon={item.icon}
             isActive={currentPath === item.path}
-            collapsed={collapsed}
             onClick={() => onNavigate(item.path)}
           />
         ))}
@@ -223,13 +154,11 @@ export const Sidebar: FC<SidebarProps> = ({
 
       <div
         style={{
-          padding: collapsed
-            ? '0 var(--space-1) var(--space-3)'
-            : '0 var(--space-3) var(--space-3)',
+          padding: '0 var(--space-3) var(--space-3)',
           marginTop: 'var(--space-3)',
         }}
       >
-        {!collapsed && <SectionLabel>Library</SectionLabel>}
+        <SectionLabel>Library</SectionLabel>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
           {LIBRARY_ITEMS.map((item, idx) => (
             <NavItem
@@ -240,7 +169,6 @@ export const Sidebar: FC<SidebarProps> = ({
                 currentPath === item.path ||
                 (currentPath === 'library' && idx === 0)
               }
-              collapsed={collapsed}
               onClick={() => onNavigate(item.path)}
             />
           ))}
@@ -248,36 +176,18 @@ export const Sidebar: FC<SidebarProps> = ({
       </div>
 
       {/* Settings — pushed to bottom */}
-      <div
-        style={{
-          marginTop: 'auto',
-          padding: collapsed
-            ? 'var(--space-1)'
-            : 'var(--space-3)',
-        }}
-      >
+      <div style={{ marginTop: 'auto', padding: 'var(--space-3)' }}>
         <NavItem
           label="Settings"
           icon={<SettingsIcon size={16} />}
           isActive={currentPath === 'settings'}
-          collapsed={collapsed}
           onClick={() => onNavigate('settings')}
         />
       </div>
 
       {/* Account — locked to the very bottom of the sidebar */}
-      <div
-        style={{
-          padding: collapsed
-            ? 'var(--space-2) var(--space-1)'
-            : 'var(--space-3)',
-        }}
-      >
-        <AccountCard
-          account={account}
-          loggedIn={loggedIn}
-          collapsed={collapsed}
-        />
+      <div style={{ padding: 'var(--space-3)' }}>
+        <AccountCard account={account} loggedIn={loggedIn} />
       </div>
     </aside>
   );
@@ -287,7 +197,6 @@ interface AccountCardProps {
   account: { name: string; avatarUrl: string } | null;
   /** Tri-state: true signed in, false signed out, null undetermined. */
   loggedIn: boolean | null;
-  collapsed: boolean;
 }
 
 // Memo keeps the avatar image stable across parent re-renders triggered by
@@ -298,12 +207,11 @@ const AccountCard = memo(
   AccountCardInner,
   (prev, next) =>
     prev.loggedIn === next.loggedIn &&
-    prev.collapsed === next.collapsed &&
     prev.account?.name === next.account?.name &&
     prev.account?.avatarUrl === next.account?.avatarUrl,
 );
 
-function AccountCardInner({ account, loggedIn, collapsed }: AccountCardProps) {
+function AccountCardInner({ account, loggedIn }: AccountCardProps) {
   // Never render the cached avatar or "Signed in" label from a prior session
   // when the user has signed out (issue #50). Show a neutral placeholder
   // instead so the sidebar honestly reflects the auth state.
@@ -320,11 +228,8 @@ function AccountCardInner({ account, loggedIn, collapsed }: AccountCardProps) {
       style={{
         display: 'flex',
         alignItems: 'center',
-        justifyContent: collapsed ? 'center' : 'flex-start',
         gap: 'var(--space-3)',
-        padding: collapsed
-          ? 'var(--space-1) 0'
-          : 'var(--space-2) var(--space-3)',
+        padding: 'var(--space-2) var(--space-3)',
         borderRadius: 'var(--radius-md)',
         minWidth: 0,
       }}
@@ -357,24 +262,22 @@ function AccountCardInner({ account, loggedIn, collapsed }: AccountCardProps) {
           '○'
         )}
       </div>
-      {!collapsed && (
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div
-            style={{
-              fontSize: 'var(--text-sm)',
-              fontWeight: 500,
-              color: isSignedOut
-                ? 'var(--color-text-tertiary)'
-                : 'var(--color-text-primary)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {label}
-          </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div
+          style={{
+            fontSize: 'var(--text-sm)',
+            fontWeight: 500,
+            color: isSignedOut
+              ? 'var(--color-text-tertiary)'
+              : 'var(--color-text-primary)',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {label}
         </div>
-      )}
+      </div>
     </div>
   );
 }

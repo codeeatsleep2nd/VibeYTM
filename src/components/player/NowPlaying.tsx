@@ -82,19 +82,25 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false }) 
         transformOrigin: 'center center',
         pointerEvents: isOpen ? 'auto' : 'none',
         willChange: 'opacity, transform',
-        transition:
-          'opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
         // Match the sidebar nav's top padding (var(--space-3)) so the top of
         // the cover / lyrics panel lines up with the Home button. Left padding
-        // gives breathing room from the sidebar; right edge stays flush with
-        // the app so the lyrics column can extend to the window edge.
+        // gives breathing room from the sidebar; right padding is asymmetric
+        // ONLY when lyrics is showing — that lets the lyrics column extend
+        // to the window edge. With lyrics closed the right padding mirrors
+        // the left so `justifyContent: center` actually centers the cover.
         paddingTop: 'var(--space-3)',
         paddingLeft: 'var(--space-6)',
-        paddingRight: 0,
-        paddingBottom: 'var(--space-6)',
+        paddingRight: showLyrics ? 0 : 'var(--space-6)',
+        // No bottom padding — the overlay's bottom edge already aligns
+        // with the chrome's top (`bottom: var(--player-bar-height)`),
+        // so children (cover column, lyrics panel) extend directly to
+        // the chrome's top edge.
+        paddingBottom: 0,
+        transition:
+          'padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1)',
         overflow: 'hidden',
       }}
       aria-hidden={!isOpen}
@@ -245,7 +251,7 @@ interface CoverProps {
   //   • the viewport height minus chrome + title block so the cover fits.
   const SPLIT_ROW_MAX = 1200;
   const SPLIT_COVER_FRACTION = 2 / 3;
-  const coverSide = `min(${SPLIT_ROW_MAX * SPLIT_COVER_FRACTION}px, calc(${SPLIT_COVER_FRACTION} * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - var(--space-6) - 160px))`;
+  const coverSide = `min(${SPLIT_ROW_MAX * SPLIT_COVER_FRACTION}px, calc(${SPLIT_COVER_FRACTION} * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px))`;
 
 const Cover: FC<CoverProps> = ({ track, size }) => {
   void size; // kept for API compatibility; both modes now share one size
@@ -318,12 +324,12 @@ const CONTAINER_STYLE: React.CSSProperties = {
   flex: 1,
   maxWidth: '640px',
   minWidth: 0,
-  // Fill the full content height of the overlay. The overlay itself already
-  // reserves the title-bar and player-bar on the outside via its top/bottom,
-  // and its own top/bottom padding (space-3 + space-6) — so the panel just
-  // stretches between those.
+  // Fill the full content height of the overlay. The overlay reserves the
+  // title-bar and player-bar on the outside; only the top space-3 padding
+  // is on the inside (no bottom padding — the panel's bottom edge aligns
+  // exactly with the chrome's top, per user request).
   height:
-    'calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - var(--space-6))',
+    'calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3))',
   padding: 'var(--space-6)',
   background: 'var(--color-surface-2)',
   borderRadius: 'var(--radius-lg)',

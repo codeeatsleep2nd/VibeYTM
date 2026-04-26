@@ -261,14 +261,21 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 // Reset position to 0 on bridge reload so the progress
                 // bar doesn't flash the previous song's elapsed time
                 // before the next poll cycle settles on the new track.
-                // The reconcile window in usePlayerState filters stale
-                // POSITION_UPDATEDs; this just makes the reset
-                // proactive instead of reactive.
-                {
-                    let mut ps = player_state.write().await;
-                    ps.position_secs = 0.0;
+                // EXCEPT when there's a `pending_restore` waiting (the
+                // user just relaunched and hasn't pressed Play yet) —
+                // overwriting that would erase the saved offset before
+                // the user gets a chance to resume.
+                let pending = {
+                    let ps = player_state.read().await;
+                    ps.pending_restore.is_some()
+                };
+                if !pending {
+                    {
+                        let mut ps = player_state.write().await;
+                        ps.position_secs = 0.0;
+                    }
+                    let _ = app.emit("player:position", &0.0_f64);
                 }
-                let _ = app.emit("player:position", &0.0_f64);
             }
 
             // Login-state emission is always attempted, even on the login-only
@@ -527,15 +534,26 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 bs.volume
             };
 
+            // Hold the saved position while pending_restore is queued —
+            // YTM hasn't loaded the saved track yet (user hasn't pressed
+            // Play) so bs.position_secs is meaningless (~0).
+            let suppress_position = {
+                let ps = player_state.read().await;
+                ps.pending_restore.is_some()
+            };
             {
                 let mut ps = player_state.write().await;
-                ps.position_secs = bs.position_secs;
+                if !suppress_position {
+                    ps.position_secs = bs.position_secs;
+                }
                 ps.volume = effective_volume;
                 ps.is_shuffled = bs.is_shuffled;
                 ps.repeat_mode = new_repeat;
                 ps.is_liked = bs.is_liked;
             }
-            let _ = app.emit("player:position", &bs.position_secs);
+            if !suppress_position {
+                let _ = app.emit("player:position", &bs.position_secs);
+            }
             let _ = app.emit("player:volume", &effective_volume);
             if prev_shuffled != bs.is_shuffled {
                 let _ = app.emit("player:shuffle-changed", &bs.is_shuffled);

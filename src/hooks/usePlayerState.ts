@@ -91,8 +91,20 @@ export function usePlayerState(): UsePlayerState {
     // and POSITION_UPDATED from separate cycles, so without this the progress
     // bar briefly renders with the old position over the new (shorter)
     // duration — which pins it visually at 100%.
+    // EXCEPT when the videoId hasn't actually changed (metadata refinement
+    // OR session-restore: persistence::apply seeded a saved track + saved
+    // position, then the bridge re-emits the same videoId from YTM's
+    // restored session — that re-emit must NOT clobber the saved offset).
     lastTrackChangeAtRef.current = Date.now();
-    setState((prev) => ({ ...prev, track, positionSecs: 0 }));
+    setState((prev) => {
+      const isSameTrack =
+        !!prev.track && !!track && prev.track.videoId === track.videoId;
+      return {
+        ...prev,
+        track,
+        positionSecs: isSameTrack ? prev.positionSecs : 0,
+      };
+    });
   });
 
   useTauriEvent<PlaybackStatus>(EVENTS.STATUS_CHANGED, (status) => {

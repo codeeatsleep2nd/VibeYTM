@@ -62,6 +62,24 @@ pub struct PlayerState {
     /// to decide whether to skip the login page (issue #51) and to avoid
     /// rendering stale signed-in data after sign-out (issue #50).
     pub logged_in: Option<bool>,
+    /// On launch, populated from the persisted session if a track was
+    /// previously playing. The player commands check this BEFORE forwarding
+    /// "play" to YTM — when set, they navigate the YTM webview to the
+    /// saved track + position first (so the user resumes exactly where
+    /// they left off). Cleared on first consumption or when the user
+    /// explicitly navigates to a different track. Never persisted.
+    #[serde(skip)]
+    pub pending_restore: Option<PendingRestore>,
+}
+
+/// Saved playback context to restore on first user-initiated play after
+/// app launch. Held in `PlayerState.pending_restore` and cleared once
+/// consumed.
+#[derive(Debug, Clone)]
+pub struct PendingRestore {
+    pub video_id: String,
+    pub position_secs: f64,
+    pub playlist_id: Option<String>,
 }
 
 impl Default for PlayerState {
@@ -78,6 +96,7 @@ impl Default for PlayerState {
             active_playlist_id: None,
             account: None,
             logged_in: None,
+            pending_restore: None,
         }
     }
 }

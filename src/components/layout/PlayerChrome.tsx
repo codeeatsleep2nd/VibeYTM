@@ -128,20 +128,38 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   const { track, status, volume, isShuffled, repeatMode, applyOptimistic } = state;
   const isPlaying = status === 'playing';
 
-  // 2-second-deferred preload of next track's lyrics + cover. Copied
-  // verbatim from the old PlayerBar — the deferral is the bridge
-  // saturation fix from CLAUDE.md ("Background fetches need a settle
-  // delay after track change"). Cache-first via three tiers:
+  // 2-second-deferred preload of CURRENT track's lyrics + the next
+  // track's lyrics + cover. Copied verbatim from the old PlayerBar —
+  // the deferral is the bridge saturation fix from CLAUDE.md
+  // ("Background fetches need a settle delay after track change").
+  // Cache-first via three tiers:
   //   1. trackArtworkRegistry (populated by playlist visits)
   //   2. track.artworkUrl when it's already album art
   //   3. preloadAudioCounterpartArtwork (Rust /next lookup)
+  // The CURRENT track preload (added here) makes the LRC panel render
+  // instantly when the user opens it later — without it, opening the
+  // panel triggers a fresh fetch on every previously-uncached song.
   const currentVideoId = track?.videoId;
+  const currentArtist = track?.artist;
+  const currentTitle = track?.title;
+  const currentDuration = track?.durationSecs;
   useEffect(() => {
     if (!currentVideoId) return;
 
     let cancelled = false;
     const timer = setTimeout(() => {
       if (cancelled) return;
+
+      // Background-load lyrics for the CURRENT track so the LRC panel
+      // is warm whenever the user clicks it later. preloadLyrics is a
+      // no-op when the track is already in the hits/misses cache, so
+      // this is free for repeat plays.
+      preloadLyrics({
+        videoId: currentVideoId,
+        artist: currentArtist ?? null,
+        title: currentTitle ?? null,
+        durationSecs: currentDuration ?? null,
+      });
 
       const warmCoverFor = (next: {
         videoId: string;
@@ -202,7 +220,7 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [currentVideoId]);
+  }, [currentVideoId, currentArtist, currentTitle, currentDuration]);
 
   const handleTogglePlay = () => {
     applyOptimistic({ status: isPlaying ? 'paused' : 'playing' });
@@ -289,7 +307,6 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         padding: '0 var(--space-4)',
         gap: 'var(--space-3)',
         zIndex: 100,
-        transition: 'left var(--duration-normal) var(--ease-out)',
       }}
     >
       {/* LEFT — transports (Apple Music: flat white glyphs, prev/play/next
