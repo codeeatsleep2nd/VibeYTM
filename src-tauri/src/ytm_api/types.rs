@@ -44,6 +44,20 @@ pub struct PlaylistSummary {
     pub track_count: Option<u32>,
 }
 
+/// One row in the user's "Subscribed podcasts" library section.
+/// `browse_id` is an MPSP* identifier the existing get_playlist IPC
+/// already routes correctly (the shows-support change taught it to
+/// keep MPSP raw, no VL prefix). Author lands as the secondary text
+/// the user sees under the show title in the card.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PodcastSummary {
+    pub browse_id: String,
+    pub title: String,
+    pub author: String,
+    pub artwork_url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Shelf {

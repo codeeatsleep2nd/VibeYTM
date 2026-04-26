@@ -8,6 +8,7 @@ import {
   ExploreIcon,
   HomeIcon,
   PlaylistsIcon,
+  PodcastsIcon,
   SearchIcon,
   SettingsIcon,
   SongsIcon,
@@ -121,6 +122,7 @@ const LIBRARY_ITEMS: { path: string; label: string; icon: ReactNode }[] = [
   { path: 'library/songs', label: 'Songs', icon: <SongsIcon size={16} /> },
   { path: 'library/albums', label: 'Albums', icon: <AlbumsIcon size={16} /> },
   { path: 'library/artists', label: 'Artists', icon: <ArtistsIcon size={16} /> },
+  { path: 'library/podcasts', label: 'Podcasts', icon: <PodcastsIcon size={16} /> },
 ];
 
 const SectionLabel: FC<{ children: ReactNode }> = ({ children }) => (

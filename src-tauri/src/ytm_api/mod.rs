@@ -280,6 +280,22 @@ impl YtmApi {
         Ok(parse_library_artists(&data))
     }
 
+    /// Fetch the user's subscribed podcasts via the real YTM API.
+    /// Routes to `FEmusic_library_podcasts`, the same surface YTM's
+    /// own "Podcasts" library tab loads. Each row resolves to a
+    /// PodcastSummary whose browse_id is an MPSP* identifier the
+    /// existing get_playlist IPC already handles (taught in the
+    /// shows-support change).
+    pub async fn get_library_podcasts(
+        &self,
+        app: &AppHandle,
+    ) -> anyhow::Result<Vec<PodcastSummary>> {
+        let body = serde_json::json!({ "browseId": "FEmusic_library_podcasts" }).to_string();
+        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let data: Value = serde_json::from_str(&raw)?;
+        Ok(parse_library_podcasts(&data))
+    }
+
     /// Add a playlist to the signed-in user's library ("Saved playlists").
     /// Uses the YTM like endpoint with the playlist as the target — the same
     /// call the YTM web UI's save button makes, which adds the playlist to
@@ -1559,6 +1575,90 @@ fn parse_library_albums(data: &Value) -> Vec<AlbumSummary> {
         }
     }
     albums
+}
+
+fn parse_library_podcasts(data: &Value) -> Vec<PodcastSummary> {
+    let items = find_browse_list_items(data);
+    let mut out = Vec::new();
+    for item in items {
+        // Subscribed podcasts surface as musicTwoRowItemRenderer cards
+        // (cover + show title + author). The browseId on the
+        // navigation endpoint identifies the show (MPSP*); we keep
+        // only those so the cards can drive PlaylistDetailPage's
+        // existing MPSP path without ambiguity.
+        if let Some(two_row) = item.get("musicTwoRowItemRenderer") {
+            if let Some(p) = parse_podcast_from_two_row(two_row) {
+                out.push(p);
+            }
+            continue;
+        }
+        // Some library variants list shows as musicResponsiveListItemRenderer
+        // rows (compact list view). Try that too.
+        if let Some(renderer) = item.get("musicResponsiveListItemRenderer") {
+            if let Some(p) = parse_podcast_from_list_item(renderer) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Parse a podcast / show card from a `musicTwoRowItemRenderer`. The
+/// browseId starts with MPSP — anything else returns None so callers
+/// don't accidentally render a non-podcast row in the Podcasts tab.
+fn parse_podcast_from_two_row(two_row: &Value) -> Option<PodcastSummary> {
+    let browse_id = two_row["navigationEndpoint"]["browseEndpoint"]["browseId"]
+        .as_str()?
+        .to_string();
+    if !browse_id.starts_with("MPSP") {
+        return None;
+    }
+    let title = runs_text(&two_row["title"]["runs"]);
+    if title.is_empty() {
+        return None;
+    }
+    let author = runs_text(&two_row["subtitle"]["runs"]);
+    let artwork_url = best_thumbnail(
+        &two_row["thumbnailRenderer"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
+    );
+    Some(PodcastSummary {
+        browse_id,
+        title,
+        author,
+        artwork_url,
+    })
+}
+
+/// Parse a podcast / show row from a `musicResponsiveListItemRenderer`.
+/// Same MPSP-only constraint as the two-row variant.
+fn parse_podcast_from_list_item(renderer: &Value) -> Option<PodcastSummary> {
+    let browse_id = renderer["navigationEndpoint"]["browseEndpoint"]["browseId"]
+        .as_str()?
+        .to_string();
+    if !browse_id.starts_with("MPSP") {
+        return None;
+    }
+    let flex_columns = renderer["flexColumns"].as_array()?;
+    let title = flex_columns
+        .first()
+        .map(|c| runs_text(&c["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"]))
+        .unwrap_or_default();
+    if title.is_empty() {
+        return None;
+    }
+    let author = flex_columns
+        .get(1)
+        .map(|c| runs_text(&c["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"]))
+        .unwrap_or_default();
+    let artwork_url = best_thumbnail(
+        &renderer["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
+    );
+    Some(PodcastSummary {
+        browse_id,
+        title,
+        author,
+        artwork_url,
+    })
 }
 
 fn parse_library_artists(data: &Value) -> Vec<ArtistSummary> {

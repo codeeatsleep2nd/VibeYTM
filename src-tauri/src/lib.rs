@@ -384,6 +384,7 @@ pub fn run() {
             commands::browse::get_library_songs,
             commands::browse::get_library_albums,
             commands::browse::get_library_artists,
+            commands::browse::get_library_podcasts,
             commands::browse::save_playlist_to_library,
             commands::browse::remove_playlist_from_library,
             commands::browse::get_lyrics,
@@ -451,6 +452,21 @@ pub fn run() {
                 });
             }
             state::persistence::spawn_saver(app.handle().clone(), player_state.clone());
+
+            // Per-episode resume: load the saved per-videoId progress
+            // map and manage it so play_track can look up a previously
+            // partially-listened position. spawn_saver_episode_progress
+            // periodically writes new progress to disk for the
+            // currently-playing episode.
+            let episode_store = state::episode_progress::load(app.handle());
+            let episode_state: state::episode_progress::SharedEpisodeProgress =
+                Arc::new(tokio::sync::RwLock::new(episode_store));
+            app.manage(episode_state.clone());
+            commands::player::spawn_episode_progress_saver(
+                app.handle().clone(),
+                player_state.clone(),
+                episode_state.clone(),
+            );
 
             let integrations = integrations::register_integrations();
             for integration in integrations {

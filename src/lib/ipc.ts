@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary, Lyrics } from './types';
+import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary, PodcastSummary, Lyrics } from './types';
 import type { RepeatMode } from './types';
 
 export interface CacheStats {
@@ -250,6 +250,7 @@ export const browseApi = {
   getLibrarySongs: () => invoke<TrackInfo[]>('get_library_songs'),
   getLibraryAlbums: () => invoke<AlbumSummary[]>('get_library_albums'),
   getLibraryArtists: () => invoke<ArtistSummary[]>('get_library_artists'),
+  getLibraryPodcasts: () => invoke<PodcastSummary[]>('get_library_podcasts'),
   savePlaylistToLibrary: (playlistId: string) =>
     invoke<void>('save_playlist_to_library', { playlistId }),
   removePlaylistFromLibrary: (playlistId: string) =>

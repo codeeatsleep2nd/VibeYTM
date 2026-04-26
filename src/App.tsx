@@ -258,12 +258,14 @@ const App: FC = () => {
     }
     if (currentPath === 'settings') return <SettingsPage />;
     if (currentPath.startsWith('library')) {
-      // library, library/playlists, library/songs, library/albums, library/artists
+      // library, library/playlists, library/songs, library/albums,
+      // library/artists, library/podcasts
       const sub = currentPath.split('/')[1] as
         | 'playlists'
         | 'songs'
         | 'albums'
         | 'artists'
+        | 'podcasts'
         | undefined;
       return (
         <LibraryPage

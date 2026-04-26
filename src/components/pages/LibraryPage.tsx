@@ -4,6 +4,7 @@ import type {
   TrackInfo,
   AlbumSummary,
   ArtistSummary,
+  PodcastSummary,
 } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
 import { readCache, writeCache } from '../../lib/persistentCache';
@@ -23,9 +24,15 @@ const PERSIST_KEYS = {
   songs: 'library:songs',
   albums: 'library:albums',
   artists: 'library:artists',
+  podcasts: 'library:podcasts',
 } as const;
 
-export type LibraryTab = 'playlists' | 'songs' | 'albums' | 'artists';
+export type LibraryTab =
+  | 'playlists'
+  | 'songs'
+  | 'albums'
+  | 'artists'
+  | 'podcasts';
 
 interface LibraryPageProps {
   activeTab: LibraryTab;
@@ -46,6 +53,7 @@ const TAB_TITLES: Record<LibraryTab, string> = {
   songs: 'Songs',
   albums: 'Albums',
   artists: 'Artists',
+  podcasts: 'Podcasts',
 };
 
 export const LibraryPage: FC<LibraryPageProps> = ({
@@ -68,6 +76,9 @@ export const LibraryPage: FC<LibraryPageProps> = ({
   );
   const [artists, setArtists] = useState<ArtistSummary[]>(
     () => readCache<ArtistSummary[]>(PERSIST_KEYS.artists) ?? [],
+  );
+  const [podcasts, setPodcasts] = useState<PodcastSummary[]>(
+    () => readCache<PodcastSummary[]>(PERSIST_KEYS.podcasts) ?? [],
   );
   const [isLoading, setIsLoading] = useState(false);
 
@@ -111,6 +122,14 @@ export const LibraryPage: FC<LibraryPageProps> = ({
             }
             break;
           }
+          case 'podcasts': {
+            const data = await browseApi.getLibraryPodcasts();
+            if (!cancelled) {
+              setPodcasts(data);
+              writeCache(PERSIST_KEYS.podcasts, data);
+            }
+            break;
+          }
         }
       } catch (e) {
         console.error('[LibraryPage] fetch failed:', e);
@@ -130,7 +149,8 @@ export const LibraryPage: FC<LibraryPageProps> = ({
     (activeTab === 'playlists' && playlists.length > 0) ||
     (activeTab === 'songs' && songs.length > 0) ||
     (activeTab === 'albums' && albums.length > 0) ||
-    (activeTab === 'artists' && artists.length > 0);
+    (activeTab === 'artists' && artists.length > 0) ||
+    (activeTab === 'podcasts' && podcasts.length > 0);
 
   if (isLoading && !currentTabHasData) {
     return <LoadingSpinner />;
@@ -327,6 +347,39 @@ export const LibraryPage: FC<LibraryPageProps> = ({
             </div>
           ) : (
             <EmptyState label="artists" />
+          )}
+        </>
+      )}
+
+      {activeTab === 'podcasts' && (
+        <>
+          {podcasts.length > 0 ? (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                gap: '20px',
+              }}
+            >
+              {podcasts.map((p) => (
+                <AlbumCard
+                  key={p.browseId}
+                  artworkUrl={p.artworkUrl}
+                  title={p.title}
+                  subtitle={p.author}
+                  onClick={() => onOpenPlaylist?.(p.browseId)}
+                  // Click on the play icon opens the show; the first
+                  // episode plays automatically once it's loaded
+                  // through the existing autoPlayPlaylist branch.
+                  onPlay={() => {
+                    playFirstFromPlaylist(p.browseId);
+                    onOpenPlaylist?.(p.browseId);
+                  }}
+                />
+              ))}
+            </div>
+          ) : (
+            <EmptyState label="podcasts" />
           )}
         </>
       )}

@@ -209,6 +209,20 @@ pub async fn get_library_artists(
 }
 
 #[tauri::command]
+pub async fn get_library_podcasts(
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<Vec<PodcastSummary>, String> {
+    tracing::info!("browse::get_library_podcasts called");
+    let result = api.get_library_podcasts(&app).await.map_err(|e| {
+        tracing::error!(error = %e, "browse::get_library_podcasts failed");
+        e.to_string()
+    })?;
+    tracing::info!(podcasts = result.len(), "browse::get_library_podcasts done");
+    Ok(result)
+}
+
+#[tauri::command]
 pub async fn save_playlist_to_library(
     playlist_id: String,
     app: AppHandle,

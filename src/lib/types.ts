@@ -59,6 +59,15 @@ export interface PlaylistSummary {
   trackCount?: number;
 }
 
+/** A row in the user's "Subscribed podcasts" library section. */
+export interface PodcastSummary {
+  /** MPSP* identifier — opens via the existing PlaylistDetailPage chain. */
+  browseId: string;
+  title: string;
+  author: string;
+  artworkUrl: string;
+}
+
 export interface PlaylistDetail {
   playlistId: string;
   title: string;
