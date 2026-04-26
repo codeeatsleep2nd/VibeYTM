@@ -202,6 +202,13 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             // debug_assertions so release builds don't write diagnostic
             // strings (which can occasionally include account-adjacent data)
             // to on-disk log files.
+            // Surface bridge debug lines + detect "bridge loaded" so we can
+            // re-push the persisted volume into the new YTM page session.
+            // Without this, the bridge's `__VIBEYTM_DESIRED_VOLUME_PCT__`
+            // stays undefined until the user touches the slider — and
+            // YTM's <video> happily plays at its own default volume on
+            // every navigation.
+            let mut bridge_just_loaded = false;
             #[cfg(debug_assertions)]
             if !bs.debug.is_empty() {
                 let mut seen = last_debug_len.lock().await;
@@ -215,11 +222,43 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 *seen = bs.debug.len();
                 drop(seen);
                 for line in new_lines {
+                    if line.contains("bridge loaded on ") {
+                        bridge_just_loaded = true;
+                    }
                     tracing::info!(bridge = %line, "bridge debug");
                 }
             }
             #[cfg(not(debug_assertions))]
-            let _ = &bs.debug;
+            {
+                // Release builds still need to detect bridge reloads to
+                // re-seed the volume.
+                for line in bs.debug.iter() {
+                    if line.contains("bridge loaded on ") {
+                        bridge_just_loaded = true;
+                        break;
+                    }
+                }
+            }
+            if bridge_just_loaded {
+                // Push the persisted volume into the freshly loaded YTM
+                // page so the prototype-level volume lock has something
+                // to clamp to. Otherwise the user's "I set volume to 0
+                // last session" intent is silently ignored on every
+                // page load.
+                let stored_vol = player_state.read().await.volume;
+                if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
+                    let args = format!("{{\"level\":{}}}", stored_vol);
+                    let _ = crate::webview_bridge::exec_playback_command_with_args(
+                        &window,
+                        "set_volume",
+                        &args,
+                    );
+                    tracing::info!(
+                        volume = stored_vol,
+                        "pushed persisted volume on bridge load"
+                    );
+                }
+            }
 
             // Login-state emission is always attempted, even on the login-only
             // frame, because that frame is the whole point of the check (player
