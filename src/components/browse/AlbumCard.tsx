@@ -44,6 +44,11 @@ export const AlbumCard: FC<AlbumCardProps> = ({
       onClick={onClick}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      // The button itself is unstyled (no glass) so the cover floats on
+      // the page like Apple Music. The glass card treatment is applied
+      // to the COVER container below — when hovered, the cover gets a
+      // bright inset rim + brighter inset highlight, the same Liquid
+      // Glass tier used for content cards across the app.
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -65,6 +70,15 @@ export const AlbumCard: FC<AlbumCardProps> = ({
           borderRadius: 'var(--radius-lg)',
           overflow: 'hidden',
           background: 'var(--color-surface-2)',
+          // Inset bright rim so the cover reads as a discrete glass
+          // tile. Brighter on hover to match the rim treatment of the
+          // chrome / sidebar / queue plates. Outer shadow gives the
+          // tile lift off the ambient page gradient.
+          boxShadow: isHovered
+            ? 'inset 0 1px 0 var(--glass-rim-bright), 0 12px 28px oklch(0% 0 0 / 0.40), 0 2px 6px oklch(0% 0 0 / 0.25)'
+            : 'inset 0 1px 0 var(--glass-rim-mid), 0 6px 16px oklch(0% 0 0 / 0.28)',
+          transition:
+            'box-shadow var(--duration-normal) var(--ease-out)',
         }}
       >
         <CachedImage

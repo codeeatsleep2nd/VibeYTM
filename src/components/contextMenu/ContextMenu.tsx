@@ -138,6 +138,10 @@ export const ContextMenu: FC<ContextMenuProps> = ({
     <div
       ref={ref}
       role="menu"
+      // Liquid Glass card — popover menu over arbitrary page content.
+      // Uses the card tier (mid translucency) so the page underneath
+      // tints the menu without becoming hard to read.
+      className="liquid-glass-card"
       style={{
         position: 'fixed',
         top: adjustedPosition.y,
@@ -146,10 +150,9 @@ export const ContextMenu: FC<ContextMenuProps> = ({
         minWidth: MENU_MIN_WIDTH,
         maxWidth: MENU_MAX_WIDTH,
         padding: MENU_PADDING,
-        background: 'var(--color-surface-2)',
         borderRadius: 'var(--radius-md)',
-        boxShadow: '0 12px 40px oklch(0% 0 0 / 0.5)',
-        border: '1px solid oklch(100% 0 0 / 0.06)',
+        boxShadow:
+          'inset 0 1px 0 var(--glass-rim-bright), 0 12px 40px oklch(0% 0 0 / 0.5)',
         fontSize: 'var(--text-sm)',
         color: 'var(--color-text-primary)',
         userSelect: 'none',

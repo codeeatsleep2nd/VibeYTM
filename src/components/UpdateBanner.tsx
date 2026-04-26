@@ -70,17 +70,18 @@ export const UpdateBanner: FC = () => {
     <div
       role="status"
       aria-live="polite"
+      // Liquid Glass card — toast-style banner over the player chrome.
+      className="liquid-glass-card"
       style={{
         position: 'fixed',
         bottom: 'calc(var(--player-bar-height, 88px) + var(--space-4))',
         right: 'var(--space-4)',
         zIndex: 1000,
         maxWidth: '380px',
-        background: 'var(--color-surface-2, oklch(20% 0 0))',
-        border: '1px solid oklch(100% 0 0 / 0.1)',
         borderRadius: 'var(--radius-md)',
         padding: 'var(--space-4)',
-        boxShadow: '0 12px 32px oklch(0% 0 0 / 0.4)',
+        boxShadow:
+          'inset 0 1px 0 var(--glass-rim-bright), 0 12px 32px oklch(0% 0 0 / 0.4)',
         display: 'flex',
         flexDirection: 'column',
         gap: 'var(--space-2)',

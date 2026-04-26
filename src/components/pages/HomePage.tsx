@@ -192,9 +192,15 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
           position: 'sticky',
           top: 0,
           zIndex: 10,
-          background: 'var(--color-surface-1)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
+          // Liquid Glass sticky header — translucent so the page content
+          // visibly scrolls under it; blur + saturate diffuse it.
+          background:
+            'linear-gradient(180deg, oklch(100% 0 0 / 0.06) 0%, oklch(100% 0 0 / 0) 30%), var(--glass-bg-subtle)',
+          backdropFilter:
+            'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
+          WebkitBackdropFilter:
+            'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
+          boxShadow: 'inset 0 -1px 0 var(--glass-rim-dim)',
           // Match the sidebar nav's top padding so the greeting vertically
           // aligns with the Home button (issue #59).
           paddingTop: 'var(--space-3)',

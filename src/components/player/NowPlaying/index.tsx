@@ -107,6 +107,12 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
       ariaLabel="Now playing"
       slideFrom="bottom"
       zIndex={80}
+      // Liquid Glass plate — same chrome tier as the player bar / queue
+      // drawer / sidebar so the panel reads as a peer chrome surface.
+      // Token-driven via tokens.css so any global tune-up propagates.
+      background="linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 4%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.18) 100%), var(--glass-bg-chrome)"
+      backdropFilter="blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))"
+      boxShadow="inset 0 1px 0 var(--glass-rim-bright), var(--glass-shadow-strong)"
     >
       <NowPlayingBody
         splitMode={splitMode}

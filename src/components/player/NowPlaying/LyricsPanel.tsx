@@ -51,9 +51,20 @@ const CONTAINER_STYLE: CSSProperties = {
   height:
     'calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3))',
   padding: 'var(--space-6)',
-  background: 'var(--color-surface-2)',
+  // Liquid Glass card tier — translucent surface so the cover-tinted
+  // backdrop and ambient page colour bleed through. Backdrop-filter
+  // on a fixed-position parent (NowPlaying overlay) so this nested
+  // panel inherits the chrome plate's blur context.
+  background:
+    'linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.10) 100%), var(--glass-bg-card)',
+  backdropFilter:
+    'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
+  WebkitBackdropFilter:
+    'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
+  border: '1px solid var(--glass-rim-mid)',
   borderRadius: 'var(--radius-lg)',
-  boxShadow: '0 24px 60px oklch(0% 0 0 / 0.5)',
+  boxShadow:
+    'inset 0 1px 0 var(--glass-rim-bright), 0 24px 60px oklch(0% 0 0 / 0.5)',
   overflowY: 'auto',
   display: 'flex',
   flexDirection: 'column',

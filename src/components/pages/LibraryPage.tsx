@@ -169,9 +169,16 @@ export const LibraryPage: FC<LibraryPageProps> = ({
           position: 'sticky',
           top: 0,
           zIndex: 10,
-          background: 'var(--color-surface-1)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
+          // Liquid Glass tier — sticky title bar over the library scroll
+          // area. Translucent so the page content scrolls visibly under
+          // it; backdrop-filter handles the blur diffusion.
+          background:
+            'linear-gradient(180deg, oklch(100% 0 0 / 0.06) 0%, oklch(100% 0 0 / 0) 30%), var(--glass-bg-subtle)',
+          backdropFilter:
+            'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
+          WebkitBackdropFilter:
+            'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
+          boxShadow: 'inset 0 -1px 0 var(--glass-rim-dim)',
           // Line the library title up with the sidebar's Library group
           // headings (issue #59).
           paddingTop: 'var(--space-3)',

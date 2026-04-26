@@ -63,6 +63,9 @@ export const ShortcutCheatsheet: FC<ShortcutCheatsheetProps> = ({
       <div
         role="dialog"
         aria-modal="true"
+        // Liquid Glass card — modal sheet sits on the dimmed scrim and
+        // refracts whatever's behind. Same recipe as the lyrics panel.
+        className="liquid-glass-card"
         style={{
           position: 'absolute',
           top: '50%',
@@ -70,9 +73,9 @@ export const ShortcutCheatsheet: FC<ShortcutCheatsheetProps> = ({
           transform: 'translate(-50%, -50%)',
           width: 'min(520px, calc(100vw - var(--space-12)))',
           maxHeight: 'calc(100vh - var(--space-12))',
-          background: 'var(--color-surface-2)',
           borderRadius: 'var(--radius-xl)',
-          boxShadow: '0 24px 80px oklch(0% 0 0 / 0.6)',
+          boxShadow:
+            'inset 0 1px 0 var(--glass-rim-bright), 0 24px 80px oklch(0% 0 0 / 0.6)',
           padding: 'var(--space-6)',
           display: 'flex',
           flexDirection: 'column',
