@@ -15,23 +15,28 @@ A YouTube Music desktop app built with Tauri, React, and Rust.
 ## Features
 
 - Custom UI with sidebar navigation, album grids, and player bar
+- Apple Music-style player chrome with foldable sidebar
 - Background playback — music continues when the window is closed
 - System tray with playback controls
 - Media key support (Play/Pause, Next, Previous)
 - Now Playing Control Center integration (macOS)
 - Desktop notifications on track change
 - Global keyboard shortcuts (configurable)
-- Queue management with drag-to-reorder
-- Synced lyrics display with karaoke-style per-line highlighting (YTM timed lyrics → LRCLIB → NetEase fallback, persisted per-track on disk)
-- Lyrics pre-fetch for the current track and the next two in YTM's upcoming queue
-- Blur-and-spinner on reload — refreshing a page keeps previous content visible while fresh data arrives
-- Search history — your last 5 queries reappear as quick-tap chips on the search page
-- Disk-cache stats in Settings (images, tracks, lyrics) with one-click clear
-- Custom CSS themes (coming soon)
+- Playing queue with drag-to-reorder and album artwork
+- Synced lyrics with karaoke-style highlighting (YTM timed lyrics → LRCLIB → NetEase fallback)
+- Lyrics pre-fetch for current and next tracks in queue
+- Audio counterpart detection — always shows album art, never video thumbnails
+- Session persistence — resumes last track and position on restart
+- Search history — last 5 queries as quick-tap chips
+- Blur-and-spinner reload UX
+- Disk-cache stats in Settings with one-click clear
+- Custom About window with version info
 
 ## Screenshots
 
-[screenshots will be added]
+<p align="center">
+  <img src="docs/screenshot-home.png" alt="Home Page" width="800">
+</p>
 
 ## Tech Stack
 
@@ -48,7 +53,9 @@ A YouTube Music desktop app built with Tauri, React, and Rust.
 
 ### Download
 
-Download the latest `.dmg` from the Releases page.
+Download the latest `.dmg` from the [Releases page](https://github.com/codeeatsleep2nd/VibeYTM/releases/latest).
+
+> **macOS Gatekeeper:** After installing, run `xattr -cr /Applications/VibeYTM.app` in Terminal if macOS says the app is damaged.
 
 ### Build from Source
 
@@ -58,8 +65,8 @@ Prerequisites:
 - pnpm
 
 ```bash
-git clone <repo-url>
-cd vibeytm
+git clone https://github.com/codeeatsleep2nd/VibeYTM.git
+cd VibeYTM
 pnpm install
 pnpm tauri build
 ```
@@ -93,8 +100,8 @@ See [DESIGN.md](DESIGN.md) for the full system design.
 vibeytm/
 ├── src/                    # React frontend
 │   ├── components/         # UI components (layout, player, browse, pages)
-│   ├── hooks/              # React hooks (usePlayerState, useTauriEvent)
-│   ├── lib/                # Types, IPC wrappers, events
+│   ├── hooks/              # React hooks (player state, lyrics, login, seek filter)
+│   ├── lib/                # Types, IPC wrappers, events, caches
 │   └── styles/             # CSS tokens + global styles
 ├── src-tauri/              # Rust backend
 │   └── src/
