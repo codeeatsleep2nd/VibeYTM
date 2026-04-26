@@ -27,6 +27,29 @@ const App: FC = () => {
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
+  // Sidebar fold state — persisted across app launches via localStorage so
+  // the user's preference survives restarts.
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('vibeytm:sidebarCollapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'vibeytm:sidebarCollapsed',
+        isSidebarCollapsed ? '1' : '0',
+      );
+    } catch {
+      // localStorage may be unavailable in private browsing — non-fatal.
+    }
+  }, [isSidebarCollapsed]);
+  const toggleSidebar = useCallback(
+    () => setIsSidebarCollapsed((prev) => !prev),
+    [],
+  );
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
   // Flips true once the Home page has finished its first real render (or we
@@ -178,6 +201,8 @@ const App: FC = () => {
     <>
     <AppShell
       currentPath={currentPath}
+      sidebarCollapsed={isSidebarCollapsed}
+      onToggleSidebar={toggleSidebar}
       onNavigate={(path) => {
         setViewingPlaylist(null);
         setIsNowPlayingOpen(false);

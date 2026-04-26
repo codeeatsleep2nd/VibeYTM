@@ -289,6 +289,7 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         padding: '0 var(--space-4)',
         gap: 'var(--space-3)',
         zIndex: 100,
+        transition: 'left var(--duration-normal) var(--ease-out)',
       }}
     >
       {/* LEFT — transports (Apple Music: flat white glyphs, prev/play/next

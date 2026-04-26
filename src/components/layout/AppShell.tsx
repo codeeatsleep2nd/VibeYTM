@@ -7,6 +7,8 @@ import { QueuePanel } from '../player/QueuePanel';
 interface AppShellProps {
   currentPath: string;
   onNavigate: (path: string) => void;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
   nowPlayingOpen: boolean;
   onToggleNowPlaying: () => void;
   lyricsOpen: boolean;
@@ -19,6 +21,8 @@ interface AppShellProps {
 export const AppShell: FC<AppShellProps> = ({
   currentPath,
   onNavigate,
+  sidebarCollapsed,
+  onToggleSidebar,
   nowPlayingOpen,
   onToggleNowPlaying,
   lyricsOpen,
@@ -29,11 +33,13 @@ export const AppShell: FC<AppShellProps> = ({
 }) => (
   <div
     style={{
+      // Override --sidebar-width inline so every consumer (Sidebar, the
+      // PlayerChrome's `left:`, NowPlaying / QueuePanel positioning math)
+      // automatically picks up the collapsed/expanded width without
+      // touching their own files.
+      ['--sidebar-width' as string]: sidebarCollapsed ? '64px' : '240px',
       display: 'grid',
       gridTemplateColumns: 'var(--sidebar-width) 1fr',
-      // PlayerChrome is `position: fixed` at the bottom (preserves the
-      // original PlayerBar location & size; Apple Music styling is
-      // applied to the bar itself, not its position).
       gridTemplateRows: '1fr',
       height: '100%',
       overflow: 'hidden',
@@ -54,7 +60,12 @@ export const AppShell: FC<AppShellProps> = ({
       }}
     />
 
-    <Sidebar currentPath={currentPath} onNavigate={onNavigate} />
+    <Sidebar
+      currentPath={currentPath}
+      onNavigate={onNavigate}
+      collapsed={sidebarCollapsed}
+      onToggleCollapsed={onToggleSidebar}
+    />
 
     <main
       style={{

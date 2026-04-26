@@ -39,6 +39,18 @@ export {
   VolumeX as SpeakerMuteIcon,
   Volume1 as SpeakerLowIcon,
   Volume2 as SpeakerHighIcon,
+  // Sidebar nav icons (chosen to match Apple Music's library/playlist/etc. SF Symbols)
+  House as HomeIcon,
+  Search as SearchIcon,
+  Compass as ExploreIcon,
+  ListMusic as PlaylistsIcon,
+  Music2 as SongsIcon,
+  Disc3 as AlbumsIcon,
+  Mic2 as ArtistsIcon,
+  Settings as SettingsIcon,
+  // Sidebar collapse toggle
+  PanelLeftClose as SidebarCollapseIcon,
+  PanelLeftOpen as SidebarExpandIcon,
 } from 'lucide-react';
 
 import { Heart } from 'lucide-react';
