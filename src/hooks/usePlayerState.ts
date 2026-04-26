@@ -27,7 +27,12 @@ const SEEK_TOLERANCE_SECS = 2;
 // POSITION_UPDATED events from the OLD track. If the new track is shorter
 // than the old position, the clamp in PlayerBar pins the thumb at 100%
 // for a frame before normal updates arrive. Drop those stragglers.
-const TRACK_CHANGE_RECONCILE_WINDOW_MS = 1000;
+const TRACK_CHANGE_RECONCILE_WINDOW_MS = 1500;
+// Within the reconcile window, any reported position larger than this
+// is treated as a leftover timestamp from the previous track and
+// dropped. A genuinely fresh track can't have advanced more than a
+// few seconds since the navigation completed.
+const FRESH_TRACK_MAX_POSITION_SECS = 5;
 
 const DEFAULT_STATE: PlayerState = {
   status: 'idle',
@@ -120,11 +125,22 @@ export function usePlayerState(): UsePlayerState {
     ) {
       return;
     }
-    // Reject old-track stragglers: right after TRACK_CHANGED, drop any
-    // POSITION_UPDATED whose value exceeds the new track's duration — those
-    // timestamps belong to the previous song and cause the "jump to 100%
-    // then back to 0" flash on track switches.
+    // Reject old-track stragglers: right after TRACK_CHANGED, the bridge
+    // poller may still be reporting the PREVIOUS track's elapsed time
+    // until its next cycle settles on the new src. Two filters:
+    //
+    //   1. Drop positions exceeding the new track's duration (clearly
+    //      from the previous track if it was longer).
+    //   2. Drop ANY position > FRESH_TRACK_MAX_POSITION_SECS within the
+    //      reconcile window. A genuinely fresh track can't have
+    //      advanced more than a few seconds; anything bigger is the
+    //      previous track's leftover timestamp leaking through. The
+    //      progress bar stays at 0 (set by TRACK_CHANGED handler)
+    //      until a real, in-range position arrives.
     if (now - lastTrackChangeAtRef.current < TRACK_CHANGE_RECONCILE_WINDOW_MS) {
+      if (positionSecs > FRESH_TRACK_MAX_POSITION_SECS) {
+        return;
+      }
       setState((prev) => {
         const duration = prev.track?.durationSecs ?? 0;
         if (duration > 0 && positionSecs > duration) {

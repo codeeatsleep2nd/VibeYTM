@@ -258,6 +258,17 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                         "pushed persisted volume on bridge load"
                     );
                 }
+                // Reset position to 0 on bridge reload so the progress
+                // bar doesn't flash the previous song's elapsed time
+                // before the next poll cycle settles on the new track.
+                // The reconcile window in usePlayerState filters stale
+                // POSITION_UPDATEDs; this just makes the reset
+                // proactive instead of reactive.
+                {
+                    let mut ps = player_state.write().await;
+                    ps.position_secs = 0.0;
+                }
+                let _ = app.emit("player:position", &0.0_f64);
             }
 
             // Login-state emission is always attempted, even on the login-only
