@@ -31,6 +31,11 @@ const NavItem: FC<NavItemProps> = ({ label, icon, isActive, onClick }) => (
     onClick={onClick}
     aria-current={isActive ? 'page' : undefined}
     style={{
+      // `position: relative` so the absolutely-positioned active
+      // accent bar (the <span> below) anchors to the row, not the
+      // viewport. The bar has `pointer-events: none` so it never
+      // intercepts clicks meant for the button itself.
+      position: 'relative',
       display: 'flex',
       alignItems: 'center',
       gap: 'var(--space-3)',
@@ -64,6 +69,26 @@ const NavItem: FC<NavItemProps> = ({ label, icon, isActive, onClick }) => (
       }
     }}
   >
+    {/* Active-row left accent bar — Apple-Music signature. Hidden when
+        inactive but kept mounted so the show/hide is a pure opacity +
+        transform-X transition (compositor-only). */}
+    <span
+      aria-hidden
+      style={{
+        position: 'absolute',
+        left: 4,
+        top: 8,
+        bottom: 8,
+        width: 3,
+        borderRadius: 2,
+        background: 'var(--color-accent)',
+        opacity: isActive ? 1 : 0,
+        transform: isActive ? 'translateX(0)' : 'translateX(-4px)',
+        transition:
+          'opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out)',
+        pointerEvents: 'none',
+      }}
+    />
     <span
       style={{
         display: 'inline-flex',
