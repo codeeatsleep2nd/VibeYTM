@@ -41,6 +41,36 @@ const inflight = new Map<string, Promise<FetchResult>>();
  * hook fetches that data lazily on track change and caches the
  * result so subsequent renders are free.
  */
+/**
+ * Fire-and-forget warmer for an upcoming track's audio-counterpart
+ * artwork. Cache-first: if the videoId is already resolved (or has
+ * a fetch in-flight), this is a no-op. Otherwise it invokes the
+ * same IPC the hook uses, populating the module-level cache so that
+ * when the user actually skips to this track and the hook mounts,
+ * `state.override` is initialised from the cache and renders
+ * immediately — no flash of placeholder, no blocking IPC on the
+ * track-change critical path.
+ */
+export function preloadAudioCounterpartArtwork(
+  videoId: string | undefined | null,
+): void {
+  if (!videoId) return;
+  if (cache.has(videoId) || inflight.has(videoId)) return;
+  const promise: Promise<FetchResult> = browseApi
+    .getAudioCounterpartArtwork(videoId)
+    .catch((): FetchResult => FETCH_FAILED);
+  inflight.set(videoId, promise);
+  promise.then((result) => {
+    inflight.delete(videoId);
+    if (result === FETCH_FAILED) {
+      debug.warn('preloadAudioCounterpartArtwork', 'IPC failed', { videoId });
+      return;
+    }
+    cache.set(videoId, result);
+    debug.log('preloadAudioCounterpartArtwork', 'cached', { videoId, hasUrl: !!result });
+  });
+}
+
 export function useAudioCounterpartArtwork(
   videoId: string | undefined | null,
   fallback: string | undefined | null,

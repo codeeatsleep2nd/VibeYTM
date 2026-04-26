@@ -1,11 +1,16 @@
 import { type FC, type ReactNode, useEffect } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { preloadLyrics } from '../../hooks/useLyrics';
-import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
-import { albumArtOrNothing } from '../../lib/artwork';
+import {
+  preloadAudioCounterpartArtwork,
+  useAudioCounterpartArtwork,
+} from '../../hooks/useAudioCounterpartArtwork';
+import { albumArtOrNothing, isAlbumArtUrl } from '../../lib/artwork';
+import { lookupTrackArtwork } from '../../lib/trackArtworkRegistry';
 import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
 import {
   browseApi,
+  cacheApi,
   getActivePlaylistId,
   getPlannedNext,
   getPlannedPrevious,
@@ -168,6 +173,47 @@ export const PlayerBar: FC<PlayerBarProps> = ({
     const timer = setTimeout(() => {
       if (cancelled) return;
 
+      // Cache-first preload helper used for both lyrics AND cover.
+      // Each underlying call already short-circuits on cache hits:
+      //   • preloadLyrics → useLyrics's localStorage-backed
+      //     hits/misses/failures cache; no-op if videoId is in any
+      //     of the three.
+      //   • preloadAudioCounterpartArtwork → in-memory cache map +
+      //     in-flight de-dupe; no-op if cached or already fetching.
+      //   • cacheApi.fetchImage → Rust-side disk cache; no network
+      //     hit when the URL has been fetched before.
+      // So a "preload" call when the user has visited this track
+      // before costs essentially nothing.
+      const warmCoverFor = (next: {
+        videoId: string;
+        artworkUrl?: string | null;
+      }): void => {
+        // Tier 1: cross-component registry (populated by playlist /
+        // album / library visits — clean lh3 album-art URLs).
+        let coverUrl = lookupTrackArtwork(next.videoId);
+        // Tier 2: trust the upcoming track's own artworkUrl IF it's
+        // already album art (e.g. ATV tracks the bridge surfaced
+        // cleanly). Filters out i.ytimg video thumbnails.
+        if (!coverUrl && isAlbumArtUrl(next.artworkUrl)) {
+          coverUrl = next.artworkUrl as string;
+        }
+        if (coverUrl) {
+          // URL known — prewarm the disk cache so the <img> swap
+          // when the user actually skips renders without a network
+          // round-trip.
+          void cacheApi.fetchImage(coverUrl).catch(() => {});
+          return;
+        }
+        // Tier 3: ask Rust for the audio counterpart's URL. Result
+        // populates `useAudioCounterpartArtwork`'s cache so the
+        // hook's `useState` initialiser picks it up on mount of
+        // the new now-playing render. Note: the disk-cache prewarm
+        // only fires when the URL was already known — adding it to
+        // the .then chain here would saturate the bridge with one
+        // extra IPC; deferred to the actual render path.
+        preloadAudioCounterpartArtwork(next.videoId);
+      };
+
       const planned = getPlannedNext();
       if (planned?.videoId) {
         preloadLyrics({
@@ -175,6 +221,10 @@ export const PlayerBar: FC<PlayerBarProps> = ({
           artist: planned.artist,
           title: planned.title,
           durationSecs: planned.durationSecs,
+        });
+        warmCoverFor({
+          videoId: planned.videoId,
+          artworkUrl: planned.artworkUrl,
         });
         return;
       }
@@ -193,11 +243,16 @@ export const PlayerBar: FC<PlayerBarProps> = ({
               title: next.title,
               durationSecs: next.durationSecs,
             });
+            warmCoverFor({
+              videoId: next.videoId,
+              artworkUrl: next.artworkUrl,
+            });
           }
         })
         .catch(() => {
           // Preload is best-effort — a failed upcoming-tracks lookup
-          // just means lyrics won't be warm when the user skips.
+          // just means lyrics + cover won't be warm when the user
+          // skips. Falls back to the on-demand fetch path.
         });
     }, 2000);
 

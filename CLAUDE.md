@@ -32,6 +32,15 @@ Apple Music-style YouTube Music desktop app.
 - Before touching any file that has been the subject of repeated bug reports (especially `QueuePanel.tsx`, the bridge, and `playerApi`), re-read the full file and write down the invariants it depends on. Don't edit only the diff target.
 - After each round of fixes, walk every previously-reported bug related to that area against the current code and confirm in the response that each prior fix is still in place — line numbers cited.
 
+## Conflict Detection — ASK BEFORE DECIDING
+Before implementing ANY new feature ask or bug-fix ask, scan whether it conflicts with an existing feature or established invariant. Examples that count as conflicts:
+- The new ask reverses or weakens a rule documented in CLAUDE.md (e.g. "never show video thumbnails", "use real `<button>`, not `<div role=\"button\">`", "no `transform` on `ReloadOverlay` children").
+- The new ask changes the cache lifetime of a value another feature depends on for correctness (e.g. "load lyrics from cache only" while another feature relies on remote refresh).
+- The new ask changes the source of truth for state another component reads (e.g. switching artwork from the registry to a fresh IPC when the registry was specifically introduced to avoid that IPC).
+- The new ask is the inverse of a fix shipped earlier in the same session (e.g. re-introducing always-on probes that were dropped to fix bridge saturation).
+
+When a conflict is detected, **STOP and ask the user** — phrase the conflict explicitly ("X would undo Y from commit Z; want to proceed, refine the new ask, or revert Y?") and wait for their decision. Do NOT silently pick one side. Conflicts that look minor on the diff often reintroduce the very bug the prior fix closed; the user owns that trade-off.
+
 ## Architecture
 - Two WebView model: visible React UI + hidden YouTube Music audio engine
 - Event-driven: tokio broadcast bus connects all components
