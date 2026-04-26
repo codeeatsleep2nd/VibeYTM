@@ -469,9 +469,9 @@
       document.querySelector('ytmusic-player-queue');
     if (!container) return [];
     var items = container.querySelectorAll('ytmusic-player-queue-item');
+
     var out = [];
     var seen = Object.create(null);
-    var seenWrappers = new WeakSet();
     var lastAcceptedTitle = '';
     function normalizeForDedupe(s) {
       // Strip MV / official / lyric-video / language-tag / OST decorations
@@ -489,31 +489,28 @@
       var el = items[i];
 
       // Counterpart dedupe: when YTM has matched a music video to its
-      // audio counterpart, the queue renders BOTH siblings inside one
-      // wrapper element (typically `ytmusic-player-queue-item-renderer`,
-      // historically also `ytmusic-player-queue-item-wrapper`). They
-      // have different videoIds, so the videoId-based `seen` map below
-      // can't catch the duplication on its own. Instead, track each
-      // wrapper element we've already accepted a child from, and skip
-      // any subsequent siblings from the same wrapper. The first child
-      // is what YTM marks as the user-preferred variant — typically the
-      // audio counterpart in audio mode, the video in video mode —
-      // which is also the one the player will actually play.
-      var wrapper = el.parentElement;
-      while (wrapper && wrapper !== container) {
-        var tag = (wrapper.tagName || '').toLowerCase();
-        if (
-          tag === 'ytmusic-player-queue-item-wrapper' ||
-          tag === 'ytmusic-player-queue-item-renderer'
-        ) {
+      // audio counterpart, both siblings render as separate
+      // `<ytmusic-player-queue-item>` elements. The audio side lives
+      // inside `<ytmusic-playlist-panel-video-wrapper-renderer> > div#primary-renderer`
+      // (or as a direct child of `#contents` when there's no pair), and
+      // the video sibling lives inside `... > div#counterpart-renderer`.
+      // YTM plays the primary; the counterpart is the duplicate we drop.
+      // Verified 2026-04-25 via live DOM dump in WKWebView (queue-dump
+      // diagnostic). The wrapper element name was previously guessed
+      // incorrectly (`ytmusic-player-queue-item-wrapper`); the correct
+      // discriminator is the parent slot's `id`, not the tag name.
+      var inCounterpartSlot = false;
+      var anc = el.parentElement;
+      var ancHops = 0;
+      while (anc && anc !== container && ancHops < 6) {
+        if (anc.id === 'counterpart-renderer') {
+          inCounterpartSlot = true;
           break;
         }
-        wrapper = wrapper.parentElement;
+        anc = anc.parentElement;
+        ancHops++;
       }
-      if (wrapper && wrapper !== container) {
-        if (seenWrappers.has(wrapper)) continue;
-        seenWrappers.add(wrapper);
-      }
+      if (inCounterpartSlot) continue;
 
       var data = el.data || {};
       var vid = '';
