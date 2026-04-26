@@ -8,3 +8,4 @@
 //! natively, no `acquireFetchSlot` queue needed on the frontend.
 
 pub mod cache_image;
+pub mod image_mem_cache;

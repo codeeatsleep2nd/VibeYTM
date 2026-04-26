@@ -19,6 +19,7 @@ use tauri::http::{Request, Response, StatusCode};
 use tauri::{AppHandle, Manager, UriSchemeContext, UriSchemeResponder};
 
 use crate::cache::Cache;
+use crate::protocols::image_mem_cache;
 
 /// Sniff a content-type from the first few bytes of an image. The
 /// webview's `<img>` will sniff regardless, but setting it explicitly
@@ -105,6 +106,12 @@ fn bad_request() -> Response<Vec<u8>> {
 
 fn ok_image(bytes: Vec<u8>) -> Response<Vec<u8>> {
     let mime = sniff_content_type(&bytes);
+    build_response(bytes, mime)
+}
+
+/// Build the OK response with a known mime type — used by the
+/// memory-cache hot path which already cached the sniff result.
+fn build_response(bytes: Vec<u8>, mime: &'static str) -> Response<Vec<u8>> {
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, mime)
@@ -134,6 +141,15 @@ pub fn handler(
             return;
         };
 
+        // Memory-cache hot path. Hit → respond directly without
+        // touching the disk cache or the YTM bridge. Repeat hits in
+        // the same session (e.g. re-rendering the same Home shelf
+        // after navigating away and back) skip the file read entirely.
+        if let Some((bytes, mime)) = image_mem_cache::get(&remote_url).await {
+            responder.respond(build_response(bytes, mime));
+            return;
+        }
+
         let Some(cache) = app.try_state::<Cache>() else {
             // Cache hasn't been managed yet (race with setup). Treat
             // as a miss — the webview will retry naturally.
@@ -143,7 +159,13 @@ pub fn handler(
 
         match cache.get_or_fetch_image(&remote_url).await {
             Ok(path) => match std::fs::read(&path) {
-                Ok(bytes) => responder.respond(ok_image(bytes)),
+                Ok(bytes) => {
+                    let mime = sniff_content_type(&bytes);
+                    // Promote to memory so the next render of the
+                    // same URL is a pure RAM fetch.
+                    image_mem_cache::set(remote_url.clone(), bytes.clone(), mime).await;
+                    responder.respond(build_response(bytes, mime));
+                }
                 Err(e) => {
                     tracing::warn!(
                         url = %remote_url,

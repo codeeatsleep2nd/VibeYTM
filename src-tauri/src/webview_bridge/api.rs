@@ -8,8 +8,11 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
+
+use super::api_cache;
 
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 // Per-request result slot keyed by req_id. A single global slot cannot support
@@ -218,4 +221,29 @@ pub async fn ytm_api_call(
             return Ok(raw);
         }
     }
+}
+
+/// Cached variant. On a hit, returns the previously-fetched response
+/// directly without crossing the bridge — same JSON string, same
+/// downstream parsers. On a miss, calls `ytm_api_call`, stores the
+/// response under `ttl`, and returns it. Pass `None` for `ttl` to
+/// always go through the bridge (use for live state like the queue
+/// scrape that must reflect the very latest YTM DOM).
+pub async fn ytm_api_call_cached(
+    app: &AppHandle,
+    endpoint: &str,
+    body_json: &str,
+    ttl: Option<Duration>,
+) -> Result<String, String> {
+    let Some(ttl) = ttl else {
+        return ytm_api_call(app, endpoint, body_json).await;
+    };
+    let key = api_cache::cache_key(endpoint, body_json);
+    if let Some(hit) = api_cache::get(&key).await {
+        tracing::info!(endpoint, key = %&key[..16], "ytm_api_call: cache hit");
+        return Ok(hit);
+    }
+    let response = ytm_api_call(app, endpoint, body_json).await?;
+    api_cache::set(key, response.clone(), ttl).await;
+    Ok(response)
 }

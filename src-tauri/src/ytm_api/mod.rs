@@ -10,7 +10,8 @@ use tauri::AppHandle;
 use tokio::sync::OnceCell;
 
 use crate::state::player::TrackInfo;
-use crate::webview_bridge::api::ytm_api_call;
+use crate::webview_bridge::api::{ytm_api_call, ytm_api_call_cached};
+use crate::webview_bridge::api_cache;
 
 use self::types::*;
 
@@ -118,7 +119,14 @@ impl YtmApi {
         if let Some(ref params) = filter {
             body["params"] = serde_json::Value::String(params.clone());
         }
-        let raw = ytm_api_call(app, "search", &body.to_string()).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(
+            app,
+            "search",
+            &body.to_string(),
+            Some(api_cache::ttl::SEARCH),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         let results = parse_search_results(&data, filter.as_deref());
         Ok(results)
@@ -127,7 +135,9 @@ impl YtmApi {
     /// Fetch home page shelves with recommended content via the real YTM API.
     pub async fn get_home(&self, app: &AppHandle) -> anyhow::Result<Vec<Shelf>> {
         let body = serde_json::json!({ "browseId": "FEmusic_home" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::HOME))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         let mut shelves = parse_home_shelves(&data);
 
@@ -184,7 +194,7 @@ impl YtmApi {
         };
         tracing::info!(original = %playlist_id, browse_id = %browse_id, "get_playlist browse_id");
         let body = serde_json::json!({ "browseId": browse_id }).to_string();
-        let raw = ytm_api_call(app, "browse", &body)
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::PLAYLIST))
             .await
             .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
@@ -194,7 +204,9 @@ impl YtmApi {
     /// Fetch explore page shelves via the real YTM API.
     pub async fn get_explore(&self, app: &AppHandle) -> anyhow::Result<Vec<Shelf>> {
         let body = serde_json::json!({ "browseId": "FEmusic_explore" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::HOME))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         let mut shelves = parse_explore_shelves(&data);
 
@@ -243,7 +255,9 @@ impl YtmApi {
         app: &AppHandle,
     ) -> anyhow::Result<Vec<PlaylistSummary>> {
         let body = serde_json::json!({ "browseId": "FEmusic_liked_playlists" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::LIBRARY))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_playlists(&data))
     }
@@ -254,7 +268,9 @@ impl YtmApi {
         app: &AppHandle,
     ) -> anyhow::Result<Vec<TrackInfo>> {
         let body = serde_json::json!({ "browseId": "FEmusic_liked_videos" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::LIBRARY))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_songs(&data))
     }
@@ -265,7 +281,9 @@ impl YtmApi {
         app: &AppHandle,
     ) -> anyhow::Result<Vec<AlbumSummary>> {
         let body = serde_json::json!({ "browseId": "FEmusic_liked_albums" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::LIBRARY))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_albums(&data))
     }
@@ -276,7 +294,9 @@ impl YtmApi {
         app: &AppHandle,
     ) -> anyhow::Result<Vec<ArtistSummary>> {
         let body = serde_json::json!({ "browseId": "FEmusic_library_corpus_track_artists" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::LIBRARY))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_artists(&data))
     }
@@ -294,7 +314,9 @@ impl YtmApi {
         app: &AppHandle,
     ) -> anyhow::Result<Vec<PodcastSummary>> {
         let body = serde_json::json!({ "browseId": "FEmusic_library_landing" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::LIBRARY))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_podcasts(&data))
     }
