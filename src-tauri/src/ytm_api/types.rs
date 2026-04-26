@@ -100,6 +100,19 @@ pub struct Lyrics {
     /// static, non-highlighting view.
     #[serde(default)]
     pub lines: Option<Vec<LyricLine>>,
+    /// Artist the SOURCE believed these lyrics belonged to. Stored so a
+    /// later read can sanity-check the cached entry against the playing
+    /// track's artist — when a match function (e.g. NetEase's title-only
+    /// substring search) returned a wrong song's lyrics, the saved
+    /// `matched_artist` will diverge from the request's artist and the
+    /// cache layer can invalidate + re-fetch instead of serving the lie.
+    #[serde(default)]
+    pub matched_artist: Option<String>,
+    /// Title the SOURCE believed these lyrics belonged to. Companion to
+    /// `matched_artist` — both fields together enable the cache-read
+    /// sanity check.
+    #[serde(default)]
+    pub matched_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

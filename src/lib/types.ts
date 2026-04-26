@@ -109,4 +109,12 @@ export interface Lyrics {
   source?: string | null;
   /** Per-line timings when YTM returned synced lyrics; else null. */
   lines?: LyricLine[] | null;
+  /** Artist + title the SOURCE believed these lyrics belonged to. Stamped
+   *  at fetch time so a later cache-read sanity check can spot a wrong-
+   *  song match (e.g. NetEase's title-substring search returning some
+   *  unrelated track) and re-fetch instead of serving the lie forever.
+   *  Either field can be `undefined` for entries cached before stamping
+   *  was added — those entries are trusted. */
+  matchedArtist?: string | null;
+  matchedTitle?: string | null;
 }

@@ -372,6 +372,7 @@ pub fn run() {
             commands::browse::save_playlist_to_library,
             commands::browse::remove_playlist_from_library,
             commands::browse::get_lyrics,
+            commands::browse::invalidate_lyrics_cache,
             commands::browse::get_upcoming_tracks,
             commands::browse::get_audio_counterpart_artwork,
             commands::cache::cache_fetch_image,

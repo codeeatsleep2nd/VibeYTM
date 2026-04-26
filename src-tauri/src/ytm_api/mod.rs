@@ -319,6 +319,10 @@ impl YtmApi {
     /// When YTM ships only plain text (the common case), a fallback hop to
     /// the public LRCLIB database supplies per-line timings — required for
     /// the highlight-and-scroll-with-playback UX.
+    /// When `force_external` is true, skip the "YTM has synced lines →
+    /// return YTM" short-circuit and go straight to the LRCLIB/NetEase
+    /// race. Used by the Refresh-lyrics affordance when YTM's lyrics tab
+    /// itself returns the wrong song's content.
     pub async fn get_lyrics(
         &self,
         app: &AppHandle,
@@ -326,6 +330,7 @@ impl YtmApi {
         artist: Option<&str>,
         title: Option<&str>,
         duration_secs: Option<f64>,
+        force_external: bool,
     ) -> anyhow::Result<Lyrics> {
         // Always look up lyrics for the AUDIO counterpart, never the music
         // video. YTM matches every official music video to its audio track
@@ -389,9 +394,29 @@ impl YtmApi {
         let browse_data: Value = serde_json::from_str(&browse_raw)?;
         let mut lyrics = parse_lyrics(&browse_data);
 
-        // YTM already shipped synced lines — use them and skip external sources.
-        if lyrics.lines.as_ref().map_or(false, |l| !l.is_empty()) {
+        // YTM already shipped synced lines — use them and skip external
+        // sources, UNLESS the caller explicitly forced an external lookup
+        // (the Refresh button — user is telling us "YTM has the wrong
+        // lyrics, please try LRCLIB/NetEase instead"). When forced we
+        // discard YTM's synced lines and the plain text and fall through
+        // to the race below; the LRCLIB/NetEase result becomes the new
+        // baseline that gets cached.
+        if !force_external && lyrics.lines.as_ref().map_or(false, |l| !l.is_empty()) {
+            // YTM's lyrics tab has no per-track verification; we record the
+            // playing track's metadata so a later cache-read sanity check
+            // can spot a divergence (e.g. videoId got re-bound to a
+            // different audio counterpart on YTM's side).
+            lyrics.matched_artist = effective_artist.clone();
+            lyrics.matched_title = effective_title.clone();
             return Ok(lyrics);
+        }
+        if force_external {
+            tracing::info!(
+                video_id,
+                "force_external=true — discarding YTM lyrics tab and racing LRCLIB/NetEase"
+            );
+            lyrics.lines = None;
+            lyrics.text = String::new();
         }
 
         // YTM returned an empty lyrics tab. Earlier we treated this as a
@@ -417,9 +442,33 @@ impl YtmApi {
             return Ok(lyrics);
         }
 
+        // Diagnostic — every prior session showed `force_external=true`
+        // logging followed by silence. Confirming what the race actually
+        // sees so we know if it's running or being short-circuited.
+        tracing::info!(
+            video_id,
+            effective_artist = ?effective_artist,
+            effective_title = ?effective_title,
+            effective_duration = ?effective_duration,
+            "lyrics: about to race LRCLIB/NetEase"
+        );
         if let (Some(artist), Some(title)) = (effective_artist.as_deref(), effective_title.as_deref()) {
+            if artist.trim().is_empty() || title.trim().is_empty() {
+                tracing::warn!(
+                    video_id,
+                    artist_len = artist.len(),
+                    title_len = title.len(),
+                    "lyrics: artist or title is empty — race would be useless, skipping"
+                );
+            }
             let clean_artist = clean_query_field(artist);
             let clean_title = clean_query_field(title);
+            tracing::info!(
+                video_id,
+                clean_artist = %clean_artist,
+                clean_title = %clean_title,
+                "lyrics: cleaned query fields"
+            );
             let lookup_duration = effective_duration;
 
             // Race LRCLIB and NetEase in parallel. Whichever returns synced
@@ -431,8 +480,14 @@ impl YtmApi {
             let title_l = clean_title.clone();
             let vid_l = video_id.to_string();
             let lrc_fut = async move {
-                match fetch_lrclib_synced(&artist_l, &title_l, lookup_duration).await {
-                    Ok(Some(body)) => Some((body, "LRCLIB")),
+                tracing::info!(video_id = %vid_l, "LRCLIB: about to call fetch_lrclib_synced");
+                let r = fetch_lrclib_synced(&artist_l, &title_l, lookup_duration).await;
+                tracing::info!(video_id = %vid_l, ok = r.is_ok(), "LRCLIB: fetch_lrclib_synced returned");
+                match r {
+                    Ok(Some(body)) => {
+                        tracing::info!(video_id = %vid_l, body_len = body.len(), "LRCLIB: returning Some");
+                        Some((body, "LRCLIB"))
+                    }
                     Ok(None) => {
                         tracing::info!(video_id = %vid_l, "LRCLIB had no synced lyrics");
                         None
@@ -448,8 +503,19 @@ impl YtmApi {
             let title_n = clean_title.clone();
             let vid_n = video_id.to_string();
             let ne_fut = async move {
-                match fetch_netease_synced(&artist_n, &title_n).await {
-                    Ok(Some(body)) => Some((body, "NetEase")),
+                tracing::info!(video_id = %vid_n, "NetEase: about to call fetch_netease_synced");
+                let r = fetch_netease_synced_with_duration(
+                    &artist_n,
+                    &title_n,
+                    lookup_duration,
+                )
+                .await;
+                tracing::info!(video_id = %vid_n, ok = r.is_ok(), "NetEase: fetch_netease_synced returned");
+                match r {
+                    Ok(Some(body)) => {
+                        tracing::info!(video_id = %vid_n, body_len = body.len(), "NetEase: returning Some");
+                        Some((body, "NetEase"))
+                    }
                     Ok(None) => {
                         tracing::info!(video_id = %vid_n, "NetEase had no synced lyrics");
                         None
@@ -481,6 +547,15 @@ impl YtmApi {
 
             if let Some((body, source_name)) = winner {
                 if apply_synced_lrc(&mut lyrics, &body, source_name) {
+                    // Stamp the matched artist/title we asked for. The
+                    // fetch helpers already filtered candidates to ensure
+                    // the response is FOR this track (NetEase by title +
+                    // artist + duration; LRCLIB by duration tolerance), so
+                    // recording the requested values gives the cache-read
+                    // sanity check a stable point of comparison even when
+                    // the user's playing-track metadata refines later.
+                    lyrics.matched_artist = effective_artist.clone();
+                    lyrics.matched_title = effective_title.clone();
                     return Ok(lyrics);
                 }
             }
@@ -784,6 +859,18 @@ async fn fetch_lrclib_get(
 /// song's lyrics. NetEase has excellent coverage for Mandopop, Cantopop,
 /// K-pop, J-pop, and a growing Western catalog. Free, no auth required.
 async fn fetch_netease_synced(artist: &str, title: &str) -> anyhow::Result<Option<String>> {
+    fetch_netease_synced_with_duration(artist, title, None).await
+}
+
+/// Like `fetch_netease_synced` but also requires the candidate's duration
+/// to be within the same `LRCLIB_DURATION_TOLERANCE_SECS` window the LRCLIB
+/// path uses, when a target duration is supplied. Reduces false positives
+/// where NetEase has a *different* song with the same title.
+async fn fetch_netease_synced_with_duration(
+    artist: &str,
+    title: &str,
+    target_duration_secs: Option<f64>,
+) -> anyhow::Result<Option<String>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(12))
         .build()?;
@@ -792,7 +879,7 @@ async fn fetch_netease_synced(artist: &str, title: &str) -> anyhow::Result<Optio
     let query = format!("{artist} {title}");
     let search_resp = client
         .get("https://music.163.com/api/search/get")
-        .query(&[("s", query.as_str()), ("type", "1"), ("limit", "5")])
+        .query(&[("s", query.as_str()), ("type", "1"), ("limit", "10")])
         .header("Referer", "https://music.163.com")
         .header(
             "User-Agent",
@@ -810,24 +897,81 @@ async fn fetch_netease_synced(artist: &str, title: &str) -> anyhow::Result<Optio
         return Ok(None);
     };
 
-    // Pick the first candidate whose title loosely matches — NetEase's
-    // search is forgiving so the top hit is usually right, but we defend
-    // against karaoke / cover false positives by checking the returned name.
+    // Score each candidate against the requested artist+title+duration.
+    // Previous behaviour was a substring match on title only, with a
+    // .or_else fallback to "the first result whatever it is" — that
+    // returned wildly wrong lyrics whenever NetEase hadn't indexed the
+    // requested song (e.g. brand-new releases like Jay Chou's 2026
+    // "太陽之子" — NetEase's top hit was a completely unrelated track).
+    //
+    // New rule: require BOTH a title substring match AND an artist
+    // substring match. When a target duration is supplied, also require
+    // the candidate to be within tolerance. Drop the first-result
+    // fallback entirely — better to surface "no lyrics" than to ship the
+    // wrong song's text.
     let want_title = title.to_lowercase();
-    let picked_id = songs
-        .iter()
-        .find_map(|s| {
-            let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-            let id = s.get("id").and_then(|v| v.as_u64())?;
-            if name.contains(&want_title) || want_title.contains(&name) {
-                Some(id)
-            } else {
-                None
+    let want_artist = artist.to_lowercase();
+    let mut best: Option<(f64, u64)> = None;
+    for s in songs {
+        let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        let title_ok = !name.is_empty()
+            && (name.contains(&want_title) || want_title.contains(&name));
+        if !title_ok {
+            continue;
+        }
+        let artist_ok = s
+            .get("artists")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter().any(|a| {
+                    let an = a
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    !an.is_empty()
+                        && (an.contains(&want_artist) || want_artist.contains(&an))
+                })
+            })
+            .unwrap_or(false);
+        if !artist_ok {
+            continue;
+        }
+        // NetEase's `duration` is in milliseconds.
+        let cand_dur_ms = s.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        if let Some(target) = target_duration_secs {
+            if cand_dur_ms > 0.0 {
+                let cand_secs = cand_dur_ms / 1000.0;
+                let diff = (cand_secs - target).abs();
+                if diff > LRCLIB_DURATION_TOLERANCE_SECS {
+                    continue;
+                }
+                let id = match s.get("id").and_then(|v| v.as_u64()) {
+                    Some(i) => i,
+                    None => continue,
+                };
+                if best.map_or(true, |(prev, _)| diff < prev) {
+                    best = Some((diff, id));
+                }
+                continue;
             }
-        })
-        .or_else(|| songs.first().and_then(|s| s.get("id")).and_then(|v| v.as_u64()));
+        }
+        // No target duration (or candidate has none) — accept the first
+        // title+artist match in NetEase's relevance order.
+        if best.is_none() {
+            if let Some(id) = s.get("id").and_then(|v| v.as_u64()) {
+                best = Some((f64::INFINITY, id));
+            }
+        }
+    }
 
-    let Some(song_id) = picked_id else {
+    let Some((_, song_id)) = best else {
+        tracing::info!(
+            artist = %artist,
+            title = %title,
+            target_duration_secs = ?target_duration_secs,
+            "NetEase: no candidate passed title+artist+duration check"
+        );
         return Ok(None);
     };
 
@@ -2789,6 +2933,8 @@ fn parse_lyrics(data: &Value) -> Lyrics {
         text,
         source,
         lines: None,
+        matched_artist: None,
+        matched_title: None,
     }
 }
 
@@ -2862,6 +3008,8 @@ fn parse_timed_lyrics(data: &Value) -> Option<Lyrics> {
         text,
         source,
         lines: Some(lines),
+        matched_artist: None,
+        matched_title: None,
     })
 }
 
