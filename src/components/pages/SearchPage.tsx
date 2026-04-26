@@ -6,34 +6,17 @@ import { AlbumCard } from '../browse/AlbumCard';
 import { ShelfRow } from '../browse/ShelfRow';
 import { CachedImage } from '../CachedImage';
 
+import {
+  loadRecentSearches,
+  pushRecentSearch,
+  saveRecentSearches,
+} from '../../lib/recentSearches';
+
 const SUGGEST_DEBOUNCE_MS = 200;
 const MIN_QUERY_LENGTH = 2;
 const MIN_SUGGEST_LENGTH = 3;
 const MAX_SUGGESTIONS = 5;
 const PREVIEW_TRACK_COUNT = 3;
-const RECENT_SEARCH_KEY = 'vibeytm.search.recent';
-const MAX_RECENT_SEARCHES = 5;
-
-function loadRecentSearches(): string[] {
-  try {
-    const raw = localStorage.getItem(RECENT_SEARCH_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? parsed.filter((s): s is string => typeof s === 'string').slice(0, MAX_RECENT_SEARCHES)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRecentSearches(list: string[]): void {
-  try {
-    localStorage.setItem(RECENT_SEARCH_KEY, JSON.stringify(list));
-  } catch {
-    // Storage may be unavailable (private mode, quota); recents are best-effort.
-  }
-}
 
 const CATEGORY_TABS = ['Songs', 'Albums', 'Artists', 'Playlists'] as const;
 type CategoryTab = (typeof CATEGORY_TABS)[number];
@@ -217,8 +200,7 @@ export const SearchPage: FC<SearchPageProps> = ({
     setShowSuggestions(false);
     setSuggestions([]);
     setRecentSearches((prev) => {
-      const next = [trimmed, ...prev.filter((x) => x.toLowerCase() !== trimmed.toLowerCase())]
-        .slice(0, MAX_RECENT_SEARCHES);
+      const next = pushRecentSearch(prev, trimmed);
       saveRecentSearches(next);
       return next;
     });

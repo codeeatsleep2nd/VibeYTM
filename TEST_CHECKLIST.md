@@ -119,6 +119,35 @@ Apply to: Home, Search (Albums/Artists tabs), Explore, Library, Playlist detail
       Explore, Settings title with Settings, playlist Back button with the
       sidebar nav row.
 
+## Regression Checklist for 0.9.10
+- [ ] **About window** macOS menu **VibeYTM → About VibeYTM** opens a small
+      dark dialog (380×240, non-resizable). Shows "VibeYTM",
+      "Version <bundled-version>", "Built with Tauri + React",
+      "A YouTube Music desktop client", and a clickable
+      "Visit ytm.gleevibe.ai for more information" line. Clicking the link
+      opens **the system default browser** — never navigates inside the
+      about window itself. Version number must match what Settings → About
+      shows (single source of truth via `get_about_info` IPC).
+- [ ] **Settings cache stats** Settings → Cache row reads
+      "X.Y MB / Z.Z MB — N images, N tracks, N lyrics". Lyric count
+      increments after a synced-lyric track has been played and lyrics
+      cached to disk; "Clear cache" zeroes all three counts.
+- [ ] **Search recents** First open of Search shows "Search YouTube Music"
+      placeholder (empty state). After submitting a query, navigating away,
+      and reopening Search, the empty state shows "Recent searches" with
+      the most recent query as the leftmost chip. At most 5 chips.
+      Clicking a chip re-runs the search. "Clear" affordance empties the
+      list. Persists across app restarts.
+- [ ] **Lyrics line wrap** Long lyric lines (CJK without spaces, very long
+      English) wrap to the next line within the lyric panel — never
+      overflow horizontally.
+- [ ] **Lyric/Queue cover-shift parity** When the queue drawer slides in
+      from the right (with Now Playing open), the cover-column shifts left
+      to the same position it occupies when the lyrics drawer is open.
+      Closing both drawers re-centers the cover.
+- [ ] **Volume bar width** Volume slider in the player bar is ~55px wide,
+      noticeably more compact than before (was 83px).
+
 ## Login Flow
 - [ ] First launch (no cached session): LoginPage appears and the YouTube
       Music window surfaces automatically so the user can sign in

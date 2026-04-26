@@ -416,6 +416,44 @@ mod tests {
         assert_eq!(stats.max_bytes, MAX_IMAGE_CACHE_BYTES);
     }
 
+    #[test]
+    fn stats_count_lyrics_and_include_in_total() {
+        // Settings page surfaces "N images, N tracks, N lyrics", and the
+        // "Disk cache" total has to include lyrics so the size shown to the
+        // user lines up with the on-disk footprint.
+        let (cache, _root) = make_cache();
+        cache.put_lyrics("vid-a", r#"{"text":"hello"}"#).unwrap();
+        cache.put_lyrics("vid-b", r#"{"text":"world"}"#).unwrap();
+        let stats = cache.stats().unwrap();
+        assert_eq!(stats.lyric_count, 2);
+        assert!(stats.lyric_bytes > 0);
+        assert_eq!(
+            stats.total_bytes,
+            stats.image_bytes + stats.track_bytes + stats.lyric_bytes,
+            "total_bytes must include lyric_bytes"
+        );
+    }
+
+    #[test]
+    fn stats_lyric_count_zero_after_construction() {
+        let (cache, _root) = make_cache();
+        let stats = cache.stats().unwrap();
+        assert_eq!(stats.lyric_count, 0);
+        assert_eq!(stats.lyric_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn clear_removes_lyrics_too() {
+        let (cache, _root) = make_cache();
+        cache.put_lyrics("vid", r#"{"text":"x"}"#).unwrap();
+        cache.put_track("a", r#"{}"#).unwrap();
+        cache.clear().await.unwrap();
+        let after = cache.stats().unwrap();
+        assert_eq!(after.lyric_count, 0);
+        assert_eq!(after.track_count, 0);
+        assert_eq!(after.total_bytes, 0);
+    }
+
     #[tokio::test]
     async fn clear_removes_tracks_and_returns_freed_bytes() {
         let (cache, _root) = make_cache();
