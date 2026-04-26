@@ -287,9 +287,12 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   }, [volume]);
 
   const handleToggleMute = () => {
+    const previous = volume;
     const next = volume === 0 ? lastNonZeroVolumeRef.current : 0;
     applyOptimistic({ volume: next });
-    playerApi.setVolume(next);
+    // Revert to the pre-toggle value if the IPC fails — otherwise the UI
+    // shows a mute/unmute state that was never applied to the YTM engine.
+    playerApi.setVolume(next).catch(() => applyOptimistic({ volume: previous }));
   };
 
   return (
@@ -425,9 +428,14 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
             max={100}
             value={Math.round(volume * 100)}
             onChange={(e) => {
+              const previous = volume;
               const next = Number(e.target.value) / 100;
               applyOptimistic({ volume: next });
-              playerApi.setVolume(next);
+              // Revert if IPC fails — matches the optimistic-revert pattern
+              // used by every other transport handler in this component.
+              playerApi.setVolume(next).catch(() =>
+                applyOptimistic({ volume: previous }),
+              );
             }}
             aria-label="Volume"
             style={{

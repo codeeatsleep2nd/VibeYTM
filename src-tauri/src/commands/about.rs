@@ -116,8 +116,13 @@ mod tests {
         // `built_with`, `visit_prefix`, `visit_suffix`, `website_url`,
         // `website_label`. Drift on either side breaks both the in-app
         // Settings about block and the macOS About window.
-        let json = serde_json::to_string(&build_info("9.9.9".to_string())).unwrap();
-        for key in [
+        //
+        // We assert BOTH the expected keys and the total key count, so a
+        // renamed field (e.g. `built_with` → `built_by`) is caught even
+        // though it would still satisfy the substring `"version"` etc.
+        // checks: the count would change by ±1 when a field is added or
+        // removed without updating this test.
+        const EXPECTED_KEYS: &[&str] = &[
             "version",
             "tagline",
             "built_with",
@@ -125,11 +130,23 @@ mod tests {
             "visit_suffix",
             "website_url",
             "website_label",
-        ] {
+        ];
+
+        let json_value: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&build_info("9.9.9".to_string())).unwrap())
+                .unwrap();
+        let obj = json_value.as_object().expect("AboutInfo must serialize as a JSON object");
+
+        for key in EXPECTED_KEYS {
             assert!(
-                json.contains(&format!("\"{key}\"")),
-                "expected key `{key}` in serialized AboutInfo: {json}"
+                obj.contains_key(*key),
+                "expected key `{key}` in serialized AboutInfo: {obj:?}"
             );
         }
+        assert_eq!(
+            obj.len(),
+            EXPECTED_KEYS.len(),
+            "AboutInfo gained or lost a field — update EXPECTED_KEYS and the matching TS interface in src/lib/ipc.ts: {obj:?}"
+        );
     }
 }

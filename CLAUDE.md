@@ -25,7 +25,7 @@ Apple Music-style YouTube Music desktop app.
 - For everything else, verify the fix yourself before declaring it done:
   - Read the dev-server task output at `/private/tmp/claude-501/.../tasks/<task-id>.output` for runtime logs (track changes, /next calls, queue updates, errors).
   - Inspect dumped YTM API responses at `/tmp/vibeytm-resp-*.json` to confirm what the backend actually received and parsed.
-  - Run the full validation suite: `pnpm typecheck`, `pnpm test` (vitest, currently 42 cases), `cd src-tauri && cargo check`, `cargo test --lib` (currently 110 tests).
+  - Run the full validation suite: `pnpm typecheck`, `pnpm test` (vitest), `cd src-tauri && cargo check`, `cargo test --lib`. Test counts are intentionally not pinned here — they grow with every PR; trust the runner output, not the docs.
   - Trace the previously-fixed code paths against the latest diff to confirm no regression of earlier bugs.
 - When extra runtime visibility is needed, add a debug line via the bridge's `log()` ring (writes to `window.__VIBEYTM_DEBUG__`, surfaced by the Rust poller in dev-server output) — do NOT instruct the user to open WebView devtools and paste output.
 - If something truly cannot be verified without the user (e.g. "does the lyric sync feel right by ear?"), say so explicitly: "I cannot verify X — please report what you observe" — instead of generically asking them to test.

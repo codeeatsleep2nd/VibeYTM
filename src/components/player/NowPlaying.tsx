@@ -19,8 +19,11 @@ interface NowPlayingProps {
   isOpen: boolean;
   /**
    * Retained in the prop contract because AppShell always passes it, but the
-   * overlay has no in-panel close affordance — the player-bar artwork button
-   * is the single source of truth for opening and closing Now Playing.
+   * overlay has no in-panel close affordance — the cover thumbnail in
+   * `NowPlayingCard` (mounted inside `PlayerChrome`) is the single source
+   * of truth for opening and closing Now Playing. Kept on the API for
+   * forwards-compatibility with any future close affordance + because the
+   * sidebar's onNavigate handler resets every overlay flag through props.
    */
   onClose: () => void;
   /** When true, show lyrics in place of the cover centerpiece. */
@@ -32,13 +35,14 @@ interface NowPlayingProps {
 }
 
 /**
- * Now Playing — full-page overlay that covers the main content area (between
- * the sidebar and the player bar). Triggered by clicking the cover thumbnail
- * in the PlayerBar; toggling closes it.
+ * Now Playing — full-page overlay that covers the main content area between
+ * the sidebar and the bottom of the window (the chrome lives at the top now,
+ * `--player-bar-height` is 0). Triggered by clicking the cover thumbnail
+ * inside `NowPlayingCard` (in `PlayerChrome`); toggling closes it.
  *
- * When `showLyrics` is true, the cover is swapped out for a lyrics panel.
- * If YTM returned synced lyrics for the track, lines auto-highlight and
- * auto-scroll with playback; otherwise the plain text is shown.
+ * When `showLyrics` is true, a lyrics drawer slides in from the right. If
+ * YTM returned synced lyrics for the track, lines auto-highlight and auto-
+ * scroll with playback; otherwise the plain text is shown.
  */
 export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, queueOpen = false }) => {
   // The right-slot drawer (queue OR lyrics) shares one cover-shift layout.

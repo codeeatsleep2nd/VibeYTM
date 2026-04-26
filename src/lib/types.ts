@@ -38,7 +38,11 @@ export interface AlbumSummary {
   title: string;
   artist: string;
   artworkUrl: string;
-  year?: number;
+  // Wire format is a display string ("2019", "2024"), not a number — YTM
+  // returns it as a free-form string and the Rust mirror is `Option<String>`.
+  // Don't switch this to `number` without updating the Rust parser to emit
+  // u16 — otherwise consumers that do arithmetic silently get NaN.
+  year?: string;
 }
 
 export interface ArtistSummary {

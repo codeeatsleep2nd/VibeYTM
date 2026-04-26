@@ -74,9 +74,11 @@ function setActivePlaylistId(id: string | null): void {
  * changes from its current value.
  */
 export function bootstrapActivePlaylistFromState(state: PlayerState): void {
-  const stateAny = state as PlayerState & { activePlaylistId?: string | null };
-  if (stateAny.activePlaylistId !== undefined) {
-    setActivePlaylistId(stateAny.activePlaylistId ?? null);
+  // `activePlaylistId` is already declared on `PlayerState` (lib/types.ts);
+  // no widening cast needed. Reading it directly preserves the type-checker's
+  // ability to flag a future removal of the field.
+  if (state.activePlaylistId !== undefined) {
+    setActivePlaylistId(state.activePlaylistId ?? null);
   }
 }
 

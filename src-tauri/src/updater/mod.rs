@@ -136,17 +136,37 @@ pub async fn check_once(current_version: &str) -> Result<UpdateInfo, String> {
 /// the rest of the session.
 pub fn spawn_update_checker(app: AppHandle, current_version: String) {
     tauri::async_runtime::spawn(async move {
+        // Avoid re-emitting the same `update-available` event every 12 h
+        // for an unchanged release — the FE banner already filters by
+        // dismissed-version, but emitting repeatedly wastes IPC traffic
+        // and makes the dev-server log noisy. Reset to None when a newer
+        // release supersedes the previously-emitted one (handled below by
+        // the inequality check) or when the user upgrades (handled by the
+        // process restart that comes with a new install).
+        let mut last_emitted: Option<String> = None;
         loop {
             match check_once(&current_version).await {
                 Ok(info) => {
                     if info.update_available {
-                        tracing::info!(
-                            current = %info.current_version,
-                            latest = %info.latest_version,
-                            "update available"
-                        );
-                        if let Err(e) = app.emit("update-available", &info) {
-                            tracing::warn!(error = %e, "emit update-available failed");
+                        let already_emitted = last_emitted
+                            .as_deref()
+                            .is_some_and(|v| v == info.latest_version);
+                        if already_emitted {
+                            tracing::debug!(
+                                latest = %info.latest_version,
+                                "update-available already emitted this session — suppressed"
+                            );
+                        } else {
+                            tracing::info!(
+                                current = %info.current_version,
+                                latest = %info.latest_version,
+                                "update available"
+                            );
+                            if let Err(e) = app.emit("update-available", &info) {
+                                tracing::warn!(error = %e, "emit update-available failed");
+                            } else {
+                                last_emitted = Some(info.latest_version.clone());
+                            }
                         }
                     } else {
                         tracing::debug!(

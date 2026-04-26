@@ -204,15 +204,28 @@ impl YtmApi {
             let cont_body = serde_json::json!({ "continuation": token }).to_string();
             match ytm_api_call(app, "browse", &cont_body).await {
                 Ok(cont_raw) => {
-                    if let Ok(cont_data) = serde_json::from_str::<Value>(&cont_raw) {
-                        let more = parse_continuation_shelves(&cont_data);
-                        shelves.extend(more);
-                        continuation = extract_continuation_token(&cont_data);
-                    } else {
-                        break;
+                    match serde_json::from_str::<Value>(&cont_raw) {
+                        Ok(cont_data) => {
+                            let more = parse_continuation_shelves(&cont_data);
+                            shelves.extend(more);
+                            continuation = extract_continuation_token(&cont_data);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "explore continuation JSON parse failed — partial results returned"
+                            );
+                            break;
+                        }
                     }
                 }
-                Err(_) => break,
+                Err(e) => {
+                    // Mirrors `get_home`'s logging pattern. Without this,
+                    // a network failure during Explore continuation loads
+                    // silent partial results with no diagnostic signal.
+                    tracing::warn!(error = %e, "explore continuation fetch failed");
+                    break;
+                }
             }
         }
 
@@ -2864,6 +2877,85 @@ fn parse_ms(v: &Value) -> Option<u64> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ---- clean_query_field ------------------------------------------------
+    //
+    // Lyrics matching feeds the cleaned title/artist into LRCLIB and
+    // NetEase. A noisy YouTube title ("APT. (Official Music Video)")
+    // confuses both APIs and is the primary suspect for the open
+    // wrong-lyrics bug on short titles like "APT." by ROSÉ. These cases
+    // pin down the strip-noise-brackets + dash-tail logic.
+
+    #[test]
+    fn clean_query_field_strips_official_mv_parens() {
+        assert_eq!(clean_query_field("APT. (Official MV)"), "APT.");
+        assert_eq!(clean_query_field("APT. (Official Music Video)"), "APT.");
+    }
+
+    #[test]
+    fn clean_query_field_strips_full_width_brackets() {
+        // YouTube's CJK upload titles often use 【…】 instead of (…).
+        assert_eq!(clean_query_field("APT. 【Official MV】"), "APT.");
+    }
+
+    #[test]
+    fn clean_query_field_preserves_titles_without_noise_brackets() {
+        assert_eq!(clean_query_field("Love Love Love"), "Love Love Love");
+        assert_eq!(
+            clean_query_field("聖徒"),
+            "聖徒"
+        );
+    }
+
+    #[test]
+    fn clean_query_field_preserves_meaningful_parens() {
+        // A subtitle inside parens that isn't a noise token must survive.
+        // Some songs are titled like "Reminiscent (River Flows in You)".
+        let out = clean_query_field("Reminiscent (River Flows in You)");
+        assert!(out.contains("Reminiscent"));
+        assert!(out.contains("River Flows in You"));
+    }
+
+    #[test]
+    fn clean_query_field_cuts_at_dash_tail() {
+        assert_eq!(
+            clean_query_field("Stayin' Alive - My Secret"),
+            "Stayin' Alive"
+        );
+    }
+
+    #[test]
+    fn clean_query_field_keeps_short_head_when_dash_tail_would_truncate_too_much() {
+        // The cut-at-dash logic only fires when the head is at least 2 chars,
+        // so "A - B" should NOT collapse to "A".
+        assert_eq!(clean_query_field("A - B"), "A - B");
+    }
+
+    #[test]
+    fn clean_query_field_collapses_internal_whitespace() {
+        // After bracket stripping you can end up with double-spaces; the
+        // remote query needs them collapsed before URL-encoding.
+        assert_eq!(
+            clean_query_field("APT.   (Official MV)   feat. Bruno Mars"),
+            "APT. feat. Bruno Mars"
+        );
+    }
+
+    #[test]
+    fn clean_query_field_strips_audio_and_visualizer() {
+        assert_eq!(clean_query_field("Some Song [Audio]"), "Some Song");
+        assert_eq!(clean_query_field("Some Song [Visualizer]"), "Some Song");
+    }
+
+    #[test]
+    fn clean_query_field_handles_artist_names_with_parenthesised_alias() {
+        // Artist field commonly comes in as "ROSÉ (로제)". The alias is
+        // useful for NetEase but adds noise for LRCLIB; this test pins
+        // the current behaviour either way so a future change is intentional.
+        let out = clean_query_field("ROSÉ (로제)");
+        // We don't strip non-noise parens, so the alias should survive.
+        assert!(out.starts_with("ROSÉ"));
+    }
 
     // ---- parse_duration_text ----------------------------------------------
 

@@ -163,7 +163,13 @@
         window.__TAURI__.core.invoke('on_track_changed', {
           track: window.__VIBEYTM_STATE__
         });
-      } catch(e) { /* ignore */ }
+      } catch(e) {
+        // Route to the debug ring so the Rust poller surfaces it via
+        // tracing. Silently dropping this catch hides the case where
+        // the IPC channel isn't actually available — which would mean
+        // every track-change notification is lost until the next poll.
+        log('IPC on_track_changed failed: ' + (e && e.message ? e.message : e));
+      }
     }
   }
 
