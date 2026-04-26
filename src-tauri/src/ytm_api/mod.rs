@@ -381,16 +381,25 @@ impl YtmApi {
             return Ok(lyrics);
         }
 
-        // Trust YTM's "no lyrics" verdict (empty text + no lines). That path
-        // covers instrumentals, karaoke versions, uploaded covers that lack
-        // lyrics, etc. Falling through to LRCLIB/NetEase here would match
-        // the vocal original by title and paste its lyrics onto a piano /
-        // instrumental rendition — false positive.
+        // YTM returned an empty lyrics tab. Earlier we treated this as a
+        // hard "no lyrics" signal to avoid pasting the vocal version's
+        // lyrics onto a piano cover. Reality is messier: YTM also returns
+        // empty for plenty of regular tracks ("Love Love Love" by Jolin
+        // Tsai, etc.) where the audio counterpart's lyrics page just
+        // hasn't been populated. False negative is more common than the
+        // false positive we were defending against.
+        //
+        // New rule: only skip external sources when the title itself
+        // signals an instrumental / cover (looks like "Instrumental",
+        // "Karaoke", "Piano Cover", etc.). Otherwise fall through and
+        // let LRCLIB/NetEase try.
         let has_plain_text = !lyrics.text.trim().is_empty();
-        if !has_plain_text {
+        let title_for_check = effective_title.as_deref().unwrap_or("");
+        if !has_plain_text && looks_like_instrumental(title_for_check) {
             tracing::info!(
                 video_id,
-                "YTM reported no lyrics — skipping external sync lookup (likely instrumental)"
+                title = %title_for_check,
+                "YTM reported no lyrics — title suggests instrumental, skipping external sync lookup"
             );
             return Ok(lyrics);
         }
@@ -2382,6 +2391,70 @@ fn renderer_thumbnail(renderer: &Value) -> Option<String> {
         .map(String::from)
 }
 
+/// Pull just the ARTIST segment from a renderer's byline. YTM
+/// represents `"Artist • Album • Year"` as separate runs — the
+/// artist text, then a literal " • " run, then the album text,
+/// etc. Concatenating all runs (the old behavior) shipped the full
+/// "Artist • Album • Year" string to LRCLIB, which never matches.
+/// Walk the runs and return the first non-separator one.
+/// True if a track title looks like a non-vocal recording where
+/// matching against LRCLIB/NetEase would paste the vocal version's
+/// lyrics onto an instrumental — the false-positive we used to
+/// defend against by trusting YTM's "no lyrics" verdict.
+fn looks_like_instrumental(title: &str) -> bool {
+    let lower = title.to_lowercase();
+    const INSTRUMENTAL_MARKERS: &[&str] = &[
+        "instrumental",
+        "karaoke",
+        "piano cover",
+        "piano version",
+        "piano arrangement",
+        "guitar cover",
+        "violin cover",
+        "string cover",
+        "8-bit",
+        "8 bit",
+        "8bit",
+        "music box",
+        "lullaby version",
+        "acoustic instrumental",
+        "no vocal",
+        "without vocal",
+        "off vocal",
+        "remixed by", // chiptune / remix collections often lack lyrics
+    ];
+    INSTRUMENTAL_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+fn first_byline_segment(renderer: &Value) -> String {
+    let runs = renderer
+        .pointer("/longBylineText/runs")
+        .or_else(|| renderer.pointer("/shortBylineText/runs"))
+        .and_then(|v| v.as_array());
+    let Some(runs) = runs else {
+        return String::new();
+    };
+    for run in runs {
+        let text = run.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // YTM's separator is `\u{2022}` (•) sometimes flanked by
+        // spaces. Skip pure-separator runs.
+        if trimmed
+            .chars()
+            .all(|c| c == '\u{2022}' || c.is_whitespace())
+        {
+            continue;
+        }
+        return trimmed.to_string();
+    }
+    String::new()
+}
+
 /// In a counterpart pair, return the renderer that represents the
 /// AUDIO side — the one whose thumbnail is album art on
 /// `lh*.googleusercontent.com`. Returns `None` if neither side is
@@ -2488,11 +2561,13 @@ fn extract_audio_counterpart_meta(data: &Value, current_video_id: &str) -> Optio
             .pointer("/title/runs")
             .map(runs_text)
             .unwrap_or_default();
-        let artist = audio
-            .pointer("/longBylineText/runs")
-            .or_else(|| audio.pointer("/shortBylineText/runs"))
-            .map(runs_text)
-            .unwrap_or_default();
+        // YTM byline runs are "Artist • Album • Year" with each
+        // segment as its own run separated by literal " • " runs.
+        // For lyrics queries we want ONLY the artist — concatenating
+        // everything (the old behavior) gave LRCLIB a string like
+        // "Jolin Tsai • Cheng Bao (Castle) • 2004" which never
+        // matches. Take the first non-separator run instead.
+        let artist = first_byline_segment(audio);
         let duration_secs = audio
             .pointer("/lengthText/runs/0/text")
             .and_then(|v| v.as_str())
@@ -3367,6 +3442,56 @@ mod tests {
             }}}
         });
         assert!(extract_audio_counterpart_video_id(&data, "soloVid").is_none());
+    }
+
+    #[test]
+    fn first_byline_segment_drops_album_year_after_artist() {
+        // Real shape: YTM byline runs are
+        //   [{text:"Jolin Tsai"}, {text:" • "}, {text:"Cheng Bao"}, {text:" • "}, {text:"2004"}]
+        let renderer = json!({
+            "longBylineText": { "runs": [
+                { "text": "Jolin Tsai" },
+                { "text": " \u{2022} " },
+                { "text": "Cheng Bao (Castle)" },
+                { "text": " \u{2022} " },
+                { "text": "2004" }
+            ]}
+        });
+        assert_eq!(first_byline_segment(&renderer), "Jolin Tsai");
+    }
+
+    #[test]
+    fn first_byline_segment_falls_back_to_short_byline() {
+        let renderer = json!({
+            "shortBylineText": { "runs": [
+                { "text": "Bee Gees" },
+                { "text": " \u{2022} " },
+                { "text": "Album" }
+            ]}
+        });
+        assert_eq!(first_byline_segment(&renderer), "Bee Gees");
+    }
+
+    #[test]
+    fn first_byline_segment_returns_empty_when_no_runs() {
+        assert_eq!(first_byline_segment(&json!({})), "");
+    }
+
+    #[test]
+    fn looks_like_instrumental_catches_common_markers() {
+        assert!(looks_like_instrumental("Stayin' Alive (Instrumental)"));
+        assert!(looks_like_instrumental("Take On Me — Karaoke version"));
+        assert!(looks_like_instrumental("Wonderwall (Piano Cover)"));
+        assert!(looks_like_instrumental("Never Gonna Give You Up (8-Bit Version)"));
+        assert!(looks_like_instrumental("Bohemian Rhapsody (Music Box)"));
+    }
+
+    #[test]
+    fn looks_like_instrumental_rejects_normal_titles() {
+        assert!(!looks_like_instrumental("Love Love Love"));
+        assert!(!looks_like_instrumental("Stayin' Alive"));
+        assert!(!looks_like_instrumental("人世间"));
+        assert!(!looks_like_instrumental("APT."));
     }
 
     #[test]
