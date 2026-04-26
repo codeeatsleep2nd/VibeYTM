@@ -1,9 +1,13 @@
 mod cache;
 mod commands;
-mod events;
+// Modules below are `pub` so the `tests/` integration tests (separate
+// crate) can drive real PlayerState + EventBus + settings flows
+// end-to-end. The lib has no third-party consumers — only `main.rs`
+// and the integration tests — so the wider visibility is safe.
+pub mod events;
 mod integrations;
 mod logging;
-mod state;
+pub mod state;
 mod tray;
 mod updater;
 mod webview_bridge;
