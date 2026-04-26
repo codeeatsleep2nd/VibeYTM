@@ -1,7 +1,10 @@
 import { type FC, useEffect, useMemo, useRef, useState } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
-import { lookupTrackArtwork } from '../../lib/trackArtworkRegistry';
+import {
+  lookupTrackArtwork,
+  rememberTrackArtworks,
+} from '../../lib/trackArtworkRegistry';
 import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
 import {
   browseApi,
@@ -132,6 +135,41 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
     getActivePlaylistId(),
   );
   useEffect(() => subscribeActivePlaylist(setActivePlaylist), []);
+
+  // When the active playlist is a real playlist/album (NOT a YTM
+  // song-radio `RDAMVM<videoId>`), fetch its full track list ONCE and
+  // push every track's lh3 album-art URL into the cross-component
+  // registry. The queue rendering then picks up covers for every
+  // queued item via `lookupTrackArtwork`, instead of falling through
+  // to the i.ytimg DOM-scraped URLs that get filtered as video
+  // thumbnails. One YTM call covers the whole queue — far cheaper
+  // than per-row counterpart IPCs.
+  //
+  // De-duped by playlistId via `enrichedPlaylistsRef` so navigating
+  // back to the same playlist within a session doesn't re-fetch.
+  // Best-effort: failures are silent; the on-demand counterpart
+  // hook is the existing fallback.
+  const enrichedPlaylistsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!activePlaylist) return;
+    if (activePlaylist.startsWith('RDAMVM')) return; // song-radio: no playlist entity
+    if (enrichedPlaylistsRef.current.has(activePlaylist)) return;
+    enrichedPlaylistsRef.current.add(activePlaylist);
+    let cancelled = false;
+    browseApi
+      .getPlaylist(activePlaylist)
+      .then((detail) => {
+        if (cancelled) return;
+        rememberTrackArtworks(detail.tracks);
+      })
+      .catch(() => {
+        // Allow retry on next visit if it failed.
+        enrichedPlaylistsRef.current.delete(activePlaylist);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activePlaylist]);
 
   // Predicted-track overlay: when PlayerBar's Next/Prev runs, it sets
   // the predicted track synchronously. We mirror it into local state
