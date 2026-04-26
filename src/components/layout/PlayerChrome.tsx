@@ -300,8 +300,20 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         left: 'var(--sidebar-width)',
         right: 0,
         height: 'var(--player-bar-height)',
-        background: 'var(--color-surface-1)',
+        // Liquid-glass treatment: translucent surface + heavy backdrop
+        // blur + faint inner top highlight. Picks up the cover-tinted
+        // backdrop bleeding through from Now Playing for a unified
+        // look. Background uses --glass-bg (already a token tuned for
+        // ~0.72 alpha) so themability stays consistent. The two box-
+        // shadows are: (1) inner-top white-ish highlight at 8 % alpha
+        // for the Liquid-Glass edge gleam, (2) outer drop-shadow so
+        // the chrome reads as a discrete plate over the page.
+        background: 'var(--glass-bg)',
+        backdropFilter: 'blur(40px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
         borderTop: '1px solid oklch(100% 0 0 / 0.06)',
+        boxShadow:
+          'inset 0 1px 0 oklch(100% 0 0 / 0.08), 0 -8px 24px oklch(0% 0 0 / 0.18)',
         display: 'flex',
         alignItems: 'center',
         padding: '0 var(--space-4)',
