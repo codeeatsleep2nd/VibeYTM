@@ -2,6 +2,10 @@ import { type FC, type ReactNode, useEffect, useRef } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { preloadLyrics } from '../../hooks/useLyrics';
 import { preloadAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import {
+  BRIDGE_SETTLE_MS,
+  useDeferredEffect,
+} from '../../hooks/useBridgeSafeFetch';
 import { isAlbumArtUrl } from '../../lib/artwork';
 import { lookupTrackArtwork } from '../../lib/trackArtworkRegistry';
 import {
@@ -128,32 +132,24 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   const { track, status, volume, isShuffled, repeatMode, applyOptimistic } = state;
   const isPlaying = status === 'playing';
 
-  // 2-second-deferred preload of CURRENT track's lyrics + the next
-  // track's lyrics + cover. Copied verbatim from the old PlayerBar —
-  // the deferral is the bridge saturation fix from CLAUDE.md
-  // ("Background fetches need a settle delay after track change").
-  // Cache-first via three tiers:
+  // Background preload of the CURRENT track's lyrics + the next track's
+  // lyrics + cover. Routed through `useDeferredEffect` so the bridge
+  // settles after a track change before any of these IPCs fire (see
+  // CLAUDE.md "Background fetches need a settle delay after track
+  // change"). Cache-first via three tiers:
   //   1. trackArtworkRegistry (populated by playlist visits)
   //   2. track.artworkUrl when it's already album art
   //   3. preloadAudioCounterpartArtwork (Rust /next lookup)
-  // The CURRENT track preload (added here) makes the LRC panel render
-  // instantly when the user opens it later — without it, opening the
-  // panel triggers a fresh fetch on every previously-uncached song.
+  // The CURRENT track preload makes the LRC panel render instantly the
+  // next time the user opens it.
   const currentVideoId = track?.videoId;
   const currentArtist = track?.artist;
   const currentTitle = track?.title;
   const currentDuration = track?.durationSecs;
-  useEffect(() => {
-    if (!currentVideoId) return;
+  useDeferredEffect(
+    () => {
+      if (!currentVideoId) return;
 
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      if (cancelled) return;
-
-      // Background-load lyrics for the CURRENT track so the LRC panel
-      // is warm whenever the user clicks it later. preloadLyrics is a
-      // no-op when the track is already in the hits/misses cache, so
-      // this is free for repeat plays.
       preloadLyrics({
         videoId: currentVideoId,
         artist: currentArtist ?? null,
@@ -191,6 +187,7 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         return;
       }
 
+      let cancelled = false;
       browseApi
         .getUpcomingTracks(currentVideoId, 2)
         .then((tracks) => {
@@ -214,13 +211,13 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         .catch(() => {
           // Best-effort preload; the on-demand fetch path covers misses.
         });
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [currentVideoId, currentArtist, currentTitle, currentDuration]);
+      return () => {
+        cancelled = true;
+      };
+    },
+    [currentVideoId, currentArtist, currentTitle, currentDuration],
+    BRIDGE_SETTLE_MS,
+  );
 
   const handleTogglePlay = () => {
     applyOptimistic({ status: isPlaying ? 'paused' : 'playing' });

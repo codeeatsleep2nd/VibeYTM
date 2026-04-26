@@ -10,7 +10,7 @@ import { LoginPage } from './components/pages/LoginPage';
 import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { UpdateBanner } from './components/UpdateBanner';
-import { useLoginState } from './hooks/useLoginState';
+import { useBootState } from './hooks/useBootState';
 import { ytmApi } from './lib/ipc';
 
 interface ViewingPlaylist {
@@ -19,23 +19,19 @@ interface ViewingPlaylist {
 }
 
 const App: FC = () => {
-  const loginState = useLoginState();
-  // Local override so the user can dismiss the login page manually (e.g. via
-  // "Skip for now") even if the bridge hasn't confirmed sign-in yet.
-  const [loginOverride, setLoginOverride] = useState(false);
-  const isLoggedIn = loginState === true || loginOverride;
+  // Boot orchestrator: tri-state phase (loading|login|app) plus the
+  // splash-fade gate. Replaces the three intertwined flags App used to
+  // juggle (loginState / loginOverride / isHomeReady). See
+  // useBootState.ts for the state-machine contract; useBootState.test.ts
+  // pins down each transition.
+  const { phase, isSplashDone, markHomeReady, markManualLogin } =
+    useBootState();
   const [currentPath, setCurrentPath] = useState('home');
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
-  // Flips true once the Home page has finished its first real render (or we
-  // settle into the LoginPage for signed-out users). While false, the
-  // WelcomeScreen stays overlaid so cold launch never shows the "Loading…"
-  // placeholder or a half-painted Home (issue #56).
-  const [isHomeReady, setIsHomeReady] = useState(false);
-  const handleHomeReady = useCallback(() => setIsHomeReady(true), []);
   // Bumped whenever the user saves or removes a playlist/album so the
   // LibraryPage knows to refetch even when it stays mounted under the
   // playlist-detail overlay.
@@ -101,29 +97,31 @@ const App: FC = () => {
     setCurrentPath('search');
   }, []);
 
-  // Hide the YTM window as soon as we confirm the user is signed in. Without
-  // this the window lingers from its .visible(true) startup state (issue #51).
+  // Hide the YTM window as soon as the boot orchestrator transitions to the
+  // app phase (signed in OR manual override). Without this the window
+  // lingers from its `.visible(true)` startup state (issue #51).
   useEffect(() => {
-    if (loginState === true) {
+    if (phase === 'app') {
       ytmApi.hideYtm().catch(() => {
         // If hiding fails, the YTM window stays — non-fatal.
       });
     }
-  }, [loginState]);
+  }, [phase]);
 
-  // While we don't know the login state, the WelcomeScreen is the only thing
-  // on screen — no neutral "Loading…" flash.
-  if (loginState === null && !loginOverride) {
+  if (phase === 'loading') {
+    // Sign-in state hasn't reported yet — splash is the ONLY surface so
+    // we never flash either the LoginPage or the AppShell at a user
+    // whose state we don't know.
     return <WelcomeScreen isDone={false} />;
   }
 
-  if (!isLoggedIn) {
-    // Once we know the user is signed out, the LoginPage is ready to render
-    // behind the fading WelcomeScreen.
+  if (phase === 'login') {
+    // Bridge confirmed signed-out: LoginPage is ready behind the
+    // splash, which fades over it.
     return (
       <>
-        <LoginPage onLoggedIn={() => setLoginOverride(true)} />
-        <WelcomeScreen isDone />
+        <LoginPage onLoggedIn={markManualLogin} />
+        <WelcomeScreen isDone={isSplashDone} />
       </>
     );
   }
@@ -170,7 +168,7 @@ const App: FC = () => {
       <HomePage
         onOpenPlaylist={openPlaylistDetail}
         onAutoPlayPlaylist={openPlaylistAutoPlay}
-        onReady={handleHomeReady}
+        onReady={markHomeReady}
       />
     );
   };
@@ -239,7 +237,7 @@ const App: FC = () => {
         )}
       </div>
     </AppShell>
-    <WelcomeScreen isDone={isHomeReady} />
+    <WelcomeScreen isDone={isSplashDone} />
     <UpdateBanner />
     </>
   );

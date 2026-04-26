@@ -1,11 +1,17 @@
-import { type FC, useEffect, useMemo, useRef, useState } from 'react';
-import { usePlayerState } from '../../hooks/usePlayerState';
-import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import {
+  type FC,
+  type Ref,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { usePlayerState } from '../../../hooks/usePlayerState';
+import { useAudioCounterpartArtwork } from '../../../hooks/useAudioCounterpartArtwork';
 import {
   lookupTrackArtwork,
   rememberTrackArtworks,
-} from '../../lib/trackArtworkRegistry';
-import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
+} from '../../../lib/trackArtworkRegistry';
 import {
   browseApi,
   getActivePlaylistId,
@@ -15,91 +21,23 @@ import {
   setPredictedTrack,
   subscribeActivePlaylist,
   subscribePredictedTrack,
-} from '../../lib/ipc';
-import type { TrackInfo } from '../../lib/types';
-import { CachedImage } from '../CachedImage';
+} from '../../../lib/ipc';
+import type { TrackInfo } from '../../../lib/types';
+import { SafeOverlay } from '../../overlay/SafeOverlay';
+import { BRIDGE_SETTLE_MS } from '../../../hooks/useBridgeSafeFetch';
+import { QueueRow } from './QueueRow';
+import { QueuePlaceholder } from './Placeholder';
+import { dedupeByVideoIdAndTitle } from './dedup';
+import { queueCache, cacheKey, UPCOMING_LIMIT } from './cache';
+
+// Public re-exports for the existing artwork test suite
+// (`QueuePanel.artwork.test.ts` imports these from './QueuePanel'). The
+// implementations themselves now live in `./artwork.ts`.
+export { isAlbumArtUrl, isStableArtworkUrl, artworkChain } from './artwork';
 
 interface QueuePanelProps {
   isOpen: boolean;
   onClose: () => void;
-}
-
-const UPCOMING_LIMIT = 100;
-
-// Module-level cache keyed by `<videoId>|<playlistId>` so reopening the panel
-// for a (track, playlist) pair we've already fetched is instant.
-const queueCache = new Map<string, TrackInfo[]>();
-const cacheKey = (videoId: string | undefined, playlistId: string | null): string =>
-  `${videoId ?? ''}|${playlistId ?? ''}`;
-
-/**
- * Drop ANY repeat of the same videoId AND any later occurrence of a song
- * sharing a normalized title with one already in the list. YTM's radio
- * frequently sprinkles multiple recordings of the same song (different
- * artists' covers, lyric videos) — distinct videoIds but visually
- * indistinguishable. Keep only the first occurrence per (videoId | title).
- *
- * `seedCurrent` is the currently-playing track. Pre-seeding both its
- * videoId AND normalized title prevents the Up-Next list from opening
- * with a different recording of the same song the user is hearing.
- */
-function dedupeByVideoIdAndTitle(
-  items: TrackInfo[],
-  seedCurrent?: TrackInfo | null,
-): TrackInfo[] {
-  const seenIds = new Set<string>();
-  const seenTitles = new Set<string>();
-  if (seedCurrent?.videoId) seenIds.add(seedCurrent.videoId);
-  const seedTitle = normalizeTitle(seedCurrent?.title);
-  if (seedTitle) seenTitles.add(seedTitle);
-  const out: TrackInfo[] = [];
-  for (const t of items) {
-    if (t.videoId && seenIds.has(t.videoId)) continue;
-    const titleKey = normalizeTitle(t.title);
-    if (titleKey && seenTitles.has(titleKey)) continue;
-    if (t.videoId) seenIds.add(t.videoId);
-    if (titleKey) seenTitles.add(titleKey);
-    out.push(t);
-  }
-  return out;
-}
-
-function normalizeTitle(title: string | undefined): string {
-  if (!title) return '';
-  return title
-    .toLowerCase()
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/\[[^\]]*\]/g, ' ')
-    .replace(/[「」『』《》]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * Build an ordered list of album-art URL fallbacks for a queue row.
- *
- * **The user-facing rule: NEVER fall back to a YouTube video
- * thumbnail (`i.ytimg.com/vi/...`).** The chain only contains album
- * art (`lh*.googleusercontent.com` / `yt3.googleusercontent.com`).
- * If we have nothing, we render `<ArtworkPlaceholder>` (a music-
- * note glyph on a dark gradient) — that reads as "no cover yet"
- * rather than "wrong image."
- */
-export { isAlbumArtUrl } from '../../lib/artwork';
-
-// Re-exported here for the existing test suite. Kept narrow on
-// purpose: the ONLY URLs we'll ever show are album art.
-export function isStableArtworkUrl(url: string | null | undefined): boolean {
-  return isAlbumArtUrlImpl(url);
-}
-
-import { isAlbumArtUrl as isAlbumArtUrlImpl } from '../../lib/artwork';
-
-export function artworkChain(track: { videoId?: string; artworkUrl?: string | null }): string[] {
-  if (isAlbumArtUrlImpl(track.artworkUrl)) {
-    return [track.artworkUrl as string];
-  }
-  return [];
 }
 
 /**
@@ -323,13 +261,13 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       setIsFetching(false);
     };
 
-    // Defer the /next fetch by 1.5s after a track change. When YTM's
-    // audio webview navigates, in-flight fetch() calls hang for the
-    // duration (~3-15s). Firing immediately at the moment of
-    // navigation stacks calls in the bridge channel and starves
-    // user-driven clicks (playlist/album cards via get_playlist),
-    // making them feel unresponsive. A short settle window keeps
-    // the channel clear for foreground actions.
+    // Defer the /next fetch by BRIDGE_SETTLE_MS after a track change.
+    // Synchronous stage above (cache check + state staging) runs
+    // immediately so the panel paints cached data without delay; only
+    // the network round-trip waits for the bridge to settle. See
+    // CLAUDE.md "Background fetches need a settle delay after track
+    // change" — same constant `BRIDGE_SETTLE_MS` shared with the lyric
+    // probe and the chrome's lyric+cover preload.
     const timer = setTimeout(() => {
       if (cancelled) return;
       fetchWith(activePlaylist)
@@ -378,7 +316,7 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
               setIsFetching(false);
             });
         });
-    }, 1500);
+    }, BRIDGE_SETTLE_MS);
 
     return () => {
       cancelled = true;
@@ -602,30 +540,23 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
   }, [isOpen, onClose]);
 
   return (
-    <aside
-      ref={panelRef}
-      aria-hidden={!isOpen}
-      style={{
-        position: 'fixed',
+    <SafeOverlay
+      ref={panelRef as Ref<HTMLElement>}
+      isOpen={isOpen}
+      ariaLabel="Playing queue"
+      as="aside"
+      slideFrom="right"
+      zIndex={90}
+      boxShadow={isOpen ? '-8px 0 24px oklch(0% 0 0 / 0.35)' : undefined}
+      inset={{
         top: 'calc(var(--title-bar-height) + var(--space-3))',
-        right: 0,
+        right: '0',
         bottom: 'var(--player-bar-height)',
         left: 'calc(var(--sidebar-width) + var(--space-6) + min(800px, calc((2 / 3) * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px)) + var(--space-5))',
-        background: 'var(--color-bg)',
-        boxShadow: isOpen ? '-8px 0 24px oklch(0% 0 0 / 0.35)' : 'none',
-        zIndex: 90,
-        transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
-        pointerEvents: isOpen ? 'auto' : 'none',
-        willChange: 'transform',
-        transition: 'transform 420ms cubic-bezier(0.22, 1, 0.36, 1)',
-        paddingTop: 0,
-        paddingLeft: 0,
-        paddingRight: 'var(--space-6)',
-        paddingBottom: 0,
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
       }}
+      padding={{ right: 'var(--space-6)' }}
+      display="flex"
+      flexDirection="column"
     >
       <header
         style={{
@@ -727,10 +658,10 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
 
         {/* Upcoming. */}
         {upcoming.length === 0 && isFetching && !displayTrack && (
-          <Placeholder text="Loading…" />
+          <QueuePlaceholder text="Loading…" />
         )}
         {upcoming.length === 0 && !isFetching && !displayTrack && (
-          <Placeholder text="No track playing" />
+          <QueuePlaceholder text="No track playing" />
         )}
         {upcoming.map((t, i) => (
           <QueueRow
@@ -740,226 +671,6 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
           />
         ))}
       </div>
-    </aside>
-  );
-};
-
-const Placeholder: FC<{ text: string }> = ({ text }) => (
-  <div
-    style={{
-      padding: 'var(--space-4) var(--space-3)',
-      fontSize: 'var(--text-sm)',
-      color: 'var(--color-text-tertiary)',
-      textAlign: 'center',
-    }}
-  >
-    {text}
-  </div>
-);
-
-interface QueueRowProps {
-  track: TrackInfo;
-  highlighted?: boolean;
-  /** When true, render the animated playing-bars indicator + accent style. */
-  nowPlaying?: boolean;
-  /** When true, render at lower opacity (history rows). */
-  dimmed?: boolean;
-  onPlay?: () => void;
-  /**
-   * Optional live PlayerState track. Forwarded to `QueueArtwork` for
-   * the now-playing row so the queue thumbnail matches the player bar's
-   * canonical album-art URL even when the queue's own metadata came
-   * from a DOM scrape with a signed thumbnail.
-   */
-  liveTrack?: TrackInfo | null;
-}
-
-const QueueRow: FC<QueueRowProps> = ({
-  track,
-  highlighted = false,
-  nowPlaying = false,
-  dimmed = false,
-  onPlay,
-  liveTrack,
-}) => {
-  const interactive = Boolean(onPlay) && !highlighted;
-
-  const content = (
-    <>
-      <div
-        style={{
-          width: '40px',
-          height: '40px',
-          flexShrink: 0,
-          borderRadius: 'var(--radius-sm)',
-          background: 'var(--color-surface-3)',
-          overflow: 'hidden',
-          position: 'relative',
-        }}
-      >
-        <QueueArtwork track={track} liveTrack={liveTrack} />
-        {nowPlaying && <PlayingBarsOverlay />}
-      </div>
-      <div style={{ minWidth: 0, flex: 1, textAlign: 'left' }}>
-        <div
-          style={{
-            fontSize: 'var(--text-sm)',
-            fontWeight: highlighted ? 600 : 500,
-            color: highlighted
-              ? 'var(--color-accent)'
-              : 'var(--color-text-primary)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {track.title || 'Unknown title'}
-        </div>
-        <div
-          style={{
-            fontSize: 'var(--text-xs)',
-            color: 'var(--color-text-secondary)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {track.artist || ''}
-        </div>
-      </div>
-    </>
-  );
-
-  const baseStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 'var(--space-3)',
-    padding: 'var(--space-2) var(--space-3)',
-    borderRadius: 'var(--radius-sm)',
-    width: '100%',
-    background: highlighted ? 'var(--color-surface-2)' : 'transparent',
-    border: 'none',
-    color: 'inherit',
-    textAlign: 'left' as const,
-    cursor: interactive ? 'pointer' : 'default',
-    opacity: dimmed ? 0.55 : 1,
-    transition: `background var(--duration-fast) var(--ease-out),
-                 opacity var(--duration-fast) var(--ease-out)`,
-  };
-
-  if (!interactive) {
-    return <div style={baseStyle}>{content}</div>;
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={onPlay}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = 'var(--color-surface-2)';
-        e.currentTarget.style.opacity = '1';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent';
-        e.currentTarget.style.opacity = dimmed ? '0.55' : '1';
-      }}
-      style={baseStyle}
-    >
-      {content}
-    </button>
-  );
-};
-
-/**
- * Three vertical bars that bounce in sequence — the universal "audio is
- * playing" affordance. Rendered as an overlay on top of the artwork
- * thumbnail of the now-playing row, with a translucent dark scrim so the
- * bars stay legible against any cover art.
- */
-const PlayingBarsOverlay: FC = () => (
-  <div
-    aria-hidden
-    style={{
-      position: 'absolute',
-      inset: 0,
-      display: 'flex',
-      alignItems: 'flex-end',
-      justifyContent: 'center',
-      gap: '2px',
-      paddingBottom: '6px',
-      background: 'oklch(0% 0 0 / 0.45)',
-      pointerEvents: 'none',
-    }}
-  >
-    {[0, 1, 2].map((i) => (
-      <span
-        key={i}
-        style={{
-          width: '3px',
-          height: '60%',
-          background: 'var(--color-accent)',
-          borderRadius: '1px',
-          transformOrigin: 'bottom',
-          animation: `vibeytm-bar 900ms ease-in-out ${i * 150}ms infinite`,
-        }}
-      />
-    ))}
-  </div>
-);
-
-interface QueueArtworkProps {
-  track: TrackInfo;
-  /**
-   * Optional override used by the now-playing row. When the queue's row
-   * metadata came from a DOM scrape (signed thumbnail URL filtered out
-   * by `artworkChain`), passing the live PlayerState track here lets
-   * the row pull the same stable album-art URL the player bar shows,
-   * keeping the two surfaces visually consistent.
-   */
-  liveTrack?: TrackInfo | null;
-}
-
-/**
- * Queue thumbnail with a YouTube CDN fallback chain. Routes through
- * `CachedImage` (Rust-side `cache_fetch_image` via reqwest) so the YT
- * CDN URLs sidestep the WKWebView referrer/CORS restrictions that
- * cause plain `<img>` loads of `i.ytimg.com` to silently fail in the
- * Tauri shell.
- *
- * The bridge often captures an empty (or signed/expiring) `artworkUrl`
- * for off-screen YTM queue rows; the chain falls back through the
- * canonical video-thumbnail variants so the row never goes blank.
- */
-const QueueArtwork: FC<QueueArtworkProps> = ({ track, liveTrack }) => {
-  // Prefer the live PlayerState track's artworkUrl when it's available
-  // and matches the queue row's videoId — that's the bar's source and
-  // matches the now-playing page exactly. Falls through to the queue
-  // row's own track if not provided or mismatched.
-  const sourceTrack =
-    liveTrack && liveTrack.videoId === track.videoId ? liveTrack : track;
-  const chain = artworkChain(sourceTrack);
-  const [chainIdx, setChainIdx] = useState(0);
-  useEffect(() => {
-    setChainIdx(0);
-  }, [sourceTrack.videoId, sourceTrack.artworkUrl]);
-  const src = chain[chainIdx];
-  if (!src) return <ArtworkPlaceholder size={40} />;
-  return (
-    <CachedImage
-      key={src}
-      src={src}
-      alt={track.title ? `${track.title} artwork` : ''}
-      width={40}
-      height={40}
-      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-      onError={(e) => {
-        const next = chainIdx + 1;
-        if (next < chain.length) {
-          setChainIdx(next);
-        } else {
-          e.currentTarget.style.display = 'none';
-        }
-      }}
-    />
+    </SafeOverlay>
   );
 };

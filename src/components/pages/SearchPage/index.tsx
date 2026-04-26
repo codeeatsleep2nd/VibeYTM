@@ -1,16 +1,19 @@
 import { type FC, useEffect, useRef, useState } from 'react';
-import type { AlbumSummary, PlaylistDetail, SearchResults } from '../../lib/types';
-import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
-import { SongRow } from '../browse/SongRow';
-import { AlbumCard } from '../browse/AlbumCard';
-import { ShelfRow } from '../browse/ShelfRow';
-import { CachedImage } from '../CachedImage';
+import type { AlbumSummary, PlaylistDetail, SearchResults } from '../../../lib/types';
+import { browseApi, playFirstFromPlaylist } from '../../../lib/ipc';
+import { SongRow } from '../../browse/SongRow';
+import { AlbumCard } from '../../browse/AlbumCard';
+import { ShelfRow } from '../../browse/ShelfRow';
+import { CachedImage } from '../../CachedImage';
 
 import {
   loadRecentSearches,
   pushRecentSearch,
   saveRecentSearches,
-} from '../../lib/recentSearches';
+} from '../../../lib/recentSearches';
+
+import { TopAlbumCover } from './TopAlbumCover';
+import { EmptyCategory } from './EmptyCategory';
 
 const SUGGEST_DEBOUNCE_MS = 200;
 const MIN_QUERY_LENGTH = 2;
@@ -871,108 +874,3 @@ export const SearchPage: FC<SearchPageProps> = ({
     </section>
   );
 };
-
-interface TopAlbumCoverProps {
-  album: AlbumSummary;
-  onOpen: () => void;
-  onPlay: () => void;
-}
-
-/**
- * Square album cover for the unified-search "Top result". Sized via flex
- * stretch + aspect-ratio so the height equals the row height (right column
- * content) and width follows naturally — no JS measurement, no flash.
- */
-const TopAlbumCover: FC<TopAlbumCoverProps> = ({ album, onOpen, onPlay }) => {
-  const [isHovered, setIsHovered] = useState(false);
-
-  return (
-    <button
-      type="button"
-      aria-label={`Open ${album.title}`}
-      onClick={onOpen}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      style={{
-        position: 'relative',
-        aspectRatio: '1',
-        height: 'auto',
-        flex: '0 0 auto',
-        // Stretched by the parent flex row; height matches row, width follows
-        // from aspect-ratio: 1.
-        alignSelf: 'stretch',
-        padding: 0,
-        border: 'none',
-        borderRadius: 'var(--radius-lg)',
-        overflow: 'hidden',
-        background: 'var(--color-surface-2)',
-        cursor: 'pointer',
-      }}
-    >
-      <CachedImage
-        src={album.artworkUrl}
-        alt={album.title}
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-          display: 'block',
-        }}
-      />
-
-      {/* Centered play button overlay */}
-      <span
-        aria-hidden
-        onClick={(e) => {
-          e.stopPropagation();
-          onPlay();
-        }}
-        style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          width: '52px',
-          height: '52px',
-          marginTop: '-26px',
-          marginLeft: '-26px',
-          borderRadius: 'var(--radius-full)',
-          background: 'var(--color-accent)',
-          color: 'oklch(100% 0 0)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 'var(--text-lg)',
-          boxShadow: '0 6px 16px oklch(0% 0 0 / 0.45)',
-          cursor: 'pointer',
-          opacity: isHovered ? 1 : 0,
-          transform: isHovered ? 'scale(1)' : 'scale(0.85)',
-          transition:
-            'opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out)',
-        }}
-      >
-        {'\u25B6'}
-      </span>
-    </button>
-  );
-};
-
-const EmptyCategory: FC<{ label: string }> = ({ label }) => (
-  <div
-    style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: '200px',
-    }}
-  >
-    <p
-      style={{
-        fontSize: 'var(--text-base)',
-        color: 'var(--color-text-tertiary)',
-      }}
-    >
-      No {label} found
-    </p>
-  </div>
-);
-
