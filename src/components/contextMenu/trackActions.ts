@@ -1,15 +1,12 @@
 import type { TrackInfo } from '../../lib/types';
 import { playerApi } from '../../lib/ipc';
+import { hasOpenArtistHandler, openArtist } from '../../lib/appNav';
 import type { ContextMenuSection } from './ContextMenu';
 
 interface BuildTrackContextMenuOpts {
   track: TrackInfo;
   /** When provided, exposes "Remove from queue" (only valid in queue rows). */
   onRemoveFromQueue?: () => void;
-  /** When provided, exposes "Go to artist" → triggers a search for the
-   *  track's artist via the host app's nav state. Hidden when the track
-   *  has no artist field. */
-  onGoToArtist?: (artist: string) => void;
 }
 
 /**
@@ -21,7 +18,8 @@ interface BuildTrackContextMenuOpts {
 export function buildTrackContextMenu(
   opts: BuildTrackContextMenuOpts,
 ): ContextMenuSection[] {
-  const { track, onRemoveFromQueue, onGoToArtist } = opts;
+  const { track, onRemoveFromQueue } = opts;
+  const goToArtistAvailable = hasOpenArtistHandler() && !!track.artist;
 
   const playSection: ContextMenuSection = {
     id: 'play',
@@ -49,12 +47,12 @@ export function buildTrackContextMenu(
   const navSection: ContextMenuSection = {
     id: 'nav',
     items: [
-      ...(onGoToArtist && track.artist
+      ...(goToArtistAvailable
         ? [
             {
               id: 'go-to-artist',
               label: `Go to ${track.artist}`,
-              onActivate: () => onGoToArtist(track.artist),
+              onActivate: () => openArtist(track.artist),
             },
           ]
         : []),

@@ -8,11 +8,13 @@ import { ExplorePage } from './components/pages/ExplorePage';
 import { SettingsPage } from './components/pages/SettingsPage';
 import { LoginPage } from './components/pages/LoginPage';
 import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
+import { ArtistPage } from './components/pages/ArtistPage';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { UpdateBanner } from './components/UpdateBanner';
 import { useBootState } from './hooks/useBootState';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
 import { ytmApi, playerApi } from './lib/ipc';
+import { registerOpenArtist } from './lib/appNav';
 
 interface ViewingPlaylist {
   id: string;
@@ -32,6 +34,7 @@ const App: FC = () => {
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
+  const [viewingArtist, setViewingArtist] = useState<string | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
   // Bumped whenever the user saves or removes a playlist/album so the
   // LibraryPage knows to refetch even when it stays mounted under the
@@ -92,10 +95,13 @@ const App: FC = () => {
   }, []);
 
   const searchForArtist = useCallback((name: string) => {
+    // Promoted from a search redirect to a real overlay page (P3.1).
+    // Closes other overlays so the artist hero is the focus.
     setViewingPlaylist(null);
     setIsNowPlayingOpen(false);
-    setPendingSearchQuery(name);
-    setCurrentPath('search');
+    setIsLyricsOpen(false);
+    setIsQueueOpen(false);
+    setViewingArtist(name);
   }, []);
 
   // Hide the YTM window as soon as the boot orchestrator transitions to the
@@ -108,6 +114,15 @@ const App: FC = () => {
       });
     }
   }, [phase]);
+
+  // Register the app-level "open artist" navigation hook so the track
+  // context menu can drive it without prop-drilling. Re-registers on
+  // every mount of the App-level callback identity; deregisters on
+  // unmount so a stale closure can't fire after a HMR replacement.
+  useEffect(() => {
+    registerOpenArtist(searchForArtist);
+    return () => registerOpenArtist(null);
+  }, [searchForArtist]);
 
   // Global keyboard shortcuts. Active only in the app phase (no point
   // intercepting Cmd+L while the LoginPage is up). Bindings stay as a
@@ -259,6 +274,7 @@ const App: FC = () => {
       currentPath={currentPath}
       onNavigate={(path) => {
         setViewingPlaylist(null);
+        setViewingArtist(null);
         setIsNowPlayingOpen(false);
         setIsQueueOpen(false);
         // Also close LRC explicitly. Inside NowPlaying, the lyrics
@@ -312,6 +328,25 @@ const App: FC = () => {
               autoPlay={viewingPlaylist.autoPlay}
               onBack={() => setViewingPlaylist(null)}
               onLibraryChanged={handleLibraryChanged}
+            />
+          </div>
+        )}
+        {viewingArtist && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'var(--color-bg)',
+              zIndex: 21,
+            }}
+          >
+            <ArtistPage
+              artistName={viewingArtist}
+              onBack={() => setViewingArtist(null)}
+              onOpenAlbum={(browseId) => {
+                setViewingArtist(null);
+                openPlaylistDetail(browseId);
+              }}
             />
           </div>
         )}
