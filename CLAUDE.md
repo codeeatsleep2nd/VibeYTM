@@ -41,6 +41,26 @@ Before implementing ANY new feature ask or bug-fix ask, scan whether it conflict
 
 When a conflict is detected, **STOP and ask the user** — phrase the conflict explicitly ("X would undo Y from commit Z; want to proceed, refine the new ask, or revert Y?") and wait for their decision. Do NOT silently pick one side. Conflicts that look minor on the diff often reintroduce the very bug the prior fix closed; the user owns that trade-off.
 
+## Visual fidelity to external products — VERIFY before designing
+When the ask is "make UI match X" (Apple Music, Spotify, YouTube Music, iOS Now Playing, etc.), do NOT design from memory. Memory of a third-party UI is unreliable — button shapes drift, layouts get wrong from old screenshots in training data, and "I think it looks like…" produces ugly approximations that the user has to send you back to redo. Before writing any plan or component:
+
+1. **Pull a real reference.** Use Chrome DevTools MCP (`new_page` → `take_screenshot` of the real product, e.g. music.apple.com), open the actual app side-by-side, or fetch the vendor's design-system page. Save the screenshot to `/tmp/` so it can be re-read this turn.
+2. **Inventory what you see** — name every visible element, its position, shape, color, and approximate size. Write the inventory into the plan or a scratch doc; don't carry it only in your head.
+3. **Don't assume position.** "Apple Music chrome" doesn't mean "moved to the top" unless the user says so. Ask which dimensions of the reference to mirror (visual treatment vs. layout vs. position) before committing to architecture-changing moves.
+4. **Don't invent SF-Symbol glyphs from Unicode.** SF Symbols ≠ Unicode codepoints — `↻` is `arrow.clockwise` (reload), not `repeat`. Either ship inline SVG that matches the actual SF Symbol shape (verified against a reference), or use a vendored icon set whose mapping you've confirmed visually.
+5. **Show the user a mockup before writing code.** When the redesign is non-trivial, paste an ASCII mockup or a labeled screenshot annotation and let them confirm direction. A wrong mockup is a 30-second correction; a wrong implementation is a multi-file revert.
+
+If you skipped any of the above and the user pushes back with "that's not what X looks like," stop iterating on memory — go fetch a real screenshot before the next attempt.
+
+## Search GitHub before implementing — REUSE BEFORE INVENT
+Before designing or coding ANY non-trivial feature, search GitHub (and other registries — npm/crates.io/etc.) for existing implementations or open-source clones that already solve the same problem. Apple Music desktop wrappers, lyrics scrobblers, queue scrapers, IPC bridges — almost everything VibeYTM does has been done before, often by people who actually use the upstream service every day and have already worked around its quirks. Use these as references for:
+
+1. **Visual fidelity** — desktop wrappers (e.g. `Alex313031/apple-music-desktop`, `wimpysworld/sidra`, `revblaze/AppleMusicUltra`) embed the real product UI, so their screenshots are ground truth and their style files often capture the design tokens.
+2. **API behavior & quirks** — YTM bridge / Innertube clients (e.g. ytmusicapi, sigma67, th-ch/youtube-music) have already documented the response shapes and the edge cases.
+3. **Implementation patterns** — when you'd otherwise hand-roll something (e.g. a queue dedupe, a media-key handler, a notification provider), check whether a small library or a referenced source-snippet already does it correctly.
+
+Always run `gh search repos`, `gh search code`, or a targeted web search BEFORE writing the plan — not after the user pushes back. Cite the references you used in the plan so future-you can re-verify. If no existing implementation matches, document what you searched for so the absence is recorded, not assumed.
+
 ## Architecture
 - Two WebView model: visible React UI + hidden YouTube Music audio engine
 - Event-driven: tokio broadcast bus connects all components

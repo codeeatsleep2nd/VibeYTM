@@ -117,3 +117,58 @@ input {
      repaints in surrounding rows. */
   will-change: transform, box-shadow, opacity;
 }
+
+/* Apple-Music-style slider used by PlayerChrome (volume + Now-Playing-card
+   progress). Track stays thin (visible 3px line, 4px on hover); the click
+   area is decoupled — the input element itself is 12px tall so the hit
+   zone is comfortable without bloating the visible track. The fill-to-the-
+   left effect comes from a CSS gradient set inline as `backgroundImage`
+   (so the longhands `background-size` / `position` / `repeat` below stay
+   in effect and crop the gradient to a thin band). The thumb is invisible
+   at rest and reveals on hover/active. */
+input[type='range'][data-vibeytm-slider] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px; /* clickable area */
+  background-color: transparent;
+  background-size: 100% 3px; /* visible track height */
+  background-position: center;
+  background-repeat: no-repeat;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  outline: none;
+  /* `background-image` is set inline (gradient with progress %) */
+}
+
+input[type='range'][data-vibeytm-slider]::-webkit-slider-runnable-track {
+  height: 12px;
+  background: transparent;
+  border-radius: var(--radius-full);
+}
+
+input[type='range'][data-vibeytm-slider]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 0; /* track is 12px now; thumb centers naturally */
+  border-radius: var(--radius-full);
+  background: var(--color-text-primary);
+  border: none;
+  opacity: 0;
+  transform: scale(0.8);
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-thumb,
+input[type='range'][data-vibeytm-slider]:active::-webkit-slider-thumb,
+input[type='range'][data-vibeytm-slider]:focus-visible::-webkit-slider-thumb {
+  opacity: 1;
+  transform: scale(1);
+}
+
+input[type='range'][data-vibeytm-slider]:hover {
+  background-size: 100% 4px; /* visible track grows on hover */
+}

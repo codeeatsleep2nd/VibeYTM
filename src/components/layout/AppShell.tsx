@@ -1,6 +1,6 @@
 import { type FC, type ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
-import { PlayerBar } from './PlayerBar';
+import { PlayerChrome } from './PlayerChrome';
 import { NowPlaying } from '../player/NowPlaying';
 import { QueuePanel } from '../player/QueuePanel';
 
@@ -31,8 +31,9 @@ export const AppShell: FC<AppShellProps> = ({
     style={{
       display: 'grid',
       gridTemplateColumns: 'var(--sidebar-width) 1fr',
-      // PlayerBar is `position: fixed`, so no grid row is reserved for it.
-      // <main> applies its own paddingBottom to keep content above the bar.
+      // PlayerChrome is `position: fixed` at the bottom (preserves the
+      // original PlayerBar location & size; Apple Music styling is
+      // applied to the bar itself, not its position).
       gridTemplateRows: '1fr',
       height: '100%',
       overflow: 'hidden',
@@ -65,7 +66,7 @@ export const AppShell: FC<AppShellProps> = ({
       {children}
     </main>
 
-    <PlayerBar
+    <PlayerChrome
       onToggleNowPlaying={onToggleNowPlaying}
       nowPlayingOpen={nowPlayingOpen}
       lyricsOpen={lyricsOpen}
