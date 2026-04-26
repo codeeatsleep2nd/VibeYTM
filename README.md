@@ -10,11 +10,11 @@
 
 # VibeYTM
 
-An Apple Music-style YouTube Music desktop app built with Tauri, React, and Rust.
+A YouTube Music desktop app built with Tauri, React, and Rust.
 
 ## Features
 
-- Apple Music-inspired UI with sidebar navigation, album grids, and player bar
+- Custom UI with sidebar navigation, album grids, and player bar
 - Background playback — music continues when the window is closed
 - System tray with playback controls
 - Media key support (Play/Pause, Next, Previous)
@@ -25,6 +25,8 @@ An Apple Music-style YouTube Music desktop app built with Tauri, React, and Rust
 - Synced lyrics display with karaoke-style per-line highlighting (YTM timed lyrics → LRCLIB → NetEase fallback, persisted per-track on disk)
 - Lyrics pre-fetch for the current track and the next two in YTM's upcoming queue
 - Blur-and-spinner on reload — refreshing a page keeps previous content visible while fresh data arrives
+- Search history — your last 5 queries reappear as quick-tap chips on the search page
+- Disk-cache stats in Settings (images, tracks, lyrics) with one-click clear
 - Custom CSS themes (coming soon)
 
 ## Screenshots
@@ -75,7 +77,7 @@ pnpm tauri dev
 
 VibeYTM uses a two-WebView architecture:
 
-1. **Visible WebView** — Custom React UI (Apple Music-style)
+1. **Visible WebView** — Custom React UI
 2. **Hidden WebView** — YouTube Music web player (audio engine only)
 
 The Rust backend acts as the bridge:

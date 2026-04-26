@@ -27,6 +27,9 @@ export interface PlayerState {
   repeatMode: RepeatMode;
   isShuffled: boolean;
   queue: TrackInfo[];
+  /** Restored from last session on launch; updated whenever the user
+   *  explicitly starts playing from a playlist/album/radio. */
+  activePlaylistId?: string | null;
   account: AccountInfo | null;
 }
 
@@ -35,7 +38,11 @@ export interface AlbumSummary {
   title: string;
   artist: string;
   artworkUrl: string;
-  year?: number;
+  // Wire format is a display string ("2019", "2024"), not a number — YTM
+  // returns it as a free-form string and the Rust mirror is `Option<String>`.
+  // Don't switch this to `number` without updating the Rust parser to emit
+  // u16 — otherwise consumers that do arithmetic silently get NaN.
+  year?: string;
 }
 
 export interface ArtistSummary {
@@ -102,4 +109,12 @@ export interface Lyrics {
   source?: string | null;
   /** Per-line timings when YTM returned synced lyrics; else null. */
   lines?: LyricLine[] | null;
+  /** Artist + title the SOURCE believed these lyrics belonged to. Stamped
+   *  at fetch time so a later cache-read sanity check can spot a wrong-
+   *  song match (e.g. NetEase's title-substring search returning some
+   *  unrelated track) and re-fetch instead of serving the lie forever.
+   *  Either field can be `undefined` for entries cached before stamping
+   *  was added — those entries are trusted. */
+  matchedArtist?: string | null;
+  matchedTitle?: string | null;
 }

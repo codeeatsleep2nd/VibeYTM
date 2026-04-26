@@ -12,6 +12,15 @@ Apply to: Home, Search (Albums/Artists tabs), Explore, Library, Playlist detail
 - [ ] Clicking play icon on a single-track card → plays that track
 - [ ] Parser must detect `musicTwoRowItemRenderer` with watchEndpoint as Song, not Album
 - [ ] React keys use `${id || 'fallback'}-${index}` pattern to prevent collisions
+- [ ] **Card click target MUST be a real `<button>` element, NOT `<div role="button">`** — see "WKWebView quirk: div role=button swallows onClick" below
+
+### WKWebView quirks — REGRESSION TRAPS
+- [ ] **Click targets are real `<button>` elements**: `<div role="button" tabIndex={0}>` looks equivalent and passes a11y, but in this Tauri WKWebView build the synthetic React onClick is silently dropped (mouse hover still fires; only click is broken). Verified with diagnostic IPC — zero pings landed despite repeated clicks. ALWAYS use a real `<button>`. If you need to avoid nested-button HTML, swap the INNER element to a `<span role="button" onClick={...}>` rather than swapping the outer wrapper.
+- [ ] **No `pointer-events: none` on stale-while-revalidate overlays**: `ReloadOverlay`-style wrappers must NOT block pointer events on cached children during a refresh — that turns every card into a click-dead surface for the duration of any YTM bridge stall (~30 s during webview navigation). Use a small corner spinner that itself has `pointerEvents: 'none'`, but leave the children fully interactive.
+- [ ] **`ReloadOverlay` MUST blur the children** with `filter: blur(10px)` while a refetch is in flight. The blur is the visual stale-while-revalidate cue ("data is being refreshed in place"). CSS `filter` does NOT affect hit testing — clicks still pass through, so the blur and the click-through-children rule above are independent. An earlier fix accidentally removed the blur together with a click-blocker; only the click-blocker was the bug. If the home page stops blurring on refresh again, the regression is in `src/components/LoadingOverlay.tsx`.
+- [ ] **`ReloadOverlay`'s children-wrapping layer must have NO `transform`.** `transform: scale(...)` creates a stacking context that WKWebView mishandles for hit-testing — clicks on some children stop registering. An attempt to add `scale(0.98)` to hide the blur halo broke clicks across Home / Explore / Library. Use blur alone; transforms on the wrapper are forbidden. Locked in by the contract test in `src/components/LoadingOverlay.test.tsx`.
+- [ ] **Children of closed overlays must NOT set `pointer-events: auto`.** A child with explicit `pointer-events: auto` overrides its parent's `pointer-events: none`. For fixed-position panels (`NowPlaying`, `QueuePanel`, future overlays) any inner element that toggles its own pointer-events must AND with the parent's `isOpen`: `pointerEvents: isOpen && childIsActive ? 'auto' : 'none'`. Without this, opening the panel + sub-feature (e.g. LRC), then navigating away via the sidebar, leaves an invisible click-stealing region where the panel used to be. The sidebar `onNavigate` handler in `src/App.tsx` must also reset every overlay flag — `setIsNowPlayingOpen(false)`, `setIsLyricsOpen(false)`, `setIsQueueOpen(false)` — for the same reason.
+- [ ] **Background fetches debounced past YTM webview navigation**: every track change forces YTM's audio webview to navigate, hanging in-flight `fetch()` calls for ~3-15 s. Background calls (queue refresh, lyrics preload, current-track lyrics probe) must wait ~1.5-2 s after a track change so they don't saturate the bridge channel and starve user-driven IPCs (`get_playlist`, `search`).
 
 ### Playlist Card Click Rules (CRITICAL)
 - [ ] Click anywhere on card (NOT play icon) → opens playlist detail page, NO auto-play
@@ -109,6 +118,49 @@ Apply to: Home, Search (Albums/Artists tabs), Explore, Library, Playlist detail
       Library tab title with the Library section, Explore title with
       Explore, Settings title with Settings, playlist Back button with the
       sidebar nav row.
+
+## Regression Checklist for 0.9.10
+- [ ] **About window** macOS menu **VibeYTM → About VibeYTM** opens a small
+      dark dialog (380×240, non-resizable). Shows "VibeYTM",
+      "Version <bundled-version>", "Built with Tauri + React",
+      "A YouTube Music desktop client", and a clickable
+      "Visit ytm.gleevibe.ai for more information" line. Clicking the link
+      opens **the system default browser** — never navigates inside the
+      about window itself. Version number must match what Settings → About
+      shows (single source of truth via `get_about_info` IPC).
+- [ ] **Settings cache stats** Settings → Cache row reads
+      "X.Y MB / Z.Z MB — N images, N tracks, N lyrics". Lyric count
+      increments after a synced-lyric track has been played and lyrics
+      cached to disk; "Clear cache" zeroes all three counts.
+- [ ] **Search recents** First open of Search shows "Search YouTube Music"
+      placeholder (empty state). After submitting a query, navigating away,
+      and reopening Search, the empty state shows "Recent searches" with
+      the most recent query as the leftmost chip. At most 5 chips.
+      Clicking a chip re-runs the search. "Clear" affordance empties the
+      list. Persists across app restarts.
+- [ ] **Lyrics line wrap** Long lyric lines (CJK without spaces, very long
+      English) wrap to the next line within the lyric panel — never
+      overflow horizontally.
+- [ ] **Lyric/Queue cover-shift parity** When the queue drawer slides in
+      from the right (with Now Playing open), the cover-column shifts left
+      to the same position it occupies when the lyrics drawer is open.
+      Closing both drawers re-centers the cover.
+- [ ] **Volume bar width** Volume slider in the player bar is ~55px wide,
+      noticeably more compact than before (was 83px).
+- [ ] **Seek does not desync lyrics** Click the progress bar mid-track to
+      jump forward or backward by ≥ 30 s. The lyric panel must scroll to
+      the new line and stay there — no flash to an old line, no slow
+      reverse-drift. Verified by `seekFilter.test.ts` for the pure echo
+      filter; this manual check covers the end-to-end YTM-bridge path
+      where a stale pre-seek POSITION_UPDATED can arrive 1-4 s after the
+      seek and previously snapped `useSmoothedPosition` backward.
+- [ ] **No volume burst on track change** Set the volume to a non-default
+      level (say 30%), let the track end, and listen carefully as the next
+      track starts. Audio must come in at the user-set level — no audible
+      jump-to-default before clamping. Repeat for an explicit Next click.
+      The fix routes the desired volume through `localStorage` on the YTM
+      origin so the bridge's prototype-level volume lock is armed before
+      YTM creates the new `<video>` element.
 
 ## Login Flow
 - [ ] First launch (no cached session): LoginPage appears and the YouTube

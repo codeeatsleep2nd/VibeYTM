@@ -6,6 +6,7 @@ use crate::cache::Cache;
 use crate::events::bus::EventBus;
 use crate::events::types::AppEvent;
 use crate::state::player::{AccountInfo, PlaybackStatus, PlayerState, RepeatMode, SharedPlayerState, TrackInfo};
+use crate::state::settings::{self, SharedSettings};
 
 #[tauri::command]
 pub async fn on_track_changed(
@@ -30,6 +31,26 @@ pub async fn on_track_changed(
     app.emit("player:track-changed", &track)
         .map_err(|e| e.to_string())?;
 
+    Ok(())
+}
+
+/// Called from the YTM bridge whenever its DOM queue observer detects a
+/// change. Stores the authoritative queue (the order YTM will actually play
+/// tracks in, including shuffle state) so the Playing-queue UI can show the
+/// real up-next list instead of re-fetching a separate /next snapshot that
+/// may diverge from YTM's internal ordering.
+#[tauri::command]
+pub async fn on_queue_changed(
+    queue: Vec<TrackInfo>,
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    {
+        let mut player = state.write().await;
+        player.queue = queue.clone();
+    }
+    app.emit("player:queue-changed", &queue)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -156,8 +177,26 @@ fn forward_to_ytm(app: &AppHandle, cmd: &str) {
     }
 }
 
+/// Pop a `pending_restore` if one is queued (set on launch from the
+/// persisted session). When present, the caller should navigate the YTM
+/// webview to the saved track at the saved position INSTEAD of forwarding
+/// a generic "play" command — otherwise the YTM webview is still on the
+/// home page and "play" is a no-op.
+async fn take_pending_restore(
+    state: &SharedPlayerState,
+) -> Option<crate::state::player::PendingRestore> {
+    let mut player = state.write().await;
+    player.pending_restore.take()
+}
+
 #[tauri::command]
-pub async fn play(app: AppHandle) -> Result<(), String> {
+pub async fn play(
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    if let Some(restore) = take_pending_restore(&state).await {
+        return navigate_for_restore(&app, &restore);
+    }
     forward_to_ytm(&app, "play");
     Ok(())
 }
@@ -169,21 +208,57 @@ pub async fn pause(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn toggle_play(app: AppHandle) -> Result<(), String> {
+pub async fn toggle_play(
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    if let Some(restore) = take_pending_restore(&state).await {
+        return navigate_for_restore(&app, &restore);
+    }
     forward_to_ytm(&app, "toggle_play");
     Ok(())
 }
 
 #[tauri::command]
-pub async fn next_track(app: AppHandle) -> Result<(), String> {
+pub async fn next_track(
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    // User navigated explicitly — discard any pending restore so we don't
+    // jump back to the previous track on the next play.
+    take_pending_restore(&state).await;
     forward_to_ytm(&app, "next");
     Ok(())
 }
 
 #[tauri::command]
-pub async fn previous_track(app: AppHandle) -> Result<(), String> {
+pub async fn previous_track(
+    state: State<'_, SharedPlayerState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    take_pending_restore(&state).await;
     forward_to_ytm(&app, "previous");
     Ok(())
+}
+
+/// Navigate the YTM webview to the saved track at the saved position so
+/// the YouTube Music engine resumes from the persisted offset. The
+/// `&t=Ns` URL parameter is honored by YT, and YTM will autoplay (which
+/// is what the user wants when they hit Play after launch).
+fn navigate_for_restore(
+    app: &AppHandle,
+    restore: &crate::state::player::PendingRestore,
+) -> Result<(), String> {
+    let Some(window) = crate::webview_bridge::get_ytm_window(app) else {
+        return Ok(());
+    };
+    let position_secs = restore.position_secs.max(0.0) as u64;
+    crate::webview_bridge::navigate_to_track_at_position(
+        &window,
+        &restore.video_id,
+        position_secs,
+        restore.playlist_id.as_deref(),
+    )
 }
 
 // --- Playback controls ---
@@ -228,6 +303,14 @@ pub async fn play_track(
         player.track = Some(track.clone());
         player.status = PlaybackStatus::Playing;
         player.position_secs = 0.0;
+        // Stash the watch-list context so the periodic session saver can
+        // persist it; on next launch the queue can be rebuilt by routing
+        // YTM through the same `&list=` parameter.
+        player.active_playlist_id = playlist_id.clone();
+        // User explicitly picked a different track — drop any pending
+        // restore so we don't jump back to the previously-saved track on
+        // the next play.
+        player.pending_restore = None;
     }
 
     bus.emit(AppEvent::TrackChanged(track.clone()));
@@ -241,11 +324,23 @@ pub async fn play_track(
 pub async fn set_volume(
     level: f64,
     state: State<'_, SharedPlayerState>,
+    settings_state: State<'_, SharedSettings>,
     app: AppHandle,
 ) -> Result<(), String> {
     let clamped = level.clamp(0.0, 1.0);
-    let mut player = state.write().await;
-    player.volume = clamped;
+    {
+        let mut player = state.write().await;
+        player.volume = clamped;
+    }
+    // Persist so the next launch restores this level. Fire-and-forget the
+    // disk write — JSON is tiny and writes happen only on user-driven
+    // changes (slider drags / clicks), not on every poller cycle.
+    let snapshot = {
+        let mut s = settings_state.write().await;
+        s.general.last_volume = clamped;
+        s.clone()
+    };
+    settings::save(&app, &snapshot);
     // Forward to YTM
     if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
         let args = format!("{{\"level\":{}}}", clamped);

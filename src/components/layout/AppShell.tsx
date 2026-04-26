@@ -1,7 +1,8 @@
 import { type FC, type ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
-import { PlayerBar } from './PlayerBar';
+import { PlayerChrome } from './PlayerChrome';
 import { NowPlaying } from '../player/NowPlaying';
+import { QueuePanel } from '../player/QueuePanel';
 
 interface AppShellProps {
   currentPath: string;
@@ -10,6 +11,8 @@ interface AppShellProps {
   onToggleNowPlaying: () => void;
   lyricsOpen: boolean;
   onToggleLyrics: () => void;
+  queueOpen: boolean;
+  onToggleQueue: () => void;
   children: ReactNode;
 }
 
@@ -20,14 +23,14 @@ export const AppShell: FC<AppShellProps> = ({
   onToggleNowPlaying,
   lyricsOpen,
   onToggleLyrics,
+  queueOpen,
+  onToggleQueue,
   children,
 }) => (
   <div
     style={{
       display: 'grid',
       gridTemplateColumns: 'var(--sidebar-width) 1fr',
-      // PlayerBar is `position: fixed`, so no grid row is reserved for it.
-      // <main> applies its own paddingBottom to keep content above the bar.
       gridTemplateRows: '1fr',
       height: '100%',
       overflow: 'hidden',
@@ -60,17 +63,22 @@ export const AppShell: FC<AppShellProps> = ({
       {children}
     </main>
 
-    <PlayerBar
+    <PlayerChrome
       onToggleNowPlaying={onToggleNowPlaying}
       nowPlayingOpen={nowPlayingOpen}
       lyricsOpen={lyricsOpen}
       onToggleLyrics={onToggleLyrics}
+      queueOpen={queueOpen}
+      onToggleQueue={onToggleQueue}
     />
 
     <NowPlaying
       isOpen={nowPlayingOpen}
       onClose={onToggleNowPlaying}
       showLyrics={lyricsOpen}
+      queueOpen={queueOpen}
     />
+
+    <QueuePanel isOpen={queueOpen} onClose={onToggleQueue} />
   </div>
 );

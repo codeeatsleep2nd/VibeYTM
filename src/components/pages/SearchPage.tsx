@@ -6,6 +6,12 @@ import { AlbumCard } from '../browse/AlbumCard';
 import { ShelfRow } from '../browse/ShelfRow';
 import { CachedImage } from '../CachedImage';
 
+import {
+  loadRecentSearches,
+  pushRecentSearch,
+  saveRecentSearches,
+} from '../../lib/recentSearches';
+
 const SUGGEST_DEBOUNCE_MS = 200;
 const MIN_QUERY_LENGTH = 2;
 const MIN_SUGGEST_LENGTH = 3;
@@ -46,6 +52,12 @@ export const SearchPage: FC<SearchPageProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   // null = no tab selected → unified default view
   const [activeCategory, setActiveCategory] = useState<CategoryTab | null>(null);
+
+  // Persisted MRU list of submitted queries; rendered as quick-tap chips
+  // before the user runs any search this session.
+  const [recentSearches, setRecentSearches] = useState<string[]>(() =>
+    loadRecentSearches(),
+  );
 
   // Autocomplete state
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -187,6 +199,16 @@ export const SearchPage: FC<SearchPageProps> = ({
     setSubmittedQuery(trimmed);
     setShowSuggestions(false);
     setSuggestions([]);
+    setRecentSearches((prev) => {
+      const next = pushRecentSearch(prev, trimmed);
+      saveRecentSearches(next);
+      return next;
+    });
+  };
+
+  const clearRecentSearches = () => {
+    setRecentSearches([]);
+    saveRecentSearches([]);
   };
 
   // When the app routes us here with a pending query (e.g. from Library →
@@ -375,6 +397,7 @@ export const SearchPage: FC<SearchPageProps> = ({
           display: 'flex',
           gap: 'var(--space-2)',
           overflowX: 'auto',
+          overflowY: 'hidden',
           scrollbarWidth: 'none',
         }}
       >
@@ -409,36 +432,107 @@ export const SearchPage: FC<SearchPageProps> = ({
       </div>
 
       {/*
-        Results region wrapped in a relative container so a reload can blur
-        the previous results while a spinner overlays on top — instead of
-        wiping them to a "Searching…" placeholder.
+        Results region wrapped in a relative container so a reload can show
+        a corner spinner while results stay interactive — stale-while-
+        revalidate. The previous version disabled pointer events on the
+        whole results panel while `isLoading=true`, which made every card
+        in the search results unclickable for the entire duration of any
+        YTM bridge stall (~30s during webview navigation).
       */}
       <div style={{ position: 'relative', minHeight: '200px' }}>
       <div
         style={{
-          filter: isLoading && results ? 'blur(10px)' : 'none',
-          pointerEvents: isLoading ? 'none' : 'auto',
-          transition: 'filter var(--duration-normal) var(--ease-out)',
+          // Keep results fully interactive during reload — no blur, no
+          // pointer-events block. The corner spinner below signals load.
         }}
       >
 
       {!results && !isLoading && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minHeight: '200px',
-          }}
-        >
-          <p
-            style={{
-              fontSize: 'var(--text-base)',
-              color: 'var(--color-text-tertiary)',
-            }}
-          >
-            Search YouTube Music
-          </p>
+        <div style={{ minHeight: '200px' }}>
+          {recentSearches.length > 0 ? (
+            <div style={{ paddingTop: 'var(--space-2)' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  marginBottom: 'var(--space-3)',
+                }}
+              >
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: 'var(--text-sm)',
+                    fontWeight: 600,
+                    color: 'var(--color-text-secondary)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                  }}
+                >
+                  Recent searches
+                </h2>
+                <button
+                  type="button"
+                  onClick={clearRecentSearches}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    fontSize: 'var(--text-xs)',
+                    color: 'var(--color-text-tertiary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Clear
+                </button>
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 'var(--space-2)',
+                }}
+              >
+                {recentSearches.map((kw) => (
+                  <button
+                    key={kw}
+                    type="button"
+                    onClick={() => submitQuery(kw)}
+                    style={{
+                      padding: 'var(--space-2) var(--space-4)',
+                      fontSize: 'var(--text-sm)',
+                      background: 'var(--color-surface-2)',
+                      border: '1px solid oklch(100% 0 0 / 0.08)',
+                      borderRadius: 'var(--radius-full)',
+                      color: 'var(--color-text-primary)',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {kw}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '200px',
+              }}
+            >
+              <p
+                style={{
+                  fontSize: 'var(--text-base)',
+                  color: 'var(--color-text-tertiary)',
+                }}
+              >
+                Search YouTube Music
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -644,7 +738,7 @@ export const SearchPage: FC<SearchPageProps> = ({
                     artworkUrl={playlist.artworkUrl}
                     title={playlist.title}
                     subtitle={
-                      playlist.trackCount !== undefined
+                      playlist.trackCount != null
                         ? `${playlist.trackCount} tracks`
                         : ''
                     }
@@ -672,6 +766,7 @@ export const SearchPage: FC<SearchPageProps> = ({
                   display: 'flex',
                   gap: 'var(--space-5)',
                   overflowX: 'auto',
+                  overflowY: 'hidden',
                   paddingBottom: 'var(--space-2)',
                 }}
               >
@@ -708,7 +803,7 @@ export const SearchPage: FC<SearchPageProps> = ({
                         background: 'var(--color-surface-2)',
                       }}
                     >
-                      <img
+                      <CachedImage
                         src={artist.avatarUrl}
                         alt={artist.name}
                         loading="lazy"

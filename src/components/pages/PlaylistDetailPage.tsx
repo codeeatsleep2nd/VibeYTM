@@ -1,6 +1,7 @@
 import { type FC, useEffect, useState } from 'react';
 import type { PlaylistDetail } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
+import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
 import { SongRow } from '../browse/SongRow';
 import { CachedImage } from '../CachedImage';
 import { LoadingSpinner } from '../LoadingOverlay';
@@ -80,6 +81,12 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     ])
       .then(([data, currentState]) => {
         if (cancelled) return;
+        // Stash every track's album-art URL into the cross-component
+        // registry so the queue panel can show the right cover for
+        // any of these tracks even when /next's response doesn't
+        // surface them. Same flow for albums (MPRE browseIds also
+        // route through getPlaylist).
+        rememberTrackArtworks(data.tracks);
         setPlaylist(data);
         // Seed the saved-state from the server so the button renders the
         // correct label on first paint (issue #55). Without this the button
@@ -95,8 +102,16 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
             data.tracks.some((t) => t.videoId === currentVideoId);
 
           if (!alreadyInPlaylist) {
+            // Only albums (MPRE browseId) need the OLAK swap; for any other
+            // playlist id (PL/OLAK/RDCLAK/LM) the input is already a valid
+            // watch list and audioPlaylistId could be an unrelated radio.
+            const isAlbumBrowseId = playlistId.startsWith('MPRE');
+            const watchList =
+              isAlbumBrowseId && data.audioPlaylistId
+                ? data.audioPlaylistId
+                : playlistId;
             playerApi
-              .playTrack(data.tracks[0].videoId, playlistId)
+              .playTrack(data.tracks[0].videoId, watchList)
               .catch(() => {});
           }
         }
@@ -378,7 +393,12 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
             <button
               onClick={() => {
                 if (playlist.tracks.length > 0 && playlist.tracks[0].videoId) {
-                  playerApi.playTrack(playlist.tracks[0].videoId, playlistId).catch(() => {});
+                  const isAlbumBrowseId = playlistId.startsWith('MPRE');
+                  const watchList =
+                    isAlbumBrowseId && playlist.audioPlaylistId
+                      ? playlist.audioPlaylistId
+                      : playlistId;
+                  playerApi.playTrack(playlist.tracks[0].videoId, watchList).catch(() => {});
                 }
               }}
               style={{
@@ -439,14 +459,21 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
 
       {/* Track list */}
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {playlist.tracks.map((track, i) => (
-          <SongRow
-            key={track.videoId || `track-${i}`}
-            track={track}
-            index={i + 1}
-            playlistId={playlistId}
-          />
-        ))}
+        {playlist.tracks.map((track, i) => {
+          const isAlbumBrowseId = playlistId.startsWith('MPRE');
+          const rowPlaylistId =
+            isAlbumBrowseId && playlist.audioPlaylistId
+              ? playlist.audioPlaylistId
+              : playlistId;
+          return (
+            <SongRow
+              key={track.videoId || `track-${i}`}
+              track={track}
+              index={i + 1}
+              playlistId={rowPlaylistId}
+            />
+          );
+        })}
         {playlist.tracks.length === 0 && (
           <div
             style={{

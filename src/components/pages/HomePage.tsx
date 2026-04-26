@@ -2,9 +2,11 @@ import { type FC, useCallback, useEffect, useState } from 'react';
 import type { Shelf, TrackInfo } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
 import { useTauriEvent } from '../../hooks/useTauriEvent';
+import { readCache, writeCache, clearCache } from '../../lib/persistentCache';
 import { ShelfRow } from '../browse/ShelfRow';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
+import { CachedImage } from '../CachedImage';
 import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
 
 interface HomePageProps {
@@ -18,10 +20,17 @@ interface HomePageProps {
   onReady?: () => void;
 }
 
+// Soft TTL for the in-memory mirror — after this we still serve from
+// memory but trigger a background refresh so the user gets fresh data
+// while interacting with last-known-good. The persistentCache layer
+// holds onto the same payload for 7 days across app restarts so the
+// shelves render instantly on cold start (no blank-grid window while
+// the network call is in flight).
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const PERSIST_KEY = 'home:shelves';
 
-let cachedShelves: Shelf[] | null = null;
-let cachedAt = 0;
+let cachedShelves: Shelf[] | null = readCache<Shelf[]>(PERSIST_KEY);
+let cachedAt = cachedShelves ? Date.now() - CACHE_TTL_MS : 0;
 let firstLoadDone = false;
 
 const MOOD_TABS = [
@@ -88,6 +97,7 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
         cachedShelves = data;
         cachedAt = Date.now();
         firstLoadDone = true;
+        writeCache(PERSIST_KEY, data);
         setShelves(data);
         setIsLoading(false);
         onReady?.();
@@ -117,6 +127,9 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
       cachedAt = 0;
       firstLoadDone = false;
       cachedMoodSongs = null;
+      // Drop the persisted shelf cache too — it represents the previous
+      // account's home feed, not what an unauthenticated user should see.
+      clearCache(PERSIST_KEY);
       setShelves([]);
       setMoodSongs([]);
       fetchHome(true);
@@ -231,6 +244,7 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
           display: 'flex',
           gap: 'var(--space-2)',
           overflowX: 'auto',
+          overflowY: 'hidden',
           scrollbarWidth: 'none',
         }}
       >
@@ -388,6 +402,7 @@ function renderShelfContent(
             display: 'flex',
             gap: 'var(--space-5)',
             overflowX: 'auto',
+            overflowY: 'hidden',
             paddingBottom: 'var(--space-2)',
           }}
         >
@@ -412,7 +427,7 @@ function renderShelfContent(
                   background: 'var(--color-surface-2)',
                 }}
               >
-                <img
+                <CachedImage
                   src={artist.avatarUrl}
                   alt={artist.name}
                   loading="lazy"
@@ -454,7 +469,7 @@ function renderShelfContent(
               artworkUrl={playlist.artworkUrl}
               title={playlist.title}
               subtitle={
-                playlist.trackCount !== undefined
+                playlist.trackCount != null
                   ? `${playlist.trackCount} tracks`
                   : ''
               }

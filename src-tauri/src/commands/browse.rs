@@ -238,13 +238,19 @@ pub async fn remove_playlist_from_library(
 pub async fn get_upcoming_tracks(
     video_id: String,
     limit: Option<usize>,
+    playlist_id: Option<String>,
     app: AppHandle,
     api: State<'_, YtmApi>,
 ) -> Result<Vec<TrackInfo>, String> {
-    let limit = limit.unwrap_or(3).min(10);
-    tracing::info!(video_id = %video_id, limit, "browse::get_upcoming_tracks called");
+    let limit = limit.unwrap_or(3).min(200);
+    tracing::info!(
+        video_id = %video_id,
+        limit,
+        playlist_id = ?playlist_id,
+        "browse::get_upcoming_tracks called"
+    );
     let result = api
-        .get_upcoming_tracks(&app, &video_id, limit)
+        .get_upcoming_tracks(&app, &video_id, limit, playlist_id.as_deref())
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "browse::get_upcoming_tracks failed");
@@ -254,29 +260,151 @@ pub async fn get_upcoming_tracks(
     Ok(result)
 }
 
+/// Look up the audio counterpart's album-art thumbnail for a videoId.
+/// YTM matches every official music video (`MUSIC_VIDEO_TYPE_OMV`) to
+/// its audio track (`MUSIC_VIDEO_TYPE_ATV`); the audio side carries
+/// the `lh*.googleusercontent.com` square album cover, while the
+/// video side has the 16:9 video frame. Returns `Some(url)` only
+/// when a counterpart exists and its thumbnail differs from what
+/// YTM would have shown for the video. Returns `None` for tracks
+/// that already ARE the audio side, or when YTM hasn't matched the
+/// video to an audio counterpart.
+#[tauri::command]
+pub async fn get_audio_counterpart_artwork(
+    video_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<Option<String>, String> {
+    tracing::info!(video_id = %video_id, "browse::get_audio_counterpart_artwork called");
+    // Note: an earlier version of this command tried to abort when the
+    // player_state's `track.video_id` differed from the requested
+    // `video_id` ("the user must have skipped"). That was wrong:
+    // player_state lags the bridge by one poller cycle, so the
+    // request often arrives BEFORE player_state catches up to the
+    // new track — the abort fired incorrectly, returned Ok(None),
+    // and the frontend cached null for that videoId. The OnceCell
+    // de-dupe in `YtmApi::fetch_next_cached` already guarantees
+    // concurrent calls for the same body share one fetch, so
+    // there's no work-multiplication to defend against.
+    let result = api
+        .get_audio_counterpart_artwork(&app, &video_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "browse::get_audio_counterpart_artwork failed");
+            e.to_string()
+        })?;
+    tracing::info!(
+        video_id = %video_id,
+        found = result.is_some(),
+        "browse::get_audio_counterpart_artwork done"
+    );
+    Ok(result)
+}
+
+/// Loose case-insensitive substring match used by the cache-read sanity
+/// check. Returns true when `a` and `b` share a non-empty substring in
+/// either direction (handles partial title/artist variants like
+/// "ROSÉ" vs "ROSÉ (with Bruno Mars)" or "周杰倫" vs "Jay Chou 周杰倫").
+fn lyric_field_matches(a: &str, b: &str) -> bool {
+    let al = a.trim().to_lowercase();
+    let bl = b.trim().to_lowercase();
+    if al.is_empty() || bl.is_empty() {
+        return false;
+    }
+    al.contains(&bl) || bl.contains(&al)
+}
+
+/// Decide whether a cached `Lyrics` entry is still valid for the playing
+/// track. Returns `true` when (1) we have no `matched_artist` / `matched_title`
+/// metadata to compare against — happens for entries cached BEFORE this
+/// stamping was added; we trust them — or (2) BOTH the cached artist and
+/// the cached title loosely match the request. Any mismatch means an old
+/// session matched a different song's lyrics to this videoId; the caller
+/// re-fetches.
+fn cached_lyrics_matches_request(
+    cached: &Lyrics,
+    request_artist: Option<&str>,
+    request_title: Option<&str>,
+) -> bool {
+    let (cached_artist, cached_title) =
+        match (cached.matched_artist.as_deref(), cached.matched_title.as_deref()) {
+            (Some(a), Some(t)) if !a.trim().is_empty() && !t.trim().is_empty() => (a, t),
+            _ => return true, // pre-stamping entry — trust it
+        };
+    let req_artist = request_artist.unwrap_or("");
+    let req_title = request_title.unwrap_or("");
+    // Both halves must agree. Title-only or artist-only matches were the
+    // exact failure mode that produced the wrong-song lyrics regression
+    // (NetEase's title-substring search returning a different artist's
+    // track with the same title).
+    lyric_field_matches(cached_artist, req_artist)
+        && lyric_field_matches(cached_title, req_title)
+}
+
+/// `force_external` (camelCase from FE: `forceExternal`) is `Some(true)` when
+/// the user clicked the "Refresh lyrics" button. We then skip BOTH the disk
+/// cache AND the YTM-synced-lyrics short-circuit, going straight to the
+/// LRCLIB/NetEase race. The lyrics tab YTM exposes for some videoIds returns
+/// wrong-but-synced content; without this flag, refreshing just re-fetches
+/// from the same wrong YTM source.
 #[tauri::command]
 pub async fn get_lyrics(
     video_id: String,
     artist: Option<String>,
     title: Option<String>,
     duration_secs: Option<f64>,
+    force_external: Option<bool>,
     app: AppHandle,
     api: State<'_, YtmApi>,
     cache: State<'_, Cache>,
 ) -> Result<Lyrics, String> {
-    tracing::info!(video_id = %video_id, "browse::get_lyrics called");
+    let force_external = force_external.unwrap_or(false);
+    tracing::info!(video_id = %video_id, force_external, "browse::get_lyrics called");
 
     // Disk cache hit? Return immediately — no network round-trip, survives
-    // app restarts. The cache's 7d+jitter TTL handles freshness.
-    if let Ok(Some(raw)) = cache.get_lyrics(&video_id) {
-        if let Ok(cached) = serde_json::from_str::<Lyrics>(&raw) {
-            tracing::info!(video_id = %video_id, "browse::get_lyrics served from disk cache");
-            return Ok(cached);
+    // app restarts. The cache's 7d+jitter TTL handles freshness. Skipped
+    // when the user clicked Refresh: they explicitly want a fresh result.
+    //
+    // Sanity check: when the cached entry's `matched_artist`/`matched_title`
+    // disagrees with the playing track's request artist/title (e.g. an
+    // earlier session matched the wrong song via NetEase's loose search),
+    // treat the entry as stale and re-fetch + re-cache instead of serving
+    // the lie indefinitely.
+    if !force_external {
+        if let Ok(Some(raw)) = cache.get_lyrics(&video_id) {
+            if let Ok(cached) = serde_json::from_str::<Lyrics>(&raw) {
+                if cached_lyrics_matches_request(
+                    &cached,
+                    artist.as_deref(),
+                    title.as_deref(),
+                ) {
+                    tracing::info!(video_id = %video_id, "browse::get_lyrics served from disk cache");
+                    return Ok(cached);
+                }
+                tracing::info!(
+                    video_id = %video_id,
+                    cached_artist = ?cached.matched_artist,
+                    cached_title = ?cached.matched_title,
+                    request_artist = ?artist,
+                    request_title = ?title,
+                    "browse::get_lyrics: cached entry mismatches request — re-fetching"
+                );
+                if let Err(e) = cache.invalidate_lyrics(&video_id) {
+                    tracing::warn!(error = %e, "failed to drop stale lyrics cache entry");
+                }
+            }
         }
     }
 
     let result = api
-        .get_lyrics(&app, &video_id, artist.as_deref(), title.as_deref(), duration_secs)
+        .get_lyrics(
+            &app,
+            &video_id,
+            artist.as_deref(),
+            title.as_deref(),
+            duration_secs,
+            force_external,
+        )
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "browse::get_lyrics failed");
@@ -297,4 +425,21 @@ pub async fn get_lyrics(
     }
 
     Ok(result)
+}
+
+/// Remove the disk-cache entry for a single videoId so the next
+/// `get_lyrics` call goes back to YTM/LRCLIB/NetEase. The FE clears its
+/// in-memory + localStorage caches separately — both layers must be
+/// invalidated in lockstep, otherwise the FE returns its stale hit
+/// without ever calling Rust again.
+#[tauri::command]
+pub fn invalidate_lyrics_cache(
+    video_id: String,
+    cache: State<'_, Cache>,
+) -> Result<(), String> {
+    tracing::info!(video_id = %video_id, "invalidate_lyrics_cache");
+    cache.invalidate_lyrics(&video_id).map_err(|e| {
+        tracing::warn!(error = %e, "failed to invalidate lyrics cache");
+        e.to_string()
+    })
 }

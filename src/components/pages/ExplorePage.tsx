@@ -1,9 +1,11 @@
 import { type FC, useCallback, useEffect, useState } from 'react';
 import type { Shelf } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
+import { readCache, writeCache } from '../../lib/persistentCache';
 import { ShelfRow } from '../browse/ShelfRow';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
+import { CachedImage } from '../CachedImage';
 import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
 
 interface ExplorePageProps {
@@ -13,8 +15,11 @@ interface ExplorePageProps {
 
 // Module-level cache so the Explore feed survives tab-switch remounts. The
 // page component is unmounted when the user navigates away, which would
-// otherwise force a fresh fetch every time they return.
-let exploreCache: Shelf[] | null = null;
+// otherwise force a fresh fetch every time they return. Persisted to
+// localStorage with a 7-day TTL so cold restarts render instantly from
+// last-known-good data while a background refresh runs.
+const PERSIST_KEY = 'explore:shelves';
+let exploreCache: Shelf[] | null = readCache<Shelf[]>(PERSIST_KEY);
 
 export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
   const [shelves, setShelves] = useState<Shelf[]>(exploreCache ?? []);
@@ -34,6 +39,7 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
       .getExplore()
       .then((data) => {
         exploreCache = data;
+        writeCache(PERSIST_KEY, data);
         setShelves(data);
         setIsLoading(false);
         setIsRefreshing(false);
@@ -267,6 +273,7 @@ function renderShelfContent(
             display: 'flex',
             gap: 'var(--space-5)',
             overflowX: 'auto',
+            overflowY: 'hidden',
             paddingBottom: 'var(--space-2)',
           }}
         >
@@ -291,7 +298,7 @@ function renderShelfContent(
                   background: 'var(--color-surface-2)',
                 }}
               >
-                <img
+                <CachedImage
                   src={artist.avatarUrl}
                   alt={artist.name}
                   loading="lazy"
@@ -333,7 +340,7 @@ function renderShelfContent(
               artworkUrl={playlist.artworkUrl}
               title={playlist.title}
               subtitle={
-                playlist.trackCount !== undefined
+                playlist.trackCount != null
                   ? `${playlist.trackCount} tracks`
                   : ''
               }
