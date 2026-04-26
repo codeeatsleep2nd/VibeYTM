@@ -161,6 +161,13 @@ Apply to: Home, Search (Albums/Artists tabs), Explore, Library, Playlist detail
       The fix routes the desired volume through `localStorage` on the YTM
       origin so the bridge's prototype-level volume lock is armed before
       YTM creates the new `<video>` element.
+- [ ] **#76 Volume slider does NOT jump to max after track change.** Set
+      the volume to ~30%, let several minutes pass without touching the
+      slider (frontend echo window expires), then let YTM auto-advance to
+      a new track. The slider thumb must stay at 30% — no visible snap to
+      100% before settling back. Same for an explicit Next click. Backed
+      by the `last_emitted_volume` change-gate + `VOLUME_PUSH_SETTLE_MS`
+      reconcile window in `webview_bridge/poller.rs`.
 
 ## Login Flow
 - [ ] First launch (no cached session): LoginPage appears and the YouTube
