@@ -133,12 +133,24 @@ const App: FC = () => {
   // phase so we don't initialise behind the WelcomeScreen / login —
   // the targets aren't in the DOM yet at those phases. Hook is
   // idempotent across re-renders (internal initializedRef).
+  // Tuned so the glass character reads at a glance against YTM's mostly
+  // dark backgrounds:
+  //   refraction 0.025 — strong enough to bend visible carousel edges
+  //                      behind the chrome.
+  //   bevelDepth/Width — pronounced rim catches whatever light bleeds
+  //                      through, drawing the glass plate.
+  //   frost 0.18      — frosted layer keeps content recognisable while
+  //                      clearly marking the surface as glass.
+  //   specular        — highlight gleam on top.
+  // Defaults from naughtyduk/liquidGL (refraction 0.01, frost 0) read
+  // as "almost transparent" against dark surfaces — barely a UI change.
   useLiquidGL(
     {
       target: '.liquidGL-pane',
-      refraction: 0.012,
-      bevelDepth: 0.06,
-      bevelWidth: 0.12,
+      refraction: 0.025,
+      bevelDepth: 0.18,
+      bevelWidth: 0.22,
+      frost: 0.18,
       shadow: true,
       specular: true,
       reveal: 'fade',

@@ -294,30 +294,23 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
 
   return (
     <footer
-      className="liquidGL-pane"
       style={{
         position: 'fixed',
         bottom: 0,
         left: 'var(--sidebar-width)',
         right: 0,
         height: 'var(--player-bar-height)',
-        // Liquid-glass treatment. When the liquidGL WebGL pane attaches
-        // (via useLiquidGL on this `.liquidGL-pane` selector) the
-        // background of the footer is replaced by a real-time
-        // refraction of the page content underneath. Until then —
-        // first paint, jsdom, no-WebGL fallback — the static
-        // backdrop-filter below stands in so the chrome never
-        // renders as a transparent gap.
-        //   background:           translucent --glass-bg surface
-        //   backdrop-filter:      40 px blur + 180 % saturate
-        //   inset-top box-shadow: 1 px white-ish highlight (Liquid-Glass edge gleam)
-        //   outer box-shadow:     drop shadow so the chrome reads as a discrete plate
-        background: 'var(--glass-bg)',
-        backdropFilter: 'blur(40px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-        borderTop: '1px solid oklch(100% 0 0 / 0.06)',
-        boxShadow:
-          'inset 0 1px 0 oklch(100% 0 0 / 0.08), 0 -8px 24px oklch(0% 0 0 / 0.18)',
+        // The footer itself is transparent — the visual chrome plate is
+        // the `.liquidGL-pane` sibling below. Two reasons for the split:
+        //  1. liquidGL sets the lens element's `opacity:0`. If the lens
+        //     were the footer, every control inside would disappear.
+        //  2. liquidGL's full-screen canvas paints at `z-index = effectiveZ
+        //     - 1`. When the lens is INSIDE the footer (z-index:100), the
+        //     canvas ends up at z=99 — below the footer. An opaque footer
+        //     background would occlude the refraction. Keeping the footer
+        //     transparent lets the refracted canvas show through into the
+        //     chrome's footprint.
+        background: 'transparent',
         display: 'flex',
         alignItems: 'center',
         padding: '0 var(--space-4)',
@@ -325,11 +318,44 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         zIndex: 100,
       }}
     >
+      {/*
+        liquidGL lens — carries the static glass styling so the chrome
+        renders correctly even when liquidGL is unavailable (first paint,
+        jsdom, no-WebGL fallback). Once the WebGL lens attaches, this
+        element becomes `opacity:0` and the canvas paints a real-time
+        refraction of the page behind the chrome at this exact rect.
+        `pointer-events: none` so clicks fall through to the buttons
+        positioned above it (zIndex 1+).
+      */}
+      <div
+        className="liquidGL-pane"
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          zIndex: 0,
+          background: 'var(--glass-bg)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          borderTop: '1px solid oklch(100% 0 0 / 0.06)',
+          boxShadow:
+            'inset 0 1px 0 oklch(100% 0 0 / 0.08), 0 -8px 24px oklch(0% 0 0 / 0.18)',
+        }}
+      />
       {/* LEFT — transports (Apple Music: flat white glyphs, prev/play/next
           rendered as filled SF-Symbol shapes; shuffle/repeat are smaller
-          stroke icons that bracket the row at lower visual weight) */}
+          stroke icons that bracket the row at lower visual weight)
+
+          `position:relative; zIndex:1` so the row paints above the
+          `.liquidGL-pane` sibling (positioned z=0) within the footer's
+          stacking context. Without this, static descendants paint
+          BELOW positioned z-index-0 siblings and the buttons would
+          end up behind the lens once liquidGL repaints over them. */}
       <div
         style={{
+          position: 'relative',
+          zIndex: 1,
           display: 'flex',
           alignItems: 'center',
           gap: 'var(--space-1)',
@@ -378,6 +404,8 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
       {/* CENTER — Now Playing display card (Apple Music's signature widget) */}
       <div
         style={{
+          position: 'relative',
+          zIndex: 1,
           flex: 1,
           display: 'flex',
           justifyContent: 'center',
@@ -394,6 +422,8 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
           keep queue since it's a project feature AM has no equivalent for) */}
       <div
         style={{
+          position: 'relative',
+          zIndex: 1,
           display: 'flex',
           alignItems: 'center',
           gap: 'var(--space-2)',

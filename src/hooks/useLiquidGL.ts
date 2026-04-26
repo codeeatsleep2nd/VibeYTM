@@ -1,4 +1,27 @@
 import { useEffect, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+
+// Surface init progress to the dev-server terminal. Unconditional in
+// dev so we can verify the WebGL pane actually attaches inside
+// WKWebView (where browser devtools aren't readily available). The
+// build optimiser tree-shakes both branches in production.
+function diag(msg: string): void {
+  if (!import.meta.env.DEV) return;
+  // eslint-disable-next-line no-console
+  console.log('[liquidGL]', msg);
+  void invoke('debug_log', {
+    level: 'log',
+    message: `[liquidGL] ${msg}`,
+  }).catch(() => {});
+}
+
+function safeJson(v: unknown): string {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
 
 /**
  * Initialise liquidGL (vendored at /public/scripts/liquidGL.js) once
@@ -74,7 +97,32 @@ export function useLiquidGL(options: LiquidGLOptions, enabled: boolean): void {
     if (!enabled) return;
     if (initializedRef.current) return;
     if (typeof window === 'undefined') return;
-    if (!webglAvailable()) return;
+    if (!webglAvailable()) {
+      diag('WebGL unavailable — falling back to CSS glass');
+      return;
+    }
+
+    // Pipe any liquidGL/html2canvas console errors to the dev-server
+    // log. Without this, snapshot failures vanish into the WKWebView
+    // console (no devtools access in Tauri dev).
+    if (import.meta.env.DEV) {
+      const origError = console.error;
+      console.error = (...args: unknown[]) => {
+        const joined = args
+          .map((a) =>
+            typeof a === 'string'
+              ? a
+              : a instanceof Error
+                ? `${a.name}: ${a.message}`
+                : safeJson(a),
+          )
+          .join(' ');
+        if (/liquid|html2canvas|snapshot/i.test(joined)) {
+          diag(`console.error: ${joined.slice(0, 400)}`);
+        }
+        origError.apply(console, args);
+      };
+    }
 
     let cancelled = false;
     const start = Date.now();
@@ -83,23 +131,80 @@ export function useLiquidGL(options: LiquidGLOptions, enabled: boolean): void {
       if (cancelled) return;
       const w = window;
       if (typeof w.liquidGL === 'function' && w.html2canvas) {
-        // Confirm the target is in the DOM before init — liquidGL's
-        // querySelectorAll runs once at call time and silently no-ops
-        // for absent targets.
-        if (document.querySelector(options.target)) {
+        const targets = document.querySelectorAll(options.target);
+        if (targets.length > 0) {
           try {
-            w.liquidGL(options);
+            const lensRef = w.liquidGL(options) as
+              | { renderer?: { texture?: unknown; lenses?: unknown[] } }
+              | { length: number; [k: number]: { renderer?: { texture?: unknown; lenses?: unknown[] } } }
+              | undefined;
             initializedRef.current = true;
+            diag(
+              `attached: target='${options.target}' nodes=${targets.length}`,
+            );
+            const firstLens = (() => {
+              if (!lensRef) return undefined;
+              if (Array.isArray(lensRef)) return lensRef[0];
+              if ('length' in lensRef && typeof lensRef.length === 'number')
+                return (lensRef as { [k: number]: unknown })[0] as { renderer?: { texture?: unknown; lenses?: unknown[] } };
+              return lensRef as { renderer?: { texture?: unknown; lenses?: unknown[] } };
+            })();
+            // Once the snapshot texture is uploaded, clear the lens
+            // panes' CSS glass fallback so the WebGL canvas painted
+            // behind them (z = lensZ - 1, sitting under the footer's
+            // own stacking context) is no longer occluded by the
+            // fallback bg. Until that point, the fallback IS the
+            // visible chrome surface — so the user never sees a
+            // transparent flash before liquidGL attaches.
+            const promoteToWebGL = (): void => {
+              document.querySelectorAll(options.target).forEach((node) => {
+                const el = node as HTMLElement;
+                el.style.background = 'transparent';
+                el.style.backdropFilter = 'none';
+                (el.style as CSSStyleDeclaration & { webkitBackdropFilter?: string }).webkitBackdropFilter = 'none';
+              });
+            };
+            const checkTextureReady = (deadline: number): void => {
+              const renderer = (
+                firstLens as
+                  | {
+                      renderer?: { texture?: unknown; lenses?: unknown[] };
+                    }
+                  | undefined
+              )?.renderer;
+              if (renderer?.texture) {
+                promoteToWebGL();
+                const canvas = document.querySelector(
+                  'canvas[data-liquid-ignore]',
+                ) as HTMLCanvasElement | null;
+                diag(
+                  `texture loaded — promoted ${
+                    document.querySelectorAll(options.target).length
+                  } panes to WebGL refraction; canvas opacity=${
+                    canvas?.style.opacity ?? '?'
+                  }`,
+                );
+                return;
+              }
+              if (Date.now() > deadline) {
+                diag(
+                  'texture never loaded within 8 s — keeping CSS glass fallback visible',
+                );
+                return;
+              }
+              window.setTimeout(() => checkTextureReady(deadline), 200);
+            };
+            checkTextureReady(Date.now() + 8000);
           } catch (e) {
-            console.warn('[liquidGL] init failed', e);
+            diag(`init threw: ${(e as Error).message}`);
           }
           return;
         }
       }
       if (Date.now() - start > POLL_DEADLINE_MS) {
-        // Fall through silently. CSS backdrop-filter is the visual
-        // fallback on the same target, so the user just sees the
-        // pre-WebGL look.
+        diag(
+          `timed out waiting for scripts/target: liquidGL=${typeof w.liquidGL} html2canvas=${typeof w.html2canvas} target='${options.target}'`,
+        );
         return;
       }
       window.setTimeout(tick, POLL_INTERVAL_MS);
