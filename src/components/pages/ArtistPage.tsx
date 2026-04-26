@@ -8,6 +8,7 @@ import { SongRow } from '../browse/SongRow';
 import { AlbumCard } from '../browse/AlbumCard';
 import { LoadingSpinner } from '../LoadingOverlay';
 import { DetailPageHero } from '../DetailPageHero';
+import { SkeletonRow, SkeletonCard } from '../Skeleton';
 
 interface ArtistPageProps {
   /** Artist's display name. The page runs YTM searches scoped to this
@@ -138,10 +139,49 @@ export const ArtistPage: FC<ArtistPageProps> = ({
         }}
       >
       {isLoading && (
-        <div style={{ height: 240 }}>
-          <LoadingSpinner />
-        </div>
+        <>
+          <section>
+            <div
+              style={{
+                fontSize: 'var(--text-lg)',
+                margin: '0 0 var(--space-3) 0',
+                color: 'var(--color-text-tertiary)',
+              }}
+            >
+              Top songs
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <SkeletonRow key={i} />
+              ))}
+            </div>
+          </section>
+          <section>
+            <div
+              style={{
+                fontSize: 'var(--text-lg)',
+                margin: '0 0 var(--space-3) 0',
+                color: 'var(--color-text-tertiary)',
+              }}
+            >
+              Albums
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))',
+                gap: 'var(--space-4)',
+              }}
+            >
+              {Array.from({ length: 6 }).map((_, i) => (
+                <SkeletonCard key={i} />
+              ))}
+            </div>
+          </section>
+        </>
       )}
+      {/* LoadingSpinner kept for indeterminate cases (none currently). */}
+      {false && <LoadingSpinner />}
 
       {error && !isLoading && (
         <p

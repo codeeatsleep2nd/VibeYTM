@@ -7,6 +7,7 @@ import { albumArtOrNothing } from '../../lib/artwork';
 import { SongRow } from '../browse/SongRow';
 import { LoadingSpinner } from '../LoadingOverlay';
 import { DetailPageHero } from '../DetailPageHero';
+import { SkeletonDetailHero, SkeletonRow } from '../Skeleton';
 
 interface PlaylistDetailPageProps {
   playlistId: string;
@@ -132,8 +133,37 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
   // PlaylistDetailPage resets `playlist` to null before each fetch, so there
   // is no stale content to blur mid-load — keep the plain spinner here.
   if (isLoading) {
-    return <LoadingSpinner />;
+    // Skeleton scaffold matching the eventual hero + track-list layout
+    // so the swap on data arrival doesn't shift the page. Falls back
+    // to a plain spinner if the user has prefers-reduced-motion via
+    // the Skeleton primitive's own check.
+    return (
+      <section
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          overflowY: 'auto',
+          height: '100%',
+        }}
+      >
+        <SkeletonDetailHero />
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            padding: '0 var(--space-6) var(--space-8)',
+          }}
+        >
+          {Array.from({ length: 8 }).map((_, i) => (
+            <SkeletonRow key={i} />
+          ))}
+        </div>
+      </section>
+    );
   }
+  // LoadingSpinner kept available for indeterminate cases that don't
+  // benefit from a layout-mirroring skeleton.
+  void LoadingSpinner;
 
   if (error) {
     return (
