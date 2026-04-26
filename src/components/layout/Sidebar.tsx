@@ -147,14 +147,20 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
 
   return (
     <aside
+      // Liquid Glass plate. Same chrome treatment as the player bar
+      // and queue drawer — the sidebar is a peer chrome element, not
+      // a content surface, so it gets the strongest tier.
+      className="liquid-glass-chrome"
       style={{
         width: 'var(--sidebar-width)',
         height: '100%',
         paddingTop: 'var(--title-bar-height)',
-        background: 'var(--glass-bg)',
-        backdropFilter: `blur(var(--glass-blur))`,
-        WebkitBackdropFilter: `blur(var(--glass-blur))`,
-        borderRight: '1px solid oklch(100% 0 0 / 0.06)',
+        // Override the chrome class's `border-top` (the sidebar's bright
+        // edge runs vertically along its right rim, not horizontally).
+        borderTop: 'none',
+        borderRight: '1px solid var(--glass-rim-mid)',
+        boxShadow:
+          'inset 0 1px 0 var(--glass-rim-mid), inset -1px 0 0 var(--glass-rim-bright), var(--glass-shadow)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',

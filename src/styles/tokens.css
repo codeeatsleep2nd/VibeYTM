@@ -14,9 +14,43 @@
   --color-accent: oklch(62% 0.24 25);
   --color-accent-hover: oklch(68% 0.24 25);
 
-  /* Glass */
-  --glass-bg: oklch(14% 0.005 270 / 0.72);
-  --glass-blur: 20px;
+  /* Glass — Liquid Glass system. Three opacity tiers cover every
+     surface in the UI:
+       chrome  — fixed plates (player chrome, queue drawer): heaviest
+                 white wash + brightest rim, reads as a discrete plate
+       card    — content cards (albums, playlists, song rows): mid
+                 opacity so page content tints them
+       subtle  — backgrounds and section headers: faint tint, mostly
+                 transparent
+     `backdrop-filter: blur(...) saturate(220%) brightness(1.05)` is
+     the recipe applied to all three. The saturate boost is what makes
+     the glass look ALIVE on dark UIs — without it the bleed-through
+     desaturates to gray. The brightness lifts shadow areas so the
+     ambient page gradient reads through. */
+  --glass-bg-chrome: oklch(28% 0.005 270 / 0.62);
+  --glass-bg-card: oklch(24% 0.005 270 / 0.45);
+  --glass-bg-subtle: oklch(20% 0.005 270 / 0.30);
+  --glass-bg-hover: oklch(80% 0.02 270 / 0.10);
+  --glass-blur: 48px;
+  --glass-blur-strong: 64px;
+  --glass-saturate: 220%;
+  --glass-brightness: 1.05;
+  --glass-rim-bright: oklch(100% 0 0 / 0.28);
+  --glass-rim-mid: oklch(100% 0 0 / 0.18);
+  --glass-rim-dim: oklch(100% 0 0 / 0.10);
+  --glass-shadow: 0 8px 24px oklch(0% 0 0 / 0.28);
+  --glass-shadow-strong: 0 12px 36px oklch(0% 0 0 / 0.35);
+  /* Legacy alias — still consumed by older components; points at the
+     new token so a single source of truth governs the chrome look. */
+  --glass-bg: var(--glass-bg-chrome);
+
+  /* Ambient page colour. Without this every backdrop-filter just
+     sees the uniform --color-bg and refracts to dark — making the
+     glass invisible. Two soft radial colour washes on the body give
+     the glass surfaces something visible to refract, even on pages
+     that are otherwise mostly dark. */
+  --ambient-tint-1: oklch(40% 0.16 280);
+  --ambient-tint-2: oklch(45% 0.18 25);
 
   /* Typography */
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',

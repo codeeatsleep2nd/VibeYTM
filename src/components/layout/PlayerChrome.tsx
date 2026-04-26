@@ -294,40 +294,16 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
 
   return (
     <footer
+      // Liquid Glass plate via the system-wide token + utility class.
+      // See `src/styles/global.css` `.liquid-glass-chrome` for the
+      // recipe (gradient + backdrop-filter + bright inset rim).
+      className="liquid-glass-chrome"
       style={{
         position: 'fixed',
         bottom: 0,
         left: 'var(--sidebar-width)',
         right: 0,
         height: 'var(--player-bar-height)',
-        // CSS-driven Liquid Glass plate. Tuned to stay readable as glass
-        // even when the page content directly above the chrome is dark
-        // (so the surface character doesn't depend on backdrop colour):
-        //
-        //   1. background — a stacked translucent gradient on a slightly
-        //      lifted base (oklch 28%). The top 4 % is a near-white wash
-        //      (12 % opacity) that the rim catches; the bottom is a
-        //      darker fade that grounds the plate. Even with dark
-        //      content behind, the wash is visible.
-        //   2. backdrop-filter — blur(48 px) saturate(220 %) keeps the
-        //      colour bleed-through saturated; the smaller blur radius
-        //      vs. the previous 56 px lets shapes/colour read more
-        //      clearly through the plate instead of greying out.
-        //   3. inset top highlight + bright top border — the visible rim
-        //      that sells the surface as a discrete physical plate.
-        //      0.28 opacity is intentionally bright; without it the
-        //      chrome reads as a flat panel against dark content.
-        //   4. outer drop shadow — separates the chrome from the page.
-        //
-        // Apple Music's chrome works the same way — the rim highlight is
-        // doing most of the visual work, the blur is supporting cast.
-        background:
-          'linear-gradient(180deg, oklch(100% 0 0 / 0.12) 0%, oklch(100% 0 0 / 0.04) 4%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.18) 100%), oklch(28% 0 0 / 0.62)',
-        backdropFilter: 'blur(48px) saturate(220%) brightness(1.05)',
-        WebkitBackdropFilter: 'blur(48px) saturate(220%) brightness(1.05)',
-        borderTop: '1px solid oklch(100% 0 0 / 0.18)',
-        boxShadow:
-          'inset 0 1px 0 oklch(100% 0 0 / 0.28), inset 0 -1px 0 oklch(0% 0 0 / 0.30), 0 -12px 36px oklch(0% 0 0 / 0.35)',
         display: 'flex',
         alignItems: 'center',
         padding: '0 var(--space-4)',

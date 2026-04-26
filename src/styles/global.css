@@ -19,7 +19,25 @@ body {
   font-family: var(--font-sans);
   font-size: var(--text-base);
   color: var(--color-text-primary);
-  background: var(--color-bg);
+  /* Ambient page background — two soft colour washes layered on top of
+     the base dark surface. Without these, every `backdrop-filter` in
+     the app sees a uniform dark page and refracts to dark, defeating
+     the Liquid Glass system. The washes are deliberately broad and
+     low-saturation: they only need to give the glass surfaces SOME
+     colour to refract; they should never read as a foreground gradient. */
+  background:
+    radial-gradient(
+      ellipse 1200px 800px at 15% 10%,
+      var(--ambient-tint-1) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 1100px 900px at 85% 95%,
+      var(--ambient-tint-2) 0%,
+      transparent 50%
+    ),
+    var(--color-bg);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /*
@@ -30,6 +48,90 @@ body {
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
+}
+
+/* Liquid Glass utility classes. Apply via className on any surface
+   that should read as glass. Three tiers map to the token system:
+     .liquid-glass-chrome  — fixed plates (player bar, queue drawer)
+     .liquid-glass-card    — content cards (albums, playlists, rows)
+     .liquid-glass-subtle  — section backgrounds, headers
+   The recipe is identical across tiers (gradient on top of a
+   translucent tint, heavy backdrop-filter, bright inset rim,
+   outer drop shadow) — only the strength of each layer differs.
+   The bright top inset is what makes glass read as glass even
+   when the content directly behind it is uniformly dark; without
+   it the surface looks like a flat panel.
+*/
+.liquid-glass-chrome,
+.liquid-glass-card,
+.liquid-glass-subtle {
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate))
+    brightness(var(--glass-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate))
+    brightness(var(--glass-brightness));
+}
+
+.liquid-glass-chrome {
+  background:
+    linear-gradient(
+      180deg,
+      oklch(100% 0 0 / 0.12) 0%,
+      oklch(100% 0 0 / 0.04) 4%,
+      oklch(100% 0 0 / 0) 30%,
+      oklch(0% 0 0 / 0.18) 100%
+    ),
+    var(--glass-bg-chrome);
+  border-top: 1px solid var(--glass-rim-mid);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim-bright),
+    inset 0 -1px 0 oklch(0% 0 0 / 0.30),
+    var(--glass-shadow-strong);
+}
+
+.liquid-glass-card {
+  background:
+    linear-gradient(
+      180deg,
+      oklch(100% 0 0 / 0.10) 0%,
+      oklch(100% 0 0 / 0.02) 6%,
+      oklch(100% 0 0 / 0) 30%,
+      oklch(0% 0 0 / 0.10) 100%
+    ),
+    var(--glass-bg-card);
+  border: 1px solid var(--glass-rim-dim);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim-mid),
+    var(--glass-shadow);
+  border-radius: var(--radius-lg);
+}
+
+.liquid-glass-card:hover {
+  background:
+    linear-gradient(
+      180deg,
+      oklch(100% 0 0 / 0.14) 0%,
+      oklch(100% 0 0 / 0.04) 8%,
+      oklch(100% 0 0 / 0) 30%,
+      oklch(0% 0 0 / 0.10) 100%
+    ),
+    var(--glass-bg-hover);
+  border-color: var(--glass-rim-mid);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim-bright),
+    var(--glass-shadow-strong);
+}
+
+.liquid-glass-subtle {
+  background:
+    linear-gradient(
+      180deg,
+      oklch(100% 0 0 / 0.06) 0%,
+      oklch(100% 0 0 / 0) 30%
+    ),
+    var(--glass-bg-subtle);
+  border: 1px solid var(--glass-rim-dim);
+  box-shadow: inset 0 1px 0 var(--glass-rim-dim);
+  border-radius: var(--radius-md);
 }
 
 input,
