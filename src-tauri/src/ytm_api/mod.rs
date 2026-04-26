@@ -170,12 +170,13 @@ impl YtmApi {
         app: &AppHandle,
         playlist_id: &str,
     ) -> anyhow::Result<PlaylistDetail> {
-        // Album IDs (MPRE...) and Show / Podcast IDs (MPSP...) must NOT
-        // have a VL prefix — YTM's `browse` endpoint expects them raw.
-        // Playlist IDs (RDCLAK, PL, OLAK, etc.) MUST have a VL prefix.
+        // Album IDs (MPRE...) and Show / Podcast IDs (MPSPP...) must
+        // NOT have a VL prefix — YTM's `browse` endpoint expects them
+        // raw. Playlist IDs (RDCLAK, PL, OLAK, etc.) MUST have a VL
+        // prefix.
         let browse_id = if playlist_id.starts_with("VL")
             || playlist_id.starts_with("MPRE")
-            || playlist_id.starts_with("MPSP")
+            || playlist_id.starts_with("MPSPP")
         {
             playlist_id.to_string()
         } else {
@@ -280,17 +281,19 @@ impl YtmApi {
         Ok(parse_library_artists(&data))
     }
 
-    /// Fetch the user's subscribed podcasts via the real YTM API.
-    /// Routes to `FEmusic_library_podcasts`, the same surface YTM's
-    /// own "Podcasts" library tab loads. Each row resolves to a
-    /// PodcastSummary whose browse_id is an MPSP* identifier the
-    /// existing get_playlist IPC already handles (taught in the
-    /// shows-support change).
+    /// Fetch the user's subscribed podcasts. Kaset's reference goes to
+    /// `FEmusic_library_landing` — a mixed response that holds the
+    /// user's playlists, artists, AND podcast shows together — and
+    /// filters MPSPP-prefixed entries out. There is no
+    /// `FEmusic_library_podcasts` browse endpoint; that ID returns
+    /// nothing. Each row resolves to a PodcastSummary whose
+    /// browse_id is an MPSPP identifier the existing get_playlist
+    /// IPC already routes correctly.
     pub async fn get_library_podcasts(
         &self,
         app: &AppHandle,
     ) -> anyhow::Result<Vec<PodcastSummary>> {
-        let body = serde_json::json!({ "browseId": "FEmusic_library_podcasts" }).to_string();
+        let body = serde_json::json!({ "browseId": "FEmusic_library_landing" }).to_string();
         let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_podcasts(&data))
@@ -1604,13 +1607,14 @@ fn parse_library_podcasts(data: &Value) -> Vec<PodcastSummary> {
 }
 
 /// Parse a podcast / show card from a `musicTwoRowItemRenderer`. The
-/// browseId starts with MPSP — anything else returns None so callers
-/// don't accidentally render a non-podcast row in the Podcasts tab.
+/// browseId starts with MPSPP (5 chars — kaset's PodcastParser uses
+/// the same prefix); anything else returns None so callers don't
+/// accidentally render a non-podcast row in the Podcasts tab.
 fn parse_podcast_from_two_row(two_row: &Value) -> Option<PodcastSummary> {
     let browse_id = two_row["navigationEndpoint"]["browseEndpoint"]["browseId"]
         .as_str()?
         .to_string();
-    if !browse_id.starts_with("MPSP") {
+    if !browse_id.starts_with("MPSPP") {
         return None;
     }
     let title = runs_text(&two_row["title"]["runs"]);
@@ -1630,12 +1634,12 @@ fn parse_podcast_from_two_row(two_row: &Value) -> Option<PodcastSummary> {
 }
 
 /// Parse a podcast / show row from a `musicResponsiveListItemRenderer`.
-/// Same MPSP-only constraint as the two-row variant.
+/// Same MPSPP-only constraint as the two-row variant.
 fn parse_podcast_from_list_item(renderer: &Value) -> Option<PodcastSummary> {
     let browse_id = renderer["navigationEndpoint"]["browseEndpoint"]["browseId"]
         .as_str()?
         .to_string();
-    if !browse_id.starts_with("MPSP") {
+    if !browse_id.starts_with("MPSPP") {
         return None;
     }
     let flex_columns = renderer["flexColumns"].as_array()?;
@@ -2426,83 +2430,93 @@ fn parse_track_from_list_item(renderer: &Value) -> Option<TrackInfo> {
 
 /// Parse a podcast / show episode from a `musicMultiRowListItemRenderer`.
 ///
-/// Show pages (browseId `MPSP*`) emit episodes as multi-row list items
-/// instead of the single-row `musicResponsiveListItemRenderer` used by
-/// songs. Shape (verified against YTM browse responses):
+/// Field paths verified against the kaset reference's
+/// `PodcastParser.parseMultiRowListItem`. Show pages (browseId
+/// `MPSPP*`) emit episodes as multi-row list items.
 ///
 /// ```text
 /// musicMultiRowListItemRenderer:
 ///   title:             { runs: [{ text: "<episode title>" }] }
-///   subtitle:          { runs: [{ text: "<show name>" | "<date>" | …}] }
-///   description:       { runs: [{ text: "<short summary>" }] }   (optional)
+///   subtitle:          { runs: [{ text: "<show name>" }, ...] }
+///   description:       { runs: [...] }                      (optional)
+///   durationText:      { runs: [{ text: "36 min" | "1:11:19" }] }
+///   publishedTimeText: { runs: [{ text: "Mar 1, 2026" }] }  (optional)
+///   playedText:        { runs: [{ text: "Played" }] }       (optional)
+///   playbackProgress:  { playbackProgressPercentage: 0-100 } (optional)
 ///   thumbnail:
 ///     musicThumbnailRenderer:
 ///       thumbnail: { thumbnails: [...] }
 ///   onTap:
 ///     watchEndpoint: { videoId: "<episode video id>" }
-///   menu / overlay holds duration text in some shapes
 /// ```
-///
-/// Produces a `TrackInfo` so the existing `playerApi.playTrack` chain
-/// can play the episode without any additional plumbing — the show
-/// name lands in `artist`, episode title in `title`, episode video id
-/// in `video_id`. Duration parsing is best-effort; missing → 0.
 fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
-    let title = runs_text(&renderer["title"]["runs"]);
+    // Title: first run of `title.runs`. Matches kaset's
+    // extractMultiRowTitle exactly (don't concatenate runs — episodes
+    // can have multiple runs in title for stylized text but only the
+    // first carries the actual title).
+    let title = renderer["title"]["runs"]
+        .as_array()
+        .and_then(|runs| runs.first())
+        .and_then(|r| r["text"].as_str())
+        .unwrap_or_default()
+        .to_string();
     if title.is_empty() {
         return None;
     }
 
-    // The show name lands in subtitle.runs. YTM sometimes prepends a
-    // publish-date run separated by " • " — keep the trailing run as
-    // the show name when that pattern is detected.
-    let subtitle = runs_text(&renderer["subtitle"]["runs"]);
-    let show_name = if subtitle.contains(" \u{2022} ") {
-        subtitle
-            .rsplit(" \u{2022} ")
-            .next()
-            .unwrap_or("")
-            .to_string()
-    } else {
-        subtitle.clone()
-    };
+    // Show name = first subtitle run. The show name is reliably the
+    // first run for episodes; published date / other metadata live in
+    // their own dedicated fields (`publishedTimeText`, etc.).
+    let show_name = renderer["subtitle"]["runs"]
+        .as_array()
+        .and_then(|runs| runs.first())
+        .and_then(|r| r["text"].as_str())
+        .unwrap_or_default()
+        .to_string();
 
-    // VideoId — try the renderer's direct watchEndpoint first, then
-    // the `onTap` wrapper YTM uses on some shows, then the
-    // play-button overlay fallback used by `extract_video_id`.
+    // VideoId — kaset reads `onTap.watchEndpoint.videoId` directly;
+    // we keep the overlay fallback for resilience against shape drift.
     let video_id = renderer["onTap"]["watchEndpoint"]["videoId"]
         .as_str()
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| extract_video_id(renderer));
-
     if video_id.is_empty() {
         // Episode without a playable id (e.g. "available soon"
-        // placeholder) — skip rather than emit a row that no-ops on
-        // click.
+        // placeholder) — skip rather than emit a row that no-ops.
         return None;
     }
 
-    let artwork_url = best_thumbnail(
+    // Try multiple thumbnail paths to mirror kaset's
+    // `extractThumbnails` helper — both the primary `thumbnail.*`
+    // path and the `thumbnailRenderer.*` variant some library
+    // shapes use.
+    let mut artwork_url = best_thumbnail(
         &renderer["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
     );
+    if artwork_url.is_empty() {
+        artwork_url = best_thumbnail(
+            &renderer["thumbnailRenderer"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
+        );
+    }
     let artwork_url = if artwork_url.is_empty() {
         None
     } else {
         Some(artwork_url)
     };
 
-    // Duration: shows surface it inconsistently. Try the menu's
-    // playlistAddToOptionsRenderer text, then any `playbackProgress`
-    // blob's total time. Fall through to 0 (treated as unknown by the
-    // frontend duration display).
-    let duration_text = renderer["playbackProgress"]
-        ["musicPlaybackProgressRenderer"]["durationText"]["runs"]
+    // Duration: kaset reads `data.durationText.runs[0].text` —
+    // flat, top-level on the renderer. The previous nested
+    // `playbackProgress.musicPlaybackProgressRenderer.durationText`
+    // path was wrong and always returned 0. Format may be
+    // "36 min" / "1 hr 30 min" (podcasts often) or "1:11:19" (some
+    // long-form episodes); both handled by parse_episode_duration_text.
+    let duration_text = renderer["durationText"]["runs"]
         .as_array()
-        .map(|runs| runs.iter().filter_map(|r| r["text"].as_str()).collect::<String>())
-        .filter(|s| !s.is_empty())
+        .and_then(|runs| runs.first())
+        .and_then(|r| r["text"].as_str())
         .unwrap_or_default();
-    let duration_secs = parse_duration_text(&duration_text);
+    let duration_secs = parse_episode_duration_text(duration_text);
 
     Some(TrackInfo {
         video_id,
@@ -2514,6 +2528,38 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         artwork_url,
         duration_secs,
     })
+}
+
+/// Parse an episode duration string. Episodes use either the colon
+/// format ("3:45", "1:02:30" — same as songs) or the prose format
+/// ("36 min", "1 hr 30 min", "2 hr") that podcasts often surface.
+/// Falls back to 0 on anything unrecognized.
+fn parse_episode_duration_text(text: &str) -> f64 {
+    let t = text.trim();
+    if t.is_empty() {
+        return 0.0;
+    }
+    if t.contains(':') {
+        return parse_duration_text(t);
+    }
+    // Prose form like "36 min" or "1 hr 30 min".
+    let lower = t.to_lowercase();
+    let mut total: f64 = 0.0;
+    let mut current_value: Option<f64> = None;
+    for token in lower.split_whitespace() {
+        if let Ok(n) = token.parse::<f64>() {
+            current_value = Some(n);
+            continue;
+        }
+        match (token, current_value) {
+            ("hr" | "hrs" | "hour" | "hours", Some(n)) => total += n * 3600.0,
+            ("min" | "mins" | "minute" | "minutes", Some(n)) => total += n * 60.0,
+            ("sec" | "secs" | "second" | "seconds", Some(n)) => total += n,
+            _ => {}
+        }
+        current_value = None;
+    }
+    total
 }
 
 /// Parse a duration string like "3:45" or "1:02:30" into seconds.
@@ -4233,16 +4279,14 @@ mod tests {
     // These tests pin the synthetic response shape so a future YTM tweak
     // doesn't silently break show pages.
 
+    /// Synthetic shape that matches kaset's PodcastParser field
+    /// expectations exactly (title.runs[0], subtitle.runs[0],
+    /// durationText.runs[0], onTap.watchEndpoint.videoId, thumbnail
+    /// path, optional publishedTimeText / playedText / playbackProgress).
     fn sample_multi_row_episode() -> serde_json::Value {
         json!({
             "title": { "runs": [{ "text": "Episode 7: A Long Talk" }] },
-            "subtitle": {
-                "runs": [
-                    { "text": "Mar 1, 2026" },
-                    { "text": " \u{2022} " },
-                    { "text": "The Demo Show" }
-                ]
-            },
+            "subtitle": { "runs": [{ "text": "The Demo Show" }] },
             "thumbnail": {
                 "musicThumbnailRenderer": {
                     "thumbnail": {
@@ -4254,11 +4298,8 @@ mod tests {
                 }
             },
             "onTap": { "watchEndpoint": { "videoId": "ep7videoid" } },
-            "playbackProgress": {
-                "musicPlaybackProgressRenderer": {
-                    "durationText": { "runs": [{ "text": "42:15" }] }
-                }
-            }
+            "durationText": { "runs": [{ "text": "42:15" }] },
+            "publishedTimeText": { "runs": [{ "text": "Mar 1, 2026" }] }
         })
     }
 
@@ -4276,7 +4317,7 @@ mod tests {
     fn parse_episode_picks_best_thumbnail_url() {
         let v = sample_multi_row_episode();
         let track = parse_episode_from_multi_row(&v).expect("episode");
-        // best_thumbnail returns the LAST entry — the 480px one.
+        // best_thumbnail returns the LAST entry — the 480 px one.
         assert_eq!(
             track.artwork_url.as_deref(),
             Some("https://i.ytimg.com/vi/eee/lg.jpg"),
@@ -4292,14 +4333,29 @@ mod tests {
     }
 
     #[test]
-    fn parse_episode_uses_subtitle_verbatim_when_no_bullet_separator() {
-        let v = json!({
-            "title": { "runs": [{ "text": "Solo Episode" }] },
-            "subtitle": { "runs": [{ "text": "The Demo Show" }] },
-            "onTap": { "watchEndpoint": { "videoId": "vidx" } }
-        });
+    fn parse_episode_handles_prose_duration_format() {
+        // Podcasts often surface "36 min" instead of a colon format.
+        let mut v = sample_multi_row_episode();
+        v["durationText"]["runs"][0]["text"] = json!("36 min");
         let track = parse_episode_from_multi_row(&v).expect("episode");
-        assert_eq!(track.artist, "The Demo Show");
+        assert!((track.duration_secs - 2160.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_episode_handles_compound_prose_duration() {
+        // "1 hr 30 min" → 5400 secs.
+        let mut v = sample_multi_row_episode();
+        v["durationText"]["runs"][0]["text"] = json!("1 hr 30 min");
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert!((track.duration_secs - 5400.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_episode_returns_zero_duration_when_text_missing() {
+        let mut v = sample_multi_row_episode();
+        v["durationText"] = json!(null);
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert_eq!(track.duration_secs, 0.0);
     }
 
     #[test]
@@ -4314,9 +4370,6 @@ mod tests {
 
     #[test]
     fn parse_episode_returns_none_when_no_video_id_anywhere() {
-        // No `onTap`, no overlay play button, no flex columns —
-        // nothing playable. Skip rather than emit a row that
-        // no-ops on click.
         let v = json!({
             "title": { "runs": [{ "text": "Coming soon" }] },
             "subtitle": { "runs": [{ "text": "Show" }] }
@@ -4326,9 +4379,6 @@ mod tests {
 
     #[test]
     fn parse_episode_falls_back_to_overlay_video_id_when_on_tap_missing() {
-        // Some show responses put the videoId in the
-        // overlay → musicItemThumbnailOverlayRenderer → play button
-        // path that `extract_video_id` understands.
         let v = json!({
             "title": { "runs": [{ "text": "Fallback Episode" }] },
             "subtitle": { "runs": [{ "text": "Show" }] },
@@ -4346,5 +4396,81 @@ mod tests {
         });
         let track = parse_episode_from_multi_row(&v).expect("episode");
         assert_eq!(track.video_id, "fallbackvid");
+    }
+
+    #[test]
+    fn parse_episode_uses_thumbnail_renderer_path_when_primary_missing() {
+        // Library / some grid responses put the cover under
+        // thumbnailRenderer.musicThumbnailRenderer.thumbnail rather
+        // than the primary thumbnail.musicThumbnailRenderer path.
+        let v = json!({
+            "title": { "runs": [{ "text": "Alt Path Episode" }] },
+            "subtitle": { "runs": [{ "text": "Show" }] },
+            "onTap": { "watchEndpoint": { "videoId": "altvid" } },
+            "thumbnailRenderer": {
+                "musicThumbnailRenderer": {
+                    "thumbnail": {
+                        "thumbnails": [
+                            { "url": "https://lh3.googleusercontent.com/big.jpg", "width": 480, "height": 480 }
+                        ]
+                    }
+                }
+            }
+        });
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert_eq!(
+            track.artwork_url.as_deref(),
+            Some("https://lh3.googleusercontent.com/big.jpg"),
+        );
+    }
+
+    #[test]
+    fn parse_podcast_from_two_row_requires_mpspp_prefix() {
+        // MPSPP* → accepted; anything else (MPRE, OLAK, RDCLAK) →
+        // rejected so the Podcasts library tab can't accidentally
+        // surface a non-podcast row.
+        let mut v = json!({
+            "navigationEndpoint": {
+                "browseEndpoint": { "browseId": "MPSPPshow123" }
+            },
+            "title": { "runs": [{ "text": "The Demo Show" }] },
+            "subtitle": { "runs": [{ "text": "Demo Author" }] }
+        });
+        let podcast = parse_podcast_from_two_row(&v).expect("podcast");
+        assert_eq!(podcast.browse_id, "MPSPPshow123");
+        assert_eq!(podcast.title, "The Demo Show");
+        assert_eq!(podcast.author, "Demo Author");
+
+        // MPRE (album) — must be rejected.
+        v["navigationEndpoint"]["browseEndpoint"]["browseId"] = json!("MPREalbum123");
+        assert!(parse_podcast_from_two_row(&v).is_none());
+
+        // Plain MPSP without the second P — also rejected (kaset
+        // only accepts MPSPP).
+        v["navigationEndpoint"]["browseEndpoint"]["browseId"] = json!("MPSPbogus");
+        assert!(parse_podcast_from_two_row(&v).is_none());
+    }
+
+    // ---- parse_episode_duration_text -------------------------------------
+
+    #[test]
+    fn parse_episode_duration_text_handles_colon_form() {
+        assert!((parse_episode_duration_text("3:45") - 225.0).abs() < 1e-6);
+        assert!((parse_episode_duration_text("1:02:30") - 3750.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_episode_duration_text_handles_prose_form() {
+        assert!((parse_episode_duration_text("36 min") - 2160.0).abs() < 1e-6);
+        assert!((parse_episode_duration_text("2 hr") - 7200.0).abs() < 1e-6);
+        assert!((parse_episode_duration_text("1 hr 30 min") - 5400.0).abs() < 1e-6);
+        assert!((parse_episode_duration_text("45 minutes") - 2700.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_episode_duration_text_returns_zero_for_unrecognized() {
+        assert_eq!(parse_episode_duration_text(""), 0.0);
+        assert_eq!(parse_episode_duration_text("   "), 0.0);
+        assert_eq!(parse_episode_duration_text("not a duration"), 0.0);
     }
 }

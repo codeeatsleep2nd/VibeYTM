@@ -528,8 +528,11 @@ pub fn spawn_episode_progress_saver(
             if !matches!(status, PlaybackStatus::Playing) {
                 continue;
             }
-            // Episode-only gate. MPSP* is YTM's show browseId.
-            if !context.starts_with("MPSP") {
+            // Episode-only gate. Kaset's PodcastParser pins the
+            // show browseId prefix at MPSPP (5 chars). Match
+            // exactly so we don't accidentally start saving for
+            // unrelated MPSP* contexts.
+            if !context.starts_with("MPSPP") {
                 continue;
             }
             // Suppress duplicate writes (same track + same position).
@@ -572,7 +575,10 @@ pub(crate) fn lookup_episode_resume(
     playlist_id: Option<&str>,
 ) -> Option<f64> {
     let context = playlist_id?;
-    if !context.starts_with("MPSP") {
+    // Kaset's PodcastParser uses MPSPP (5 chars) as the show
+    // browseId prefix — match exactly so we don't accidentally
+    // resume a non-podcast that happens to share an MPSP* prefix.
+    if !context.starts_with("MPSPP") {
         return None;
     }
     let entry = episode_progress::get(progress_store, video_id)?;
@@ -596,7 +602,7 @@ mod tests {
     fn lookup_episode_resume_returns_saved_position_for_mpsp_context() {
         let mut s = EpisodeProgressStore::default();
         upsert(&mut s, "ep1", 60.0, 600.0, 100);
-        let pos = lookup_episode_resume(&s, "ep1", Some("MPSPshowabc"));
+        let pos = lookup_episode_resume(&s, "ep1", Some("MPSPPshowabc"));
         assert_eq!(pos, Some(60.0));
     }
 
@@ -619,7 +625,7 @@ mod tests {
     #[test]
     fn lookup_episode_resume_returns_none_when_no_entry() {
         let s = EpisodeProgressStore::default();
-        assert!(lookup_episode_resume(&s, "missing", Some("MPSPshow")).is_none());
+        assert!(lookup_episode_resume(&s, "missing", Some("MPSPPshow")).is_none());
     }
 
     #[test]
@@ -637,7 +643,7 @@ mod tests {
                 updated_at_ms: 100,
             },
         );
-        assert!(lookup_episode_resume(&s, "ep1", Some("MPSPshow")).is_none());
+        assert!(lookup_episode_resume(&s, "ep1", Some("MPSPPshow")).is_none());
     }
 
     #[test]
@@ -652,6 +658,6 @@ mod tests {
                 updated_at_ms: 100,
             },
         );
-        assert!(lookup_episode_resume(&s, "ep1", Some("MPSPshow")).is_none());
+        assert!(lookup_episode_resume(&s, "ep1", Some("MPSPPshow")).is_none());
     }
 }
