@@ -406,7 +406,7 @@ export const SettingsPage: FC = () => {
             color: 'var(--color-text-tertiary)',
           }}
         >
-          An Apple Music-style YouTube Music client
+          A YouTube Music desktop client
         </div>
       </div>
     </section>

@@ -76,6 +76,7 @@ export const AppShell: FC<AppShellProps> = ({
       isOpen={nowPlayingOpen}
       onClose={onToggleNowPlaying}
       showLyrics={lyricsOpen}
+      queueOpen={queueOpen}
     />
 
     <QueuePanel isOpen={queueOpen} onClose={onToggleQueue} />

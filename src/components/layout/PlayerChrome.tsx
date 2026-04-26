@@ -431,7 +431,7 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
             }}
             aria-label="Volume"
             style={{
-              width: '83px', /* 3/4 of prior 110px */
+              width: '55px', /* 2/3 of prior 83px */
               backgroundImage: `linear-gradient(to right, var(--color-text-secondary) ${
                 volume * 100
               }%, var(--color-surface-3) ${volume * 100}%)`,

@@ -25,6 +25,10 @@ interface NowPlayingProps {
   onClose: () => void;
   /** When true, show lyrics in place of the cover centerpiece. */
   showLyrics?: boolean;
+  /** When true, the queue drawer is open. Used to mirror the lyrics-open
+   *  cover-shift so the cover sits in the same position whether the queue
+   *  or the lyrics drawer occupies the right slot. */
+  queueOpen?: boolean;
 }
 
 /**
@@ -36,7 +40,11 @@ interface NowPlayingProps {
  * If YTM returned synced lyrics for the track, lines auto-highlight and
  * auto-scroll with playback; otherwise the plain text is shown.
  */
-export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false }) => {
+export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, queueOpen = false }) => {
+  // The right-slot drawer (queue OR lyrics) shares one cover-shift layout.
+  // The cover-column sits in the split position whenever EITHER drawer is
+  // open, even though only one renders content at a time.
+  const splitMode = showLyrics || queueOpen;
   const { track, positionSecs, status } = usePlayerState();
   const durationSecs = track?.durationSecs ?? 0;
   // Auto-tuned position: the backend reports a fresh value every ~150 ms,
@@ -93,7 +101,7 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false }) 
         // the left so `justifyContent: center` actually centers the cover.
         paddingTop: 'var(--space-3)',
         paddingLeft: 'var(--space-6)',
-        paddingRight: showLyrics ? 0 : 'var(--space-6)',
+        paddingRight: splitMode ? 0 : 'var(--space-6)',
         // No bottom padding — the overlay's bottom edge already aligns
         // with the chrome's top (`bottom: var(--player-bar-height)`),
         // so children (cover column, lyrics panel) extend directly to
@@ -149,16 +157,15 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false }) 
           <div
             aria-hidden={!showLyrics}
             style={{
-              // When open, fill the remaining horizontal space so the panel's
-              // right edge lands at the app's right edge; collapse to 0 when
-              // closed. Gap lives on marginLeft so it disappears with the
-              // column. paddingRight gives the text inside breathing room
-              // from the window edge.
-              flex: showLyrics ? '1 1 0' : '0 0 0',
-              width: showLyrics ? 'auto' : '0',
-              marginLeft: showLyrics ? 'var(--space-5)' : '0',
-              paddingRight: showLyrics ? 'var(--space-6)' : '0',
-              opacity: showLyrics ? 1 : 0,
+              // The right-slot column. Driven by `splitMode` so the cover
+              // shifts whenever EITHER lyrics OR queue is open — even
+              // queue-only renders an invisible spacer here so the cover
+              // sits in the same position. The lyric CONTENT visibility
+              // (opacity / translateX slide) is gated on `showLyrics`.
+              flex: splitMode ? '1 1 0' : '0 0 0',
+              width: splitMode ? 'auto' : '0',
+              marginLeft: splitMode ? 'var(--space-5)' : '0',
+              paddingRight: splitMode ? 'var(--space-6)' : '0',
               height: '100%',
               minWidth: 0,
               overflow: 'hidden',
@@ -169,20 +176,35 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false }) 
               // pointer-events over the new page after sidebar nav.
               pointerEvents: isOpen && showLyrics ? 'auto' : 'none',
               transition:
-                'flex-basis 420ms cubic-bezier(0.22, 1, 0.36, 1), margin-left 420ms cubic-bezier(0.22, 1, 0.36, 1), padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
+                'flex-basis 420ms cubic-bezier(0.22, 1, 0.36, 1), margin-left 420ms cubic-bezier(0.22, 1, 0.36, 1), padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1)',
             }}
           >
-            <LyricsPanel
-              status={lyricsStatus}
-              lyrics={lyrics}
-              error={lyricsError}
-              positionSecs={smoothedPositionSecs}
-              durationSecs={durationSecs}
-              visible={showLyrics}
-              offsetMs={lyricsOffsetMs}
-              onAdjustOffsetMs={setLyricsOffsetMs}
-              onResetOffsetMs={resetLyricsOffsetMs}
-            />
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                opacity: showLyrics ? 1 : 0,
+                // Slide the lyric content in from the right edge so the
+                // open animation matches the queue drawer's translateX
+                // gesture. Closed state parks it off-screen-right.
+                transform: showLyrics ? 'translateX(0)' : 'translateX(100%)',
+                transition:
+                  'transform 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
+                willChange: 'transform',
+              }}
+            >
+              <LyricsPanel
+                status={lyricsStatus}
+                lyrics={lyrics}
+                error={lyricsError}
+                positionSecs={smoothedPositionSecs}
+                durationSecs={durationSecs}
+                visible={showLyrics}
+                offsetMs={lyricsOffsetMs}
+                onAdjustOffsetMs={setLyricsOffsetMs}
+                onResetOffsetMs={resetLyricsOffsetMs}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -733,7 +755,7 @@ const LyricLineView = forwardRef<HTMLDivElement, LyricLineViewProps>(
         }}
       >
         {/* Base layer — the real, selectable text. Dimmed by default. */}
-        <span style={{ transition: 'color var(--duration-normal) var(--ease-out)' }}>
+        <span style={{ display: 'block', whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', transition: 'color var(--duration-normal) var(--ease-out)' }}>
           {text || ' '}
         </span>
 

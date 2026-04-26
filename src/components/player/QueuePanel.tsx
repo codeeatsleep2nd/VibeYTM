@@ -610,7 +610,7 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
         top: 'calc(var(--title-bar-height) + var(--space-3))',
         right: 0,
         bottom: 'var(--player-bar-height)',
-        left: 'calc(var(--sidebar-width) + var(--space-6) + min(800px, calc((2 / 3) * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - var(--space-6) - 160px)) + var(--space-5))',
+        left: 'calc(var(--sidebar-width) + var(--space-6) + min(800px, calc((2 / 3) * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px)) + var(--space-5))',
         background: 'var(--color-bg)',
         boxShadow: isOpen ? '-8px 0 24px oklch(0% 0 0 / 0.35)' : 'none',
         zIndex: 90,
