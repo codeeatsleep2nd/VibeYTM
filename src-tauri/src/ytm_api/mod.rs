@@ -170,9 +170,13 @@ impl YtmApi {
         app: &AppHandle,
         playlist_id: &str,
     ) -> anyhow::Result<PlaylistDetail> {
-        // Album IDs (MPRE...) must NOT have VL prefix
-        // Playlist IDs (RDCLAK, PL, OLAK, etc.) MUST have VL prefix
-        let browse_id = if playlist_id.starts_with("VL") || playlist_id.starts_with("MPRE") {
+        // Album IDs (MPRE...) and Show / Podcast IDs (MPSP...) must NOT
+        // have a VL prefix — YTM's `browse` endpoint expects them raw.
+        // Playlist IDs (RDCLAK, PL, OLAK, etc.) MUST have a VL prefix.
+        let browse_id = if playlist_id.starts_with("VL")
+            || playlist_id.starts_with("MPRE")
+            || playlist_id.starts_with("MPSP")
+        {
             playlist_id.to_string()
         } else {
             format!("VL{}", playlist_id)
@@ -1689,6 +1693,18 @@ fn parse_playlist_detail(data: &Value, playlist_id: &str) -> PlaylistDetail {
                                 out.push(track);
                             }
                         }
+                        // Show / podcast pages (browseId MPSP*) emit
+                        // episodes as multi-row list items rather than
+                        // the single-row renderer used by song-bearing
+                        // playlists. Drain the same shelf for either
+                        // shape so the same get_playlist IPC handles
+                        // both surfaces — frontend doesn't need a
+                        // separate `get_show` endpoint.
+                        if let Some(renderer) = item.get("musicMultiRowListItemRenderer") {
+                            if let Some(track) = parse_episode_from_multi_row(renderer) {
+                                out.push(track);
+                            }
+                        }
                     }
                 }
             }
@@ -2302,6 +2318,98 @@ fn parse_track_from_list_item(renderer: &Value) -> Option<TrackInfo> {
         artist,
         artist_id: None,
         album,
+        album_id: None,
+        artwork_url,
+        duration_secs,
+    })
+}
+
+/// Parse a podcast / show episode from a `musicMultiRowListItemRenderer`.
+///
+/// Show pages (browseId `MPSP*`) emit episodes as multi-row list items
+/// instead of the single-row `musicResponsiveListItemRenderer` used by
+/// songs. Shape (verified against YTM browse responses):
+///
+/// ```text
+/// musicMultiRowListItemRenderer:
+///   title:             { runs: [{ text: "<episode title>" }] }
+///   subtitle:          { runs: [{ text: "<show name>" | "<date>" | …}] }
+///   description:       { runs: [{ text: "<short summary>" }] }   (optional)
+///   thumbnail:
+///     musicThumbnailRenderer:
+///       thumbnail: { thumbnails: [...] }
+///   onTap:
+///     watchEndpoint: { videoId: "<episode video id>" }
+///   menu / overlay holds duration text in some shapes
+/// ```
+///
+/// Produces a `TrackInfo` so the existing `playerApi.playTrack` chain
+/// can play the episode without any additional plumbing — the show
+/// name lands in `artist`, episode title in `title`, episode video id
+/// in `video_id`. Duration parsing is best-effort; missing → 0.
+fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
+    let title = runs_text(&renderer["title"]["runs"]);
+    if title.is_empty() {
+        return None;
+    }
+
+    // The show name lands in subtitle.runs. YTM sometimes prepends a
+    // publish-date run separated by " • " — keep the trailing run as
+    // the show name when that pattern is detected.
+    let subtitle = runs_text(&renderer["subtitle"]["runs"]);
+    let show_name = if subtitle.contains(" \u{2022} ") {
+        subtitle
+            .rsplit(" \u{2022} ")
+            .next()
+            .unwrap_or("")
+            .to_string()
+    } else {
+        subtitle.clone()
+    };
+
+    // VideoId — try the renderer's direct watchEndpoint first, then
+    // the `onTap` wrapper YTM uses on some shows, then the
+    // play-button overlay fallback used by `extract_video_id`.
+    let video_id = renderer["onTap"]["watchEndpoint"]["videoId"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| extract_video_id(renderer));
+
+    if video_id.is_empty() {
+        // Episode without a playable id (e.g. "available soon"
+        // placeholder) — skip rather than emit a row that no-ops on
+        // click.
+        return None;
+    }
+
+    let artwork_url = best_thumbnail(
+        &renderer["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
+    );
+    let artwork_url = if artwork_url.is_empty() {
+        None
+    } else {
+        Some(artwork_url)
+    };
+
+    // Duration: shows surface it inconsistently. Try the menu's
+    // playlistAddToOptionsRenderer text, then any `playbackProgress`
+    // blob's total time. Fall through to 0 (treated as unknown by the
+    // frontend duration display).
+    let duration_text = renderer["playbackProgress"]
+        ["musicPlaybackProgressRenderer"]["durationText"]["runs"]
+        .as_array()
+        .map(|runs| runs.iter().filter_map(|r| r["text"].as_str()).collect::<String>())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default();
+    let duration_secs = parse_duration_text(&duration_text);
+
+    Some(TrackInfo {
+        video_id,
+        title,
+        artist: show_name,
+        artist_id: None,
+        album: String::new(),
         album_id: None,
         artwork_url,
         duration_secs,
@@ -4016,5 +4124,127 @@ mod tests {
     fn extract_audio_playlist_id_returns_none_when_absent() {
         let data = json!({ "no": "playlist", "ids": "here" });
         assert_eq!(extract_audio_playlist_id(&data), None);
+    }
+
+    // ---- parse_episode_from_multi_row -------------------------------------
+    //
+    // Show / podcast pages emit episodes as `musicMultiRowListItemRenderer`
+    // rather than the single-row renderer used by song-bearing playlists.
+    // These tests pin the synthetic response shape so a future YTM tweak
+    // doesn't silently break show pages.
+
+    fn sample_multi_row_episode() -> serde_json::Value {
+        json!({
+            "title": { "runs": [{ "text": "Episode 7: A Long Talk" }] },
+            "subtitle": {
+                "runs": [
+                    { "text": "Mar 1, 2026" },
+                    { "text": " \u{2022} " },
+                    { "text": "The Demo Show" }
+                ]
+            },
+            "thumbnail": {
+                "musicThumbnailRenderer": {
+                    "thumbnail": {
+                        "thumbnails": [
+                            { "url": "https://i.ytimg.com/vi/eee/sm.jpg", "width": 60, "height": 60 },
+                            { "url": "https://i.ytimg.com/vi/eee/lg.jpg", "width": 480, "height": 480 }
+                        ]
+                    }
+                }
+            },
+            "onTap": { "watchEndpoint": { "videoId": "ep7videoid" } },
+            "playbackProgress": {
+                "musicPlaybackProgressRenderer": {
+                    "durationText": { "runs": [{ "text": "42:15" }] }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn parse_episode_extracts_title_show_and_video_id() {
+        let v = sample_multi_row_episode();
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert_eq!(track.video_id, "ep7videoid");
+        assert_eq!(track.title, "Episode 7: A Long Talk");
+        assert_eq!(track.artist, "The Demo Show");
+        assert_eq!(track.album, "");
+    }
+
+    #[test]
+    fn parse_episode_picks_best_thumbnail_url() {
+        let v = sample_multi_row_episode();
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        // best_thumbnail returns the LAST entry — the 480px one.
+        assert_eq!(
+            track.artwork_url.as_deref(),
+            Some("https://i.ytimg.com/vi/eee/lg.jpg"),
+        );
+    }
+
+    #[test]
+    fn parse_episode_parses_duration_text_to_seconds() {
+        let v = sample_multi_row_episode();
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        // "42:15" → 42*60 + 15 = 2535 secs.
+        assert!((track.duration_secs - 2535.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_episode_uses_subtitle_verbatim_when_no_bullet_separator() {
+        let v = json!({
+            "title": { "runs": [{ "text": "Solo Episode" }] },
+            "subtitle": { "runs": [{ "text": "The Demo Show" }] },
+            "onTap": { "watchEndpoint": { "videoId": "vidx" } }
+        });
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert_eq!(track.artist, "The Demo Show");
+    }
+
+    #[test]
+    fn parse_episode_returns_none_when_title_empty() {
+        let v = json!({
+            "title": { "runs": [] },
+            "subtitle": { "runs": [{ "text": "Show" }] },
+            "onTap": { "watchEndpoint": { "videoId": "vidx" } }
+        });
+        assert!(parse_episode_from_multi_row(&v).is_none());
+    }
+
+    #[test]
+    fn parse_episode_returns_none_when_no_video_id_anywhere() {
+        // No `onTap`, no overlay play button, no flex columns —
+        // nothing playable. Skip rather than emit a row that
+        // no-ops on click.
+        let v = json!({
+            "title": { "runs": [{ "text": "Coming soon" }] },
+            "subtitle": { "runs": [{ "text": "Show" }] }
+        });
+        assert!(parse_episode_from_multi_row(&v).is_none());
+    }
+
+    #[test]
+    fn parse_episode_falls_back_to_overlay_video_id_when_on_tap_missing() {
+        // Some show responses put the videoId in the
+        // overlay → musicItemThumbnailOverlayRenderer → play button
+        // path that `extract_video_id` understands.
+        let v = json!({
+            "title": { "runs": [{ "text": "Fallback Episode" }] },
+            "subtitle": { "runs": [{ "text": "Show" }] },
+            "overlay": {
+                "musicItemThumbnailOverlayRenderer": {
+                    "content": {
+                        "musicPlayButtonRenderer": {
+                            "playNavigationEndpoint": {
+                                "watchEndpoint": { "videoId": "fallbackvid" }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert_eq!(track.video_id, "fallbackvid");
     }
 }

@@ -38,6 +38,12 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const isAlbum = playlist?.isAlbum ?? playlistId.startsWith('MPRE');
+  // Show / podcast browseId — drives the "Show" kind label on the
+  // hero and the "X episodes" meta line. The save block stays hidden
+  // for shows since YTM's save target on a show is a separate
+  // FEmusic_library_corpus_artist_podcasts surface that we don't yet
+  // hit from the frontend.
+  const isShow = playlistId.startsWith('MPSP');
   // Albums save via their underlying audioPlaylistId (OLAK*), not the MPRE
   // browseId. Fall back to playlistId when the backend didn't surface one.
   const saveTargetId = playlist?.audioPlaylistId || playlistId;
@@ -304,24 +310,31 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     >
       <DetailPageHero
         title={playlist.title}
-        kind={isAlbum ? 'Album' : 'Playlist'}
+        kind={isShow ? 'Show' : isAlbum ? 'Album' : 'Playlist'}
         coverUrl={playlist.artworkUrl ?? ''}
         colors={heroColors}
         meta={
           playlist.trackCount !== undefined
-            ? `${playlist.trackCount} songs`
+            ? `${playlist.trackCount} ${isShow ? 'episodes' : 'songs'}`
             : undefined
         }
         description={playlist.description ?? undefined}
         onBack={onBack}
         onPlay={handlePlayAll}
-        save={{
-          isSaved,
-          isAlbum,
-          isSaving,
-          onToggle: toggleSaved,
-          error: saveError,
-        }}
+        save={
+          // Save block hidden for shows — the YTM save target for a
+          // podcast lives on a different library surface we don't
+          // round-trip yet.
+          isShow
+            ? undefined
+            : {
+                isSaved,
+                isAlbum,
+                isSaving,
+                onToggle: toggleSaved,
+                error: saveError,
+              }
+        }
       />
 
       {/* Track list */}
