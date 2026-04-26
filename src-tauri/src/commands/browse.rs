@@ -238,19 +238,66 @@ pub async fn remove_playlist_from_library(
 pub async fn get_upcoming_tracks(
     video_id: String,
     limit: Option<usize>,
+    playlist_id: Option<String>,
     app: AppHandle,
     api: State<'_, YtmApi>,
 ) -> Result<Vec<TrackInfo>, String> {
-    let limit = limit.unwrap_or(3).min(10);
-    tracing::info!(video_id = %video_id, limit, "browse::get_upcoming_tracks called");
+    let limit = limit.unwrap_or(3).min(200);
+    tracing::info!(
+        video_id = %video_id,
+        limit,
+        playlist_id = ?playlist_id,
+        "browse::get_upcoming_tracks called"
+    );
     let result = api
-        .get_upcoming_tracks(&app, &video_id, limit)
+        .get_upcoming_tracks(&app, &video_id, limit, playlist_id.as_deref())
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "browse::get_upcoming_tracks failed");
             e.to_string()
         })?;
     tracing::info!(count = result.len(), "browse::get_upcoming_tracks done");
+    Ok(result)
+}
+
+/// Look up the audio counterpart's album-art thumbnail for a videoId.
+/// YTM matches every official music video (`MUSIC_VIDEO_TYPE_OMV`) to
+/// its audio track (`MUSIC_VIDEO_TYPE_ATV`); the audio side carries
+/// the `lh*.googleusercontent.com` square album cover, while the
+/// video side has the 16:9 video frame. Returns `Some(url)` only
+/// when a counterpart exists and its thumbnail differs from what
+/// YTM would have shown for the video. Returns `None` for tracks
+/// that already ARE the audio side, or when YTM hasn't matched the
+/// video to an audio counterpart.
+#[tauri::command]
+pub async fn get_audio_counterpart_artwork(
+    video_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<Option<String>, String> {
+    tracing::info!(video_id = %video_id, "browse::get_audio_counterpart_artwork called");
+    // Note: an earlier version of this command tried to abort when the
+    // player_state's `track.video_id` differed from the requested
+    // `video_id` ("the user must have skipped"). That was wrong:
+    // player_state lags the bridge by one poller cycle, so the
+    // request often arrives BEFORE player_state catches up to the
+    // new track — the abort fired incorrectly, returned Ok(None),
+    // and the frontend cached null for that videoId. The OnceCell
+    // de-dupe in `YtmApi::fetch_next_cached` already guarantees
+    // concurrent calls for the same body share one fetch, so
+    // there's no work-multiplication to defend against.
+    let result = api
+        .get_audio_counterpart_artwork(&app, &video_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "browse::get_audio_counterpart_artwork failed");
+            e.to_string()
+        })?;
+    tracing::info!(
+        video_id = %video_id,
+        found = result.is_some(),
+        "browse::get_audio_counterpart_artwork done"
+    );
     Ok(result)
 }
 

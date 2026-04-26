@@ -33,33 +33,61 @@ interface ReloadOverlayProps {
   children: ReactNode;
 }
 
-// Keeps previously-rendered content visible but blurred while a refetch is
-// in flight, with a centered spinner on top. Use when re-fetching data the
-// user has already seen — avoids the content-vanishing flash caused by
-// swapping in a "Loading…" placeholder.
+// Keeps previously-rendered content visible while a refetch is in flight,
+// behind a soft 10 px blur as a visual stale-while-revalidate cue. The
+// children stay FULLY INTERACTIVE — `pointer-events` is never set to
+// `none` on the wrapper or the children. A small corner spinner sits on
+// top with its OWN `pointerEvents: 'none'` so it doesn't intercept
+// clicks meant for the cards underneath.
+//
+// Two regressions to remember (codified in CLAUDE.md "WKWebView quirks"
+// and TEST_CHECKLIST.md "WKWebView quirks — REGRESSION TRAPS"):
+//
+//   1. NEVER add `pointerEvents: 'none'` to the children wrapper. The
+//      YTM bridge can stall ~30 s during webview navigation; for that
+//      whole window every card on Home/Explore/Library/Search becomes
+//      click-dead if pointer events are blocked.
+//
+//   2. KEEP THE BLUR. The blur is the visual signal that data is being
+//      refreshed in place — without it the page looks frozen. An
+//      earlier fix removed it together with the click-block in a single
+//      sweep; only the click-block was the bug. Restore the blur if it
+//      ever disappears again, or any user-facing "wait, is anything
+//      happening?" feedback is lost.
 export const ReloadOverlay: FC<ReloadOverlayProps> = ({ children }) => (
   <div style={{ position: 'relative', height: '100%', width: '100%' }}>
     <div
-      aria-hidden
       style={{
         height: '100%',
         width: '100%',
+        // 10 px blur on the cached content while the refresh is in
+        // flight. CSS `filter` does NOT block pointer events on its
+        // own, so the cards remain fully interactive even though they
+        // look soft.
         filter: 'blur(10px)',
-        pointerEvents: 'none',
-        overflow: 'hidden',
+        // Don't add `transform` here. `transform: scale(...)` creates
+        // a stacking context that WKWebView mishandles for hit-
+        // testing — clicks on the children stop registering for some
+        // cards. The blur halo at the viewport edge is acceptable;
+        // breaking clicks is not.
+        transition: 'filter var(--duration-normal) var(--ease-out)',
       }}
     >
       {children}
     </div>
     <div
+      aria-hidden
       style={{
         position: 'absolute',
         inset: 0,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'oklch(10% 0.005 270 / 0.35)',
+        background: 'oklch(10% 0.005 270 / 0.25)',
+        // The spinner overlay must not intercept clicks meant for the
+        // cards underneath it.
         pointerEvents: 'none',
+        zIndex: 5,
       }}
     >
       <Spinner />

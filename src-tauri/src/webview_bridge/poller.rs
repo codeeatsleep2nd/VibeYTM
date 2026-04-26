@@ -52,6 +52,29 @@ struct BridgeState {
     account: Option<BridgeAccount>,
     #[serde(default)]
     debug: Vec<String>,
+    /// Queue items scraped from `<ytmusic-player-queue>` by the bridge.
+    /// Source of truth for the Playing-queue UI's Up-Next list — reflects
+    /// the order YTM will actually play through next/prev (including
+    /// shuffle and radio continuation).
+    #[serde(default)]
+    queue: Vec<BridgeQueueItem>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct BridgeQueueItem {
+    #[serde(default)]
+    video_id: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    artist: String,
+    #[serde(default)]
+    album: String,
+    #[serde(default)]
+    artwork_url: String,
+    #[serde(default)]
+    duration_secs: f64,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
@@ -77,10 +100,11 @@ const READ_STATE_JS: &str = r#"
   var li = window.__VIBEYTM_LOGGED_IN__;
   var acc = window.__VIBEYTM_ACCOUNT__ || null;
   var dbg = (window.__VIBEYTM_DEBUG__ || []).slice(-20);
+  var q = window.__VIBEYTM_QUEUE__ || [];
   // loggedIn / account are tracked even when the player DOM is absent
   // (e.g. during the Google sign-in redirect), so always wrap them through.
-  if (s) { return JSON.stringify(Object.assign({}, s, { loggedIn: li, account: acc, debug: dbg })); }
-  if (li === true || li === false) { return JSON.stringify({ loginOnly: true, loggedIn: li, account: acc, debug: dbg }); }
+  if (s) { return JSON.stringify(Object.assign({}, s, { loggedIn: li, account: acc, debug: dbg, queue: q })); }
+  if (li === true || li === false) { return JSON.stringify({ loginOnly: true, loggedIn: li, account: acc, debug: dbg, queue: q }); }
   return "null";
 })();
 "#;
@@ -98,6 +122,10 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
     let last_status = Arc::new(TokioMutex::new(String::new()));
     let last_logged_in = Arc::new(TokioMutex::new(Option::<bool>::None));
     let last_account = Arc::new(TokioMutex::new(Option::<BridgeAccount>::None));
+    // Track the queue's videoId fingerprint so we only emit when the order
+    // (or any item's id) actually changes — avoids spamming queue events
+    // for unchanged metadata flicker.
+    let last_queue_fingerprint = Arc::new(TokioMutex::new(String::new()));
     #[cfg(debug_assertions)]
     let last_debug_len = Arc::new(TokioMutex::new(0usize));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -174,6 +202,13 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             // debug_assertions so release builds don't write diagnostic
             // strings (which can occasionally include account-adjacent data)
             // to on-disk log files.
+            // Surface bridge debug lines + detect "bridge loaded" so we can
+            // re-push the persisted volume into the new YTM page session.
+            // Without this, the bridge's `__VIBEYTM_DESIRED_VOLUME_PCT__`
+            // stays undefined until the user touches the slider — and
+            // YTM's <video> happily plays at its own default volume on
+            // every navigation.
+            let mut bridge_just_loaded = false;
             #[cfg(debug_assertions)]
             if !bs.debug.is_empty() {
                 let mut seen = last_debug_len.lock().await;
@@ -187,11 +222,61 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 *seen = bs.debug.len();
                 drop(seen);
                 for line in new_lines {
+                    if line.contains("bridge loaded on ") {
+                        bridge_just_loaded = true;
+                    }
                     tracing::info!(bridge = %line, "bridge debug");
                 }
             }
             #[cfg(not(debug_assertions))]
-            let _ = &bs.debug;
+            {
+                // Release builds still need to detect bridge reloads to
+                // re-seed the volume.
+                for line in bs.debug.iter() {
+                    if line.contains("bridge loaded on ") {
+                        bridge_just_loaded = true;
+                        break;
+                    }
+                }
+            }
+            if bridge_just_loaded {
+                // Push the persisted volume into the freshly loaded YTM
+                // page so the prototype-level volume lock has something
+                // to clamp to. Otherwise the user's "I set volume to 0
+                // last session" intent is silently ignored on every
+                // page load.
+                let stored_vol = player_state.read().await.volume;
+                if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
+                    let args = format!("{{\"level\":{}}}", stored_vol);
+                    let _ = crate::webview_bridge::exec_playback_command_with_args(
+                        &window,
+                        "set_volume",
+                        &args,
+                    );
+                    tracing::info!(
+                        volume = stored_vol,
+                        "pushed persisted volume on bridge load"
+                    );
+                }
+                // Reset position to 0 on bridge reload so the progress
+                // bar doesn't flash the previous song's elapsed time
+                // before the next poll cycle settles on the new track.
+                // EXCEPT when there's a `pending_restore` waiting (the
+                // user just relaunched and hasn't pressed Play yet) —
+                // overwriting that would erase the saved offset before
+                // the user gets a chance to resume.
+                let pending = {
+                    let ps = player_state.read().await;
+                    ps.pending_restore.is_some()
+                };
+                if !pending {
+                    {
+                        let mut ps = player_state.write().await;
+                        ps.position_secs = 0.0;
+                    }
+                    let _ = app.emit("player:position", &0.0_f64);
+                }
+            }
 
             // Login-state emission is always attempted, even on the login-only
             // frame, because that frame is the whole point of the check (player
@@ -449,15 +534,26 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 bs.volume
             };
 
+            // Hold the saved position while pending_restore is queued —
+            // YTM hasn't loaded the saved track yet (user hasn't pressed
+            // Play) so bs.position_secs is meaningless (~0).
+            let suppress_position = {
+                let ps = player_state.read().await;
+                ps.pending_restore.is_some()
+            };
             {
                 let mut ps = player_state.write().await;
-                ps.position_secs = bs.position_secs;
+                if !suppress_position {
+                    ps.position_secs = bs.position_secs;
+                }
                 ps.volume = effective_volume;
                 ps.is_shuffled = bs.is_shuffled;
                 ps.repeat_mode = new_repeat;
                 ps.is_liked = bs.is_liked;
             }
-            let _ = app.emit("player:position", &bs.position_secs);
+            if !suppress_position {
+                let _ = app.emit("player:position", &bs.position_secs);
+            }
             let _ = app.emit("player:volume", &effective_volume);
             if prev_shuffled != bs.is_shuffled {
                 let _ = app.emit("player:shuffle-changed", &bs.is_shuffled);
@@ -467,6 +563,42 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             }
             if prev_liked != bs.is_liked {
                 let _ = app.emit("player:like-changed", &bs.is_liked);
+            }
+
+            // Queue: emit only when the item-id sequence changes. Convert
+            // to the wire shape the frontend already consumes (TrackInfo).
+            let fingerprint = bs
+                .queue
+                .iter()
+                .map(|q| q.video_id.as_str())
+                .collect::<Vec<_>>()
+                .join("|");
+            let mut last_fp = last_queue_fingerprint.lock().await;
+            if *last_fp != fingerprint {
+                *last_fp = fingerprint;
+                let queue_payload: Vec<crate::state::player::TrackInfo> = bs
+                    .queue
+                    .iter()
+                    .map(|q| crate::state::player::TrackInfo {
+                        video_id: q.video_id.clone(),
+                        title: q.title.clone(),
+                        artist: q.artist.clone(),
+                        artist_id: None,
+                        album: q.album.clone(),
+                        album_id: None,
+                        artwork_url: if q.artwork_url.is_empty() {
+                            None
+                        } else {
+                            Some(q.artwork_url.clone())
+                        },
+                        duration_secs: q.duration_secs,
+                    })
+                    .collect();
+                {
+                    let mut ps = player_state.write().await;
+                    ps.queue = queue_payload.clone();
+                }
+                let _ = app.emit("player:queue-changed", &queue_payload);
             }
         }
     });

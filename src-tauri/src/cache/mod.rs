@@ -45,6 +45,8 @@ pub struct CacheStats {
     pub image_bytes: u64,
     pub track_count: u64,
     pub track_bytes: u64,
+    pub lyric_count: u64,
+    pub lyric_bytes: u64,
     pub total_bytes: u64,
     pub max_bytes: u64,
 }
@@ -226,12 +228,15 @@ impl Cache {
     pub fn stats(&self) -> Result<CacheStats> {
         let (image_count, image_bytes) = dir_stats(&self.root.join("images"))?;
         let (track_count, track_bytes) = dir_stats(&self.root.join("tracks"))?;
+        let (lyric_count, lyric_bytes) = dir_stats(&self.root.join("lyrics"))?;
         Ok(CacheStats {
             image_count,
             image_bytes,
             track_count,
             track_bytes,
-            total_bytes: image_bytes + track_bytes,
+            lyric_count,
+            lyric_bytes,
+            total_bytes: image_bytes + track_bytes + lyric_bytes,
             max_bytes: MAX_IMAGE_CACHE_BYTES,
         })
     }

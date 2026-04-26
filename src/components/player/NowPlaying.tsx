@@ -1,7 +1,11 @@
 import { type FC, forwardRef, useEffect, useMemo, useRef } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useLyrics } from '../../hooks/useLyrics';
+import { useLyricsOffset } from '../../hooks/useLyricsOffset';
 import { useSmoothedPosition } from '../../hooks/useSmoothedPosition';
+import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import { albumArtOrNothing } from '../../lib/artwork';
+import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
 import type { Lyrics, LyricLine } from '../../lib/types';
 import { CachedImage } from '../CachedImage';
 import { MarqueeText } from '../MarqueeText';
@@ -13,9 +17,18 @@ const LYRICS_CONSTANT_OFFSET_MS = 450;
 
 interface NowPlayingProps {
   isOpen: boolean;
+  /**
+   * Retained in the prop contract because AppShell always passes it, but the
+   * overlay has no in-panel close affordance — the player-bar artwork button
+   * is the single source of truth for opening and closing Now Playing.
+   */
   onClose: () => void;
   /** When true, show lyrics in place of the cover centerpiece. */
   showLyrics?: boolean;
+  /** When true, the queue drawer is open. Used to mirror the lyrics-open
+   *  cover-shift so the cover sits in the same position whether the queue
+   *  or the lyrics drawer occupies the right slot. */
+  queueOpen?: boolean;
 }
 
 /**
@@ -27,7 +40,11 @@ interface NowPlayingProps {
  * If YTM returned synced lyrics for the track, lines auto-highlight and
  * auto-scroll with playback; otherwise the plain text is shown.
  */
-export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, onClose, showLyrics = false }) => {
+export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, queueOpen = false }) => {
+  // The right-slot drawer (queue OR lyrics) shares one cover-shift layout.
+  // The cover-column sits in the split position whenever EITHER drawer is
+  // open, even though only one renders content at a time.
+  const splitMode = showLyrics || queueOpen;
   const { track, positionSecs, status } = usePlayerState();
   const durationSecs = track?.durationSecs ?? 0;
   // Auto-tuned position: the backend reports a fresh value every ~150 ms,
@@ -52,6 +69,9 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, onClose, showLyrics = 
     true, // user-initiated — skip the track-change debounce
   );
 
+  const [lyricsOffsetMs, setLyricsOffsetMs, resetLyricsOffsetMs] =
+    useLyricsOffset(track?.videoId);
+
   return (
     <div
       style={{
@@ -70,47 +90,29 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, onClose, showLyrics = 
         transformOrigin: 'center center',
         pointerEvents: isOpen ? 'auto' : 'none',
         willChange: 'opacity, transform',
-        transition:
-          'opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
         // Match the sidebar nav's top padding (var(--space-3)) so the top of
-        // the cover / lyrics panel lines up with the Home button. Horizontal
-        // padding kept at space-6 to give content breathing room.
+        // the cover / lyrics panel lines up with the Home button. Left padding
+        // gives breathing room from the sidebar; right padding is asymmetric
+        // ONLY when lyrics is showing — that lets the lyrics column extend
+        // to the window edge. With lyrics closed the right padding mirrors
+        // the left so `justifyContent: center` actually centers the cover.
         paddingTop: 'var(--space-3)',
-        paddingInline: 'var(--space-6)',
-        paddingBottom: 'var(--space-6)',
+        paddingLeft: 'var(--space-6)',
+        paddingRight: splitMode ? 0 : 'var(--space-6)',
+        // No bottom padding — the overlay's bottom edge already aligns
+        // with the chrome's top (`bottom: var(--player-bar-height)`),
+        // so children (cover column, lyrics panel) extend directly to
+        // the chrome's top edge.
+        paddingBottom: 0,
+        transition:
+          'padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1)',
         overflow: 'hidden',
       }}
       aria-hidden={!isOpen}
     >
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Close now playing"
-        style={{
-          position: 'absolute',
-          top: 'var(--space-4)',
-          right: 'var(--space-5)',
-          background: 'none',
-          border: 'none',
-          color: 'var(--color-text-tertiary)',
-          fontSize: 'var(--text-xl)',
-          cursor: 'pointer',
-          padding: 'var(--space-2)',
-          borderRadius: 'var(--radius-sm)',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.color = 'var(--color-text-primary)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.color = 'var(--color-text-tertiary)';
-        }}
-      >
-        ✕
-      </button>
-
       {!track ? (
         <p
           style={{
@@ -131,8 +133,7 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, onClose, showLyrics = 
             flexDirection: 'row',
             alignItems: 'flex-start',
             justifyContent: 'center',
-            width: 'min(1200px, 100%)',
-            marginInline: 'auto',
+            width: '100%',
             height: '100%',
           }}
         >
@@ -156,27 +157,54 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, onClose, showLyrics = 
           <div
             aria-hidden={!showLyrics}
             style={{
-              // Animated in/out. Width collapses to 0 when closed, gap
-              // lives here as marginLeft so it collapses with the column.
-              width: showLyrics ? `calc(${coverSide} / 2)` : '0',
-              marginLeft: showLyrics ? 'var(--space-5)' : '0',
-              opacity: showLyrics ? 1 : 0,
+              // The right-slot column. Driven by `splitMode` so the cover
+              // shifts whenever EITHER lyrics OR queue is open — even
+              // queue-only renders an invisible spacer here so the cover
+              // sits in the same position. The lyric CONTENT visibility
+              // (opacity / translateX slide) is gated on `showLyrics`.
+              flex: splitMode ? '1 1 0' : '0 0 0',
+              width: splitMode ? 'auto' : '0',
+              marginLeft: splitMode ? 'var(--space-5)' : '0',
+              paddingRight: splitMode ? 'var(--space-6)' : '0',
               height: '100%',
               minWidth: 0,
               overflow: 'hidden',
-              pointerEvents: showLyrics ? 'auto' : 'none',
+              // AND with `isOpen`: the parent overlay sets pointer-events
+              // `none` when the page is closed, but a child that sets
+              // `auto` overrides the parent. Without `isOpen` here, a
+              // closed-but-LRC-still-on overlay would leak click-stealing
+              // pointer-events over the new page after sidebar nav.
+              pointerEvents: isOpen && showLyrics ? 'auto' : 'none',
               transition:
-                'width 420ms cubic-bezier(0.22, 1, 0.36, 1), margin-left 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
+                'flex-basis 420ms cubic-bezier(0.22, 1, 0.36, 1), margin-left 420ms cubic-bezier(0.22, 1, 0.36, 1), padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1)',
             }}
           >
-            <LyricsPanel
-              status={lyricsStatus}
-              lyrics={lyrics}
-              error={lyricsError}
-              positionSecs={smoothedPositionSecs}
-              durationSecs={durationSecs}
-              visible={showLyrics}
-            />
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                opacity: showLyrics ? 1 : 0,
+                // Slide the lyric content in from the right edge so the
+                // open animation matches the queue drawer's translateX
+                // gesture. Closed state parks it off-screen-right.
+                transform: showLyrics ? 'translateX(0)' : 'translateX(100%)',
+                transition:
+                  'transform 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
+                willChange: 'transform',
+              }}
+            >
+              <LyricsPanel
+                status={lyricsStatus}
+                lyrics={lyrics}
+                error={lyricsError}
+                positionSecs={smoothedPositionSecs}
+                durationSecs={durationSecs}
+                visible={showLyrics}
+                offsetMs={lyricsOffsetMs}
+                onAdjustOffsetMs={setLyricsOffsetMs}
+                onResetOffsetMs={resetLyricsOffsetMs}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -245,11 +273,15 @@ interface CoverProps {
   //   • the viewport height minus chrome + title block so the cover fits.
   const SPLIT_ROW_MAX = 1200;
   const SPLIT_COVER_FRACTION = 2 / 3;
-  const coverSide = `min(${SPLIT_ROW_MAX * SPLIT_COVER_FRACTION}px, calc(${SPLIT_COVER_FRACTION} * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - var(--space-6) - 160px))`;
+  const coverSide = `min(${SPLIT_ROW_MAX * SPLIT_COVER_FRACTION}px, calc(${SPLIT_COVER_FRACTION} * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px))`;
 
 const Cover: FC<CoverProps> = ({ track, size }) => {
   void size; // kept for API compatibility; both modes now share one size
   const sideLength = coverSide;
+  const counterpartArtwork = useAudioCounterpartArtwork(
+    track.videoId,
+    track.artworkUrl,
+  );
   return (
     <div
       style={{
@@ -264,19 +296,28 @@ const Cover: FC<CoverProps> = ({ track, size }) => {
         transition: 'width var(--duration-slow) var(--ease-out)',
       }}
     >
-      <CachedImage
-        src={
-          track.artworkUrl ||
-          (track.videoId ? `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg` : undefined)
-        }
-        alt={`${track.title} artwork`}
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-          display: 'block',
-        }}
-      />
+      {(() => {
+        // NEVER show a video thumbnail here. Use the audio counterpart's
+        // album cover when the hook has resolved one; otherwise the
+        // bridge's captured artworkUrl IF AND ONLY IF it's actually
+        // album art; otherwise a placeholder. Issue #48's "letterbox
+        // the music video" workaround is no longer needed because the
+        // music-video frame is gone from this surface entirely.
+        const url = albumArtOrNothing(counterpartArtwork ?? track.artworkUrl);
+        if (!url) return <ArtworkPlaceholder size={500} />;
+        return (
+          <CachedImage
+            src={url}
+            alt={`${track.title} artwork`}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+            }}
+          />
+        );
+      })()}
     </div>
   );
 };
@@ -292,6 +333,10 @@ interface LyricsPanelProps {
   /** True when the parent column is expanded on screen. A false→true
    *  transition triggers an instant snap to the currently-playing line. */
   visible: boolean;
+  /** Per-track timing nudge in ms; positive = shift highlight LATER. */
+  offsetMs: number;
+  onAdjustOffsetMs: (next: number) => void;
+  onResetOffsetMs: () => void;
 }
 
 const CONTAINER_STYLE: React.CSSProperties = {
@@ -301,12 +346,12 @@ const CONTAINER_STYLE: React.CSSProperties = {
   flex: 1,
   maxWidth: '640px',
   minWidth: 0,
-  // Fill the full content height of the overlay. The overlay itself already
-  // reserves the title-bar and player-bar on the outside via its top/bottom,
-  // and its own top/bottom padding (space-3 + space-6) — so the panel just
-  // stretches between those.
+  // Fill the full content height of the overlay. The overlay reserves the
+  // title-bar and player-bar on the outside; only the top space-3 padding
+  // is on the inside (no bottom padding — the panel's bottom edge aligns
+  // exactly with the chrome's top, per user request).
   height:
-    'calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - var(--space-6))',
+    'calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3))',
   padding: 'var(--space-6)',
   background: 'var(--color-surface-2)',
   borderRadius: 'var(--radius-lg)',
@@ -324,6 +369,9 @@ const LyricsPanel: FC<LyricsPanelProps> = ({
   positionSecs,
   durationSecs,
   visible,
+  offsetMs,
+  onAdjustOffsetMs,
+  onResetOffsetMs,
 }) => {
   if (status === 'loading') {
     return (
@@ -333,9 +381,22 @@ const LyricsPanel: FC<LyricsPanelProps> = ({
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--color-text-tertiary)',
+          gap: 'var(--space-3)',
         }}
       >
-        Loading lyrics…
+        <div
+          role="status"
+          aria-label="Loading lyrics"
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: '50%',
+            border: '3px solid var(--color-surface-3)',
+            borderTopColor: 'var(--color-accent)',
+            animation: 'vibeytm-spin 0.9s linear infinite',
+          }}
+        />
+        <div style={{ fontSize: 'var(--text-sm)' }}>Loading lyrics…</div>
       </div>
     );
   }
@@ -374,6 +435,9 @@ const LyricsPanel: FC<LyricsPanelProps> = ({
       positionSecs={positionSecs}
       source={lyrics?.source ?? null}
       visible={visible}
+      offsetMs={offsetMs}
+      onAdjustOffsetMs={onAdjustOffsetMs}
+      onResetOffsetMs={onResetOffsetMs}
     />
   );
 };
@@ -408,9 +472,20 @@ interface TimedLyricsProps {
   positionSecs: number;
   source: string | null;
   visible: boolean;
+  offsetMs: number;
+  onAdjustOffsetMs: (next: number) => void;
+  onResetOffsetMs: () => void;
 }
 
-const TimedLyrics: FC<TimedLyricsProps> = ({ lines, positionSecs, source, visible }) => {
+const TimedLyrics: FC<TimedLyricsProps> = ({
+  lines,
+  positionSecs,
+  source,
+  visible,
+  offsetMs,
+  onAdjustOffsetMs,
+  onResetOffsetMs,
+}) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   // `true` once we've snapped to the current line at least once since the
@@ -420,8 +495,10 @@ const TimedLyrics: FC<TimedLyricsProps> = ({ lines, positionSecs, source, visibl
   const hasLandedRef = useRef(false);
 
   // `positionSecs` is already the rAF-smoothed + offset-adjusted clock from
-  // useSmoothedPosition, so we treat it as authoritative here.
-  const positionMs = Math.max(0, positionSecs * 1000);
+  // useSmoothedPosition, so we treat it as authoritative here. Subtract the
+  // user's per-track nudge: positive offsetMs pushes the highlight LATER, so
+  // we look up an EARLIER line for a given moment.
+  const positionMs = Math.max(0, positionSecs * 1000 - offsetMs);
   const activeIndex = useMemo(() => findActiveLine(lines, positionMs), [lines, positionMs]);
 
   // Auto-scroll: when the active line changes OR the panel becomes visible,
@@ -497,19 +574,101 @@ const TimedLyrics: FC<TimedLyricsProps> = ({ lines, positionSecs, source, visibl
           );
         })}
       </div>
-      {source && (
-        <div
-          style={{
-            marginTop: 'var(--space-3)',
-            fontSize: 'var(--text-xs)',
-            color: 'var(--color-text-tertiary)',
-            borderTop: '1px solid oklch(100% 0 0 / 0.06)',
-            paddingTop: 'var(--space-2)',
-          }}
-        >
-          {source}
-        </div>
-      )}
+      <div
+        style={{
+          marginTop: 'var(--space-3)',
+          fontSize: 'var(--text-xs)',
+          color: 'var(--color-text-tertiary)',
+          borderTop: '1px solid oklch(100% 0 0 / 0.06)',
+          paddingTop: 'var(--space-2)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 'var(--space-2)',
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {source ?? ''}
+        </span>
+        <LyricsOffsetControl
+          offsetMs={offsetMs}
+          onAdjust={onAdjustOffsetMs}
+          onReset={onResetOffsetMs}
+        />
+      </div>
+    </div>
+  );
+};
+
+interface LyricsOffsetControlProps {
+  offsetMs: number;
+  onAdjust: (next: number) => void;
+  onReset: () => void;
+}
+
+const OFFSET_STEP_MS = 250;
+
+const LyricsOffsetControl: FC<LyricsOffsetControlProps> = ({
+  offsetMs,
+  onAdjust,
+  onReset,
+}) => {
+  const sign = offsetMs > 0 ? '+' : offsetMs < 0 ? '−' : '';
+  const display = offsetMs === 0 ? '0.00s' : `${sign}${(Math.abs(offsetMs) / 1000).toFixed(2)}s`;
+  const btn: React.CSSProperties = {
+    background: 'oklch(100% 0 0 / 0.06)',
+    border: 'none',
+    color: 'var(--color-text-secondary)',
+    fontSize: 'var(--text-xs)',
+    padding: '2px 8px',
+    borderRadius: 'var(--radius-sm)',
+    cursor: 'pointer',
+    lineHeight: 1.4,
+  };
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 'var(--space-1)',
+        flexShrink: 0,
+      }}
+      title="Lyrics offset (per track). Use when the highlight is ahead of or behind the vocals."
+    >
+      <button
+        type="button"
+        aria-label="Lyrics earlier"
+        onClick={() => onAdjust(offsetMs - OFFSET_STEP_MS)}
+        style={btn}
+      >
+        −
+      </button>
+      <button
+        type="button"
+        onClick={onReset}
+        title="Reset offset"
+        style={{
+          ...btn,
+          minWidth: '56px',
+          textAlign: 'center',
+          fontVariantNumeric: 'tabular-nums',
+          color:
+            offsetMs === 0
+              ? 'var(--color-text-tertiary)'
+              : 'var(--color-accent)',
+        }}
+      >
+        {display}
+      </button>
+      <button
+        type="button"
+        aria-label="Lyrics later"
+        onClick={() => onAdjust(offsetMs + OFFSET_STEP_MS)}
+        style={btn}
+      >
+        +
+      </button>
     </div>
   );
 };
@@ -596,7 +755,7 @@ const LyricLineView = forwardRef<HTMLDivElement, LyricLineViewProps>(
         }}
       >
         {/* Base layer — the real, selectable text. Dimmed by default. */}
-        <span style={{ transition: 'color var(--duration-normal) var(--ease-out)' }}>
+        <span style={{ display: 'block', whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', transition: 'color var(--duration-normal) var(--ease-out)' }}>
           {text || ' '}
         </span>
 

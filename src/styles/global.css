@@ -71,3 +71,124 @@ input {
     transform: rotate(360deg);
   }
 }
+
+/* Three-bar "now playing" indicator overlaid on the queue's current row.
+   Each bar is staggered via inline animation-delay; this keyframe just
+   defines the bounce. */
+@keyframes vibeytm-bar {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* Entrance animation for the queue's now-playing row. Re-mounts on each
+   track change (via React key={videoId}), so this fires every Next/Prev
+   click — a clear visual cue that the cursor advanced. Paired with the
+   custom rAF-driven scroll in QueuePanel.tsx so the row appears to slide
+   into place at exactly the same speed as the list scrolls under it. */
+@keyframes vibeytm-queue-current-flash {
+  0% {
+    transform: translateY(14px) scale(0.97);
+    opacity: 0;
+    box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
+  }
+  35% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    box-shadow: 0 8px 24px oklch(72% 0.18 280 / 0.28),
+                inset 0 0 0 1.5px oklch(72% 0.18 280 / 0.55);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
+  }
+}
+
+.vibeytm-queue-current-flash {
+  animation: vibeytm-queue-current-flash 720ms cubic-bezier(0.22, 1, 0.36, 1);
+  border-radius: var(--radius-sm);
+  /* Promote to its own layer so the box-shadow and transform animate on
+     the compositor — keeps the row's content rendering crisp and avoids
+     repaints in surrounding rows. */
+  will-change: transform, box-shadow, opacity;
+}
+
+/* Apple-Music-style slider used by PlayerChrome (volume + Now-Playing-card
+   progress). Click area is the input itself (12px tall) for a generous
+   hit zone. The visible 3px track lives on the runnable-track pseudo-
+   element — keying the visible band to the runnable-track (NOT the
+   input's background) is what guarantees the thumb stays centered on the
+   track: WebKit positions the thumb relative to the runnable-track's
+   geometry, so they share the same Y origin by construction. The thumb
+   is invisible at rest and reveals on hover/active. The fill-to-the-left
+   effect is set inline as `backgroundImage` on the input (then surfaced
+   onto the runnable-track via inheritance via `background: inherit`). */
+input[type='range'][data-vibeytm-slider] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px; /* hit area */
+  background-color: transparent;
+  background-size: 100% 3px;
+  background-position: center;
+  background-repeat: no-repeat;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  outline: none;
+}
+
+/* The runnable-track is the visible track. Keep it 3px tall so the thumb
+   (centered on this pseudo-element by WebKit) lands EXACTLY on the
+   visible band. The runnable-track's background inherits the input's
+   inline gradient via `background: inherit` so the fill stays in sync
+   with React's progress %. */
+input[type='range'][data-vibeytm-slider]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: inherit;
+  background-size: 100% 100%;
+  border-radius: var(--radius-full);
+  /* Smooth track-thickness animation alongside the thumb's hover state. */
+  transition: height var(--duration-fast) cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+input[type='range'][data-vibeytm-slider]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  /* Centers a 12px thumb on a 3px runnable-track: -((12 - 3) / 2). */
+  margin-top: -4.5px;
+  border-radius: var(--radius-full);
+  background: var(--color-text-primary);
+  border: none;
+  opacity: 0;
+  transform: scale(0.6);
+  /* Slightly longer + spring-y easing so the thumb feels deliberate instead
+     of snappy. Cubic-bezier matches Apple's standard "ease out expo" curve
+     used across SF Symbols animations. */
+  transition:
+    opacity var(--duration-normal) cubic-bezier(0.16, 1, 0.3, 1),
+    transform var(--duration-normal) cubic-bezier(0.16, 1, 0.3, 1),
+    width var(--duration-fast) cubic-bezier(0.16, 1, 0.3, 1),
+    height var(--duration-fast) cubic-bezier(0.16, 1, 0.3, 1),
+    margin-top var(--duration-fast) cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-thumb,
+input[type='range'][data-vibeytm-slider]:active::-webkit-slider-thumb,
+input[type='range'][data-vibeytm-slider]:focus-visible::-webkit-slider-thumb {
+  opacity: 1;
+  transform: scale(1);
+}
+
+input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-runnable-track {
+  height: 4px;
+}
+
+input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-thumb {
+  margin-top: -4px; /* recenter on the 4px hover-track */
+}

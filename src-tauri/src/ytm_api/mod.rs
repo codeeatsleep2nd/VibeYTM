@@ -1,18 +1,96 @@
 pub mod types;
 
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use serde_json::Value;
 use tauri::AppHandle;
+use tokio::sync::OnceCell;
 
 use crate::state::player::TrackInfo;
 use crate::webview_bridge::api::ytm_api_call;
 
 use self::types::*;
 
-pub struct YtmApi;
+/// Rust-side cache + in-flight de-dupe for `/next` responses, keyed
+/// by request body (videoId+playlistId combination).
+///
+/// Why this exists: the YTM webview bridge stalls for ~3-15 s during
+/// a track-change navigation. With four commands each issuing their
+/// own /next fetch per track change (lyrics, lyrics-counterpart,
+/// audio-counterpart artwork, upcoming-tracks), the bridge channel
+/// saturates and they all time out together.
+///
+/// Strategy:
+///   * **In-flight de-dupe** — concurrent calls for the same body
+///     share a single fetch via `tokio::sync::OnceCell`. The first
+///     caller runs the closure; subsequent callers await the same
+///     Future and receive the cached result.
+///   * **TTL** — once filled, the OnceCell is reused for `NEXT_CACHE_TTL`.
+///     After expiry it's evicted on next access so the next caller
+///     creates a fresh cell.
+///   * **Failure transparency** — `get_or_try_init` does NOT cache on
+///     error, so a transient bridge timeout doesn't poison the entry;
+///     the next caller retries.
+const NEXT_CACHE_TTL: Duration = Duration::from_secs(45);
+
+type NextCell = Arc<OnceCell<Value>>;
+
+pub struct YtmApi {
+    next_cache: Mutex<HashMap<String, (Instant, NextCell)>>,
+}
 
 impl YtmApi {
     pub fn new() -> Self {
-        Self
+        Self {
+            next_cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Fetch a `/next` response for `body`, using the cache + in-flight
+    /// de-dupe described on `NEXT_CACHE_TTL`. The returned `Value` is a
+    /// clone of the cached entry — callers can mutate freely.
+    async fn fetch_next_cached(
+        &self,
+        app: &AppHandle,
+        body: &str,
+    ) -> anyhow::Result<Value> {
+        let cell = self.acquire_next_cell(body);
+        let value = cell
+            .get_or_try_init(|| async {
+                let raw = ytm_api_call(app, "next", body)
+                    .await
+                    .map_err(anyhow::Error::msg)?;
+                let parsed: Value = serde_json::from_str(&raw)?;
+                Ok::<_, anyhow::Error>(parsed)
+            })
+            .await?;
+        Ok(value.clone())
+    }
+
+    /// Get-or-create the OnceCell for a body. Evicts expired entries
+    /// during the same lock to keep the map bounded; this is cheap
+    /// because the map only grows by one entry per distinct request
+    /// body within the TTL window.
+    fn acquire_next_cell(&self, body: &str) -> NextCell {
+        let mut guard = self.next_cache.lock().expect("next_cache poisoned");
+        let now = Instant::now();
+        guard.retain(|_, (ts, cell)| {
+            // Keep entries that are still inside their TTL window AND
+            // have already produced a value. If the cell is empty (the
+            // initial fetch is still in flight or it failed), keep it
+            // briefly so concurrent followers can still attach.
+            let fresh = now.duration_since(*ts) < NEXT_CACHE_TTL;
+            fresh || cell.get().is_none()
+        });
+        if let Some((_, cell)) = guard.get(body) {
+            return cell.clone();
+        }
+        let cell: NextCell = Arc::new(OnceCell::new());
+        guard.insert(body.to_string(), (now, cell.clone()));
+        cell
     }
 
     /// Fetch up to N autocomplete suggestions for a partial query.
@@ -236,11 +314,57 @@ impl YtmApi {
         title: Option<&str>,
         duration_secs: Option<f64>,
     ) -> anyhow::Result<Lyrics> {
+        // Always look up lyrics for the AUDIO counterpart, never the music
+        // video. YTM matches every official music video to its audio track
+        // (`MUSIC_VIDEO_TYPE_ATV`); the audio side carries the real lyric
+        // tab — many music-video pages don't expose one at all. We grab
+        // the counterpart videoId from the first /next response and, if
+        // it differs from the playing video, re-issue /next against it
+        // before extracting the lyrics browseId.
         let next_body = serde_json::json!({ "videoId": video_id }).to_string();
-        let next_raw = ytm_api_call(app, "next", &next_body)
-            .await
-            .map_err(anyhow::Error::msg)?;
-        let next_data: Value = serde_json::from_str(&next_raw)?;
+        let mut next_data = self.fetch_next_cached(app, &next_body).await?;
+
+        // Audio-counterpart metadata (artist / title / duration) overrides
+        // anything the bridge captured from the music-video page. Music
+        // video titles are noisy ("Stayin' Alive (Official Music Video)
+        // [4K Remastered]" etc.) and corrupt LRCLIB queries. The
+        // counterpart's title/byline is the clean song version. Pulled
+        // from the SAME /next response — no extra bridge call.
+        let mut effective_artist: Option<String> = artist.map(str::to_string);
+        let mut effective_title: Option<String> = title.map(str::to_string);
+        let mut effective_duration: Option<f64> = duration_secs;
+        if let Some(meta) = extract_audio_counterpart_meta(&next_data, video_id) {
+            tracing::info!(
+                video_id,
+                clean_title = %meta.title,
+                clean_artist = %meta.artist,
+                "lyrics lookup: using audio counterpart's track metadata"
+            );
+            if !meta.title.is_empty() {
+                effective_title = Some(meta.title);
+            }
+            if !meta.artist.is_empty() {
+                effective_artist = Some(meta.artist);
+            }
+            if meta.duration_secs > 0.0 {
+                effective_duration = Some(meta.duration_secs);
+            }
+        }
+
+        if let Some(audio_vid) = extract_audio_counterpart_video_id(&next_data, video_id) {
+            if audio_vid != video_id {
+                tracing::info!(
+                    video_id,
+                    audio_video_id = %audio_vid,
+                    "lyrics lookup: switched from music video to audio counterpart"
+                );
+                let alt_body = serde_json::json!({ "videoId": &audio_vid }).to_string();
+                if let Ok(alt_data) = self.fetch_next_cached(app, &alt_body).await {
+                    next_data = alt_data;
+                }
+            }
+        }
+
         let browse_id = extract_lyrics_browse_id(&next_data).ok_or_else(|| {
             anyhow::anyhow!("YTM did not expose a lyrics tab for this track")
         })?;
@@ -257,23 +381,33 @@ impl YtmApi {
             return Ok(lyrics);
         }
 
-        // Trust YTM's "no lyrics" verdict (empty text + no lines). That path
-        // covers instrumentals, karaoke versions, uploaded covers that lack
-        // lyrics, etc. Falling through to LRCLIB/NetEase here would match
-        // the vocal original by title and paste its lyrics onto a piano /
-        // instrumental rendition — false positive.
+        // YTM returned an empty lyrics tab. Earlier we treated this as a
+        // hard "no lyrics" signal to avoid pasting the vocal version's
+        // lyrics onto a piano cover. Reality is messier: YTM also returns
+        // empty for plenty of regular tracks ("Love Love Love" by Jolin
+        // Tsai, etc.) where the audio counterpart's lyrics page just
+        // hasn't been populated. False negative is more common than the
+        // false positive we were defending against.
+        //
+        // New rule: only skip external sources when the title itself
+        // signals an instrumental / cover (looks like "Instrumental",
+        // "Karaoke", "Piano Cover", etc.). Otherwise fall through and
+        // let LRCLIB/NetEase try.
         let has_plain_text = !lyrics.text.trim().is_empty();
-        if !has_plain_text {
+        let title_for_check = effective_title.as_deref().unwrap_or("");
+        if !has_plain_text && looks_like_instrumental(title_for_check) {
             tracing::info!(
                 video_id,
-                "YTM reported no lyrics — skipping external sync lookup (likely instrumental)"
+                title = %title_for_check,
+                "YTM reported no lyrics — title suggests instrumental, skipping external sync lookup"
             );
             return Ok(lyrics);
         }
 
-        if let (Some(artist), Some(title)) = (artist, title) {
+        if let (Some(artist), Some(title)) = (effective_artist.as_deref(), effective_title.as_deref()) {
             let clean_artist = clean_query_field(artist);
             let clean_title = clean_query_field(title);
+            let lookup_duration = effective_duration;
 
             // Race LRCLIB and NetEase in parallel. Whichever returns synced
             // lyrics first wins; `None` results wait for the other source
@@ -284,7 +418,7 @@ impl YtmApi {
             let title_l = clean_title.clone();
             let vid_l = video_id.to_string();
             let lrc_fut = async move {
-                match fetch_lrclib_synced(&artist_l, &title_l, duration_secs).await {
+                match fetch_lrclib_synced(&artist_l, &title_l, lookup_duration).await {
                     Ok(Some(body)) => Some((body, "LRCLIB")),
                     Ok(None) => {
                         tracing::info!(video_id = %vid_l, "LRCLIB had no synced lyrics");
@@ -344,19 +478,39 @@ impl YtmApi {
 
     /// Fetch the upcoming tracks for a given videoId by calling YTM's
     /// `next` endpoint and parsing its queue panel. Used to warm the
-    /// lyrics cache for songs the user will play in a few seconds.
+    /// lyrics cache for songs the user will play in a few seconds and to
+    /// populate the playing-queue panel. When `playlist_id` is provided
+    /// YTM returns the full playlist/album queue; without it, the response
+    /// is the auto-generated song-radio seeded on the videoId alone.
     pub async fn get_upcoming_tracks(
         &self,
         app: &AppHandle,
         video_id: &str,
         limit: usize,
+        playlist_id: Option<&str>,
     ) -> anyhow::Result<Vec<TrackInfo>> {
-        let body = serde_json::json!({ "videoId": video_id }).to_string();
-        let raw = ytm_api_call(app, "next", &body)
-            .await
-            .map_err(anyhow::Error::msg)?;
-        let data: Value = serde_json::from_str(&raw)?;
+        let body = match playlist_id {
+            Some(list) if !list.is_empty() => {
+                serde_json::json!({ "videoId": video_id, "playlistId": list }).to_string()
+            }
+            _ => serde_json::json!({ "videoId": video_id }).to_string(),
+        };
+        let data = self.fetch_next_cached(app, &body).await?;
         Ok(extract_upcoming_tracks(&data, video_id, limit))
+    }
+
+    /// Fetch the audio counterpart's album-art URL for a given videoId.
+    /// Used to swap the music-video 16:9 frame the bridge captured for
+    /// the song's square album cover. See
+    /// `extract_audio_counterpart_thumbnail` for the JSON shape.
+    pub async fn get_audio_counterpart_artwork(
+        &self,
+        app: &AppHandle,
+        video_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let body = serde_json::json!({ "videoId": video_id }).to_string();
+        let data = self.fetch_next_cached(app, &body).await?;
+        Ok(extract_audio_counterpart_thumbnail(&data, video_id))
     }
 }
 
@@ -448,10 +602,25 @@ fn strip_noise_brackets(
     out
 }
 
+/// Maximum tolerated drift between YTM's reported track length and LRCLIB's
+/// recorded length, in seconds. Tracks whose duration disagrees by more than
+/// this are almost certainly a different recording (album vs single mix,
+/// live vs studio, edit vs extended) — the LRC timestamps would be anchored
+/// to a different zero, producing systematic per-track off-sync.
+const LRCLIB_DURATION_TOLERANCE_SECS: f64 = 2.0;
+
 /// Ask LRCLIB (https://lrclib.net) for synced LRC-format lyrics. Returns the
-/// raw LRC body on success, `None` when LRCLIB has no match, `Err` on
-/// transport failure. LRCLIB is a free, open, community-maintained database
-/// of synced lyrics keyed by artist/track/duration.
+/// raw LRC body on success, `None` when LRCLIB has no match (or no match
+/// within duration tolerance), `Err` on transport failure. LRCLIB is a free,
+/// open, community-maintained database of synced lyrics keyed by
+/// artist/track/duration.
+///
+/// We use `/api/search` over `/api/get` so we can iterate every candidate
+/// match and reject those whose duration disagrees with YTM's by more than
+/// `LRCLIB_DURATION_TOLERANCE_SECS`. `/api/get` returns the single
+/// best-effort match, which can be wrong-recording when the catalog has
+/// multiple variants (e.g. radio edit vs album cut) sharing the same
+/// title/artist.
 async fn fetch_lrclib_synced(
     artist: &str,
     title: &str,
@@ -462,6 +631,101 @@ async fn fetch_lrclib_synced(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()?;
+
+    // No duration → fall back to the single-result endpoint without
+    // strict matching (best we can do). Most YTM tracks expose duration.
+    let target_duration = match duration_secs.filter(|d| *d > 0.0) {
+        Some(d) => d,
+        None => {
+            return fetch_lrclib_get(&client, artist, title, None).await;
+        }
+    };
+
+    let resp = client
+        .get("https://lrclib.net/api/search")
+        .query(&[
+            ("artist_name", artist),
+            ("track_name", title),
+        ])
+        .header(
+            "User-Agent",
+            "VibeYTM/0.9.0 (https://github.com/dongli/VibeYTM)",
+        )
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("LRCLIB search returned HTTP {}", resp.status());
+    }
+    let candidates: Vec<Value> = resp.json().await?;
+
+    // Pick the candidate whose recorded duration is closest to YTM's, but
+    // only if it falls inside the tolerance window. Anything further away
+    // is a different recording with mismatched timing.
+    let mut best: Option<(f64, &Value)> = None;
+    for cand in &candidates {
+        let cand_dur = cand
+            .get("duration")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        if cand_dur <= 0.0 {
+            continue;
+        }
+        let diff = (cand_dur - target_duration).abs();
+        if diff > LRCLIB_DURATION_TOLERANCE_SECS {
+            continue;
+        }
+        // Reject instrumentals — they have no useful synced timing.
+        if cand
+            .get("instrumental")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let synced = cand
+            .get("syncedLyrics")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if synced.is_empty() {
+            continue;
+        }
+        if best.map_or(true, |(prev_diff, _)| diff < prev_diff) {
+            best = Some((diff, cand));
+        }
+    }
+
+    if let Some((_, cand)) = best {
+        if let Some(synced) = cand.get("syncedLyrics").and_then(|v| v.as_str()) {
+            tracing::info!(
+                artist = %artist,
+                title = %title,
+                target = %target_duration,
+                "LRCLIB matched within duration tolerance"
+            );
+            return Ok(Some(synced.to_string()));
+        }
+    }
+
+    tracing::info!(
+        artist = %artist,
+        title = %title,
+        target = %target_duration,
+        candidates = candidates.len(),
+        "LRCLIB had no candidate within duration tolerance"
+    );
+    Ok(None)
+}
+
+/// Single-track fetch via LRCLIB's `/api/get`. Used only when the caller
+/// has no duration to verify against — LRCLIB's own server-side match is
+/// then the only check we have.
+async fn fetch_lrclib_get(
+    client: &reqwest::Client,
+    artist: &str,
+    title: &str,
+    duration_secs: Option<f64>,
+) -> anyhow::Result<Option<String>> {
     let mut query: Vec<(&str, String)> = vec![
         ("artist_name", artist.to_string()),
         ("track_name", title.to_string()),
@@ -469,7 +733,6 @@ async fn fetch_lrclib_synced(
     if let Some(d) = duration_secs.filter(|d| *d > 0.0) {
         query.push(("duration", (d.round() as u64).to_string()));
     }
-
     let resp = client
         .get("https://lrclib.net/api/get")
         .query(&query)
@@ -479,20 +742,24 @@ async fn fetch_lrclib_synced(
         )
         .send()
         .await?;
-
     if resp.status().as_u16() == 404 {
         return Ok(None);
     }
     if !resp.status().is_success() {
         anyhow::bail!("LRCLIB returned HTTP {}", resp.status());
     }
-
     let body: Value = resp.json().await?;
-    // LRCLIB returns instrumental tracks with syncedLyrics=null, plainLyrics="".
-    if body.get("instrumental").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if body
+        .get("instrumental")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         return Ok(None);
     }
-    let synced = body.get("syncedLyrics").and_then(|v| v.as_str()).unwrap_or("");
+    let synced = body
+        .get("syncedLyrics")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if synced.is_empty() {
         return Ok(None);
     }
@@ -2094,6 +2361,254 @@ fn parse_playlist_from_two_row(two_row: &Value) -> Option<PlaylistSummary> {
 /// mentions lyrics. Title matching is case-insensitive so non-English locales
 /// don't silently drop to `None` — YTM localizes the tab label but keeps the
 /// lyrics browse IDs identifiable on the lyrics-tab position (second tab).
+/// Test whether a thumbnail URL is YTM album art
+/// (`lh*.googleusercontent.com`) versus a YouTube video frame
+/// (`i.ytimg.com/vi/...`). Used to identify the AUDIO renderer in a
+/// counterpart pair regardless of which side `primaryRenderer`
+/// happens to be on.
+fn is_album_art_url(url: &str) -> bool {
+    if let Some(rest) = url.strip_prefix("https://lh") {
+        // Match lh3., lh4., lh5., ... googleusercontent.com prefix.
+        if let Some(dot) = rest.find('.') {
+            let digits = &rest[..dot];
+            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                return rest[dot..].starts_with(".googleusercontent.com/");
+            }
+        }
+    }
+    false
+}
+
+/// Pull the largest thumbnail URL from a `playlistPanelVideoRenderer`
+/// (or any renderer with the same `thumbnail.thumbnails[]` shape).
+fn renderer_thumbnail(renderer: &Value) -> Option<String> {
+    renderer
+        .pointer("/thumbnail/thumbnails")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.last())
+        .and_then(|t| t.get("url"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+/// Pull just the ARTIST segment from a renderer's byline. YTM
+/// represents `"Artist • Album • Year"` as separate runs — the
+/// artist text, then a literal " • " run, then the album text,
+/// etc. Concatenating all runs (the old behavior) shipped the full
+/// "Artist • Album • Year" string to LRCLIB, which never matches.
+/// Walk the runs and return the first non-separator one.
+/// True if a track title looks like a non-vocal recording where
+/// matching against LRCLIB/NetEase would paste the vocal version's
+/// lyrics onto an instrumental — the false-positive we used to
+/// defend against by trusting YTM's "no lyrics" verdict.
+fn looks_like_instrumental(title: &str) -> bool {
+    let lower = title.to_lowercase();
+    const INSTRUMENTAL_MARKERS: &[&str] = &[
+        "instrumental",
+        "karaoke",
+        "piano cover",
+        "piano version",
+        "piano arrangement",
+        "guitar cover",
+        "violin cover",
+        "string cover",
+        "8-bit",
+        "8 bit",
+        "8bit",
+        "music box",
+        "lullaby version",
+        "acoustic instrumental",
+        "no vocal",
+        "without vocal",
+        "off vocal",
+        "remixed by", // chiptune / remix collections often lack lyrics
+    ];
+    INSTRUMENTAL_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+fn first_byline_segment(renderer: &Value) -> String {
+    let runs = renderer
+        .pointer("/longBylineText/runs")
+        .or_else(|| renderer.pointer("/shortBylineText/runs"))
+        .and_then(|v| v.as_array());
+    let Some(runs) = runs else {
+        return String::new();
+    };
+    for run in runs {
+        let text = run.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // YTM's separator is `\u{2022}` (•) sometimes flanked by
+        // spaces. Skip pure-separator runs.
+        if trimmed
+            .chars()
+            .all(|c| c == '\u{2022}' || c.is_whitespace())
+        {
+            continue;
+        }
+        return trimmed.to_string();
+    }
+    String::new()
+}
+
+/// In a counterpart pair, return the renderer that represents the
+/// AUDIO side — the one whose thumbnail is album art on
+/// `lh*.googleusercontent.com`. Returns `None` if neither side is
+/// album art (both are video frames; track is fully UGC) or if the
+/// wrapper has no counterpart at all.
+///
+/// The "primary" vs "counterpart" labels in YTM's response are
+/// **playback-direction**-dependent — when the user is in audio mode
+/// the audio renderer is primary and the video is counterpart; in
+/// video mode, the inverse. So picking by label alone is wrong; we
+/// need to identify by content.
+fn pick_audio_renderer<'a>(wrapper: &'a Value) -> Option<&'a Value> {
+    let primary = wrapper.pointer("/primaryRenderer/playlistPanelVideoRenderer");
+    let counterpart = wrapper.pointer("/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer");
+    let primary_is_audio = primary
+        .and_then(renderer_thumbnail)
+        .map(|u| is_album_art_url(&u))
+        .unwrap_or(false);
+    if primary_is_audio {
+        return primary;
+    }
+    let counterpart_is_audio = counterpart
+        .and_then(renderer_thumbnail)
+        .map(|u| is_album_art_url(&u))
+        .unwrap_or(false);
+    if counterpart_is_audio {
+        return counterpart;
+    }
+    None
+}
+
+/// Walk a `/next` response's playlist panel and return the audio
+/// renderer's videoId for the currently-playing track if YTM has
+/// matched a `MUSIC_VIDEO_TYPE_OMV` (music video) to a
+/// `MUSIC_VIDEO_TYPE_ATV` (audio track). Returns `None` if the
+/// playing track is already the audio variant (no extra hop needed)
+/// OR if YTM hasn't matched it at all (UGC). The result is suitable
+/// for re-issuing /next to land on the audio variant — that's what
+/// surfaces the lyrics tab YTM hides on music-video pages.
+fn extract_audio_counterpart_video_id(data: &Value, current_video_id: &str) -> Option<String> {
+    let contents = data
+        .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")?
+        .as_array()?;
+    for entry in contents {
+        let Some(wrapper) = entry.get("playlistPanelVideoWrapperRenderer") else {
+            continue;
+        };
+        let primary_id = wrapper
+            .pointer("/primaryRenderer/playlistPanelVideoRenderer/videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if primary_id != current_video_id {
+            continue;
+        }
+        let audio = pick_audio_renderer(wrapper)?;
+        let audio_id = audio
+            .pointer("/videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if audio_id.is_empty() || audio_id == current_video_id {
+            // Already on the audio side; nothing to switch to.
+            return None;
+        }
+        return Some(audio_id.to_string());
+    }
+    None
+}
+
+#[derive(Debug, Clone)]
+struct CounterpartMeta {
+    title: String,
+    artist: String,
+    duration_secs: f64,
+}
+
+/// Walk a `/next` response's playlist panel and return the audio
+/// counterpart's clean track metadata for the currently-playing
+/// track. Music-video pages tend to have noisy titles ("Stayin'
+/// Alive (Official Music Video) [4K Remastered]") and "Channel" as
+/// the artist, both of which corrupt LRCLIB queries. The audio
+/// counterpart's title/byline are the canonical song version, served
+/// from the same /next response under
+/// `playlistPanelVideoWrapperRenderer.counterpart[0].counterpartRenderer`.
+fn extract_audio_counterpart_meta(data: &Value, current_video_id: &str) -> Option<CounterpartMeta> {
+    let contents = data
+        .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")?
+        .as_array()?;
+    for entry in contents {
+        let Some(wrapper) = entry.get("playlistPanelVideoWrapperRenderer") else {
+            continue;
+        };
+        let primary_id = wrapper
+            .pointer("/primaryRenderer/playlistPanelVideoRenderer/videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if primary_id != current_video_id {
+            continue;
+        }
+        // Pick the AUDIO renderer (regardless of whether it's primary
+        // or counterpart) so we always read clean song metadata, never
+        // the noisy music-video title / channel-name artist.
+        let audio = pick_audio_renderer(wrapper)?;
+        let title = audio
+            .pointer("/title/runs")
+            .map(runs_text)
+            .unwrap_or_default();
+        // YTM byline runs are "Artist • Album • Year" with each
+        // segment as its own run separated by literal " • " runs.
+        // For lyrics queries we want ONLY the artist — concatenating
+        // everything (the old behavior) gave LRCLIB a string like
+        // "Jolin Tsai • Cheng Bao (Castle) • 2004" which never
+        // matches. Take the first non-separator run instead.
+        let artist = first_byline_segment(audio);
+        let duration_secs = audio
+            .pointer("/lengthText/runs/0/text")
+            .and_then(|v| v.as_str())
+            .map(parse_duration_text)
+            .unwrap_or(0.0);
+        if title.is_empty() && artist.is_empty() && duration_secs <= 0.0 {
+            return None;
+        }
+        return Some(CounterpartMeta { title, artist, duration_secs });
+    }
+    None
+}
+
+/// Walk a `/next` response's playlist panel and return the AUDIO
+/// renderer's largest album-art thumbnail URL for the currently-
+/// playing track — picked by scanning BOTH primary and counterpart
+/// for the lh*.googleusercontent.com host (album-art CDN), since
+/// YTM swaps which side is "primary" depending on the user's audio /
+/// video preference. Returns `None` if neither side is album art
+/// (UGC track, or no counterpart at all).
+fn extract_audio_counterpart_thumbnail(data: &Value, current_video_id: &str) -> Option<String> {
+    let contents = data
+        .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")?
+        .as_array()?;
+    for entry in contents {
+        let Some(wrapper) = entry.get("playlistPanelVideoWrapperRenderer") else {
+            continue;
+        };
+        let primary_id = wrapper
+            .pointer("/primaryRenderer/playlistPanelVideoRenderer/videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if primary_id != current_video_id {
+            continue;
+        }
+        let audio = pick_audio_renderer(wrapper)?;
+        return renderer_thumbnail(audio);
+    }
+    None
+}
+
 fn extract_lyrics_browse_id(data: &Value) -> Option<String> {
     let tabs = data
         .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs")?
@@ -2119,10 +2634,14 @@ fn extract_lyrics_browse_id(data: &Value) -> Option<String> {
     None
 }
 
-/// Pull the next up-to-`limit` tracks from the `next`-response queue panel.
-/// Skips the entry matching `skip_video_id` so the current track isn't
-/// returned as its own upcoming.
-fn extract_upcoming_tracks(data: &Value, skip_video_id: &str, limit: usize) -> Vec<TrackInfo> {
+/// Pull the tracks that come AFTER the current track in the `next`-response
+/// queue panel. YTM's playlist panel returns the full playlist in order with
+/// the currently playing track marked at some internal position; `nextVideo`
+/// advances from that position. Returning the whole list minus the current
+/// track would put earlier album tracks at the top of the queue panel even
+/// though YTM won't play them next. So slice the contents starting AFTER the
+/// entry whose videoId matches the current track, and stop at `limit`.
+fn extract_upcoming_tracks(data: &Value, current_video_id: &str, limit: usize) -> Vec<TrackInfo> {
     let contents = data
         .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")
         .and_then(|v| v.as_array());
@@ -2130,25 +2649,56 @@ fn extract_upcoming_tracks(data: &Value, skip_video_id: &str, limit: usize) -> V
         return Vec::new();
     };
 
+    // YTM wraps each queue entry as either:
+    //   { playlistPanelVideoRenderer: { ... } }                 (older)
+    //   { playlistPanelVideoWrapperRenderer:
+    //       { primaryRenderer:    { playlistPanelVideoRenderer: { ... } },
+    //         counterpartRenderer: [{ playlistPanelVideoRenderer: { ... } }]
+    //       } } (current — counterpart present when track has both video and song)
+    let renderer = |entry: &Value| -> Option<Value> {
+        entry
+            .get("playlistPanelVideoRenderer")
+            .or_else(|| entry.pointer("/playlistPanelVideoWrapperRenderer/primaryRenderer/playlistPanelVideoRenderer"))
+            .cloned()
+    };
+    let video_id_of = |r: &Value| -> String {
+        r.get("videoId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let thumbnail_of = |r: &Value| -> Option<String> {
+        r.pointer("/thumbnail/thumbnails")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.last())
+            .and_then(|t| t.get("url"))
+            .and_then(|v| v.as_str())
+            .map(String::from)
+    };
+
+    // Locate the current track's index in the panel. If it isn't there
+    // (e.g. a pure song-radio seeded on videoId alone), fall back to
+    // returning everything minus the current track — the radio panel
+    // already excludes the seed from its top slot in practice.
+    let current_idx = contents.iter().position(|entry| {
+        renderer(entry)
+            .map(|r| video_id_of(&r) == current_video_id)
+            .unwrap_or(false)
+    });
+
+    let iter: Box<dyn Iterator<Item = &Value>> = match current_idx {
+        Some(idx) => Box::new(contents.iter().skip(idx + 1)),
+        None => Box::new(contents.iter()),
+    };
+
     let mut out: Vec<TrackInfo> = Vec::new();
-    for entry in contents {
+    for entry in iter {
         if out.len() >= limit {
             break;
         }
-        // YTM wraps each queue entry as either:
-        //   { playlistPanelVideoRenderer: { ... } }                 (older)
-        //   { playlistPanelVideoWrapperRenderer:
-        //       { primaryRenderer: { playlistPanelVideoRenderer: { ... } } } } (current)
-        let r = entry
-            .get("playlistPanelVideoRenderer")
-            .or_else(|| entry.pointer("/playlistPanelVideoWrapperRenderer/primaryRenderer/playlistPanelVideoRenderer"));
-        let Some(r) = r else { continue };
-        let video_id = r
-            .get("videoId")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if video_id.is_empty() || video_id == skip_video_id {
+        let Some(r) = renderer(entry) else { continue };
+        let video_id = video_id_of(&r);
+        if video_id.is_empty() || video_id == current_video_id {
             continue;
         }
         let title = r
@@ -2165,13 +2715,18 @@ fn extract_upcoming_tracks(data: &Value, skip_video_id: &str, limit: usize) -> V
             .and_then(|v| v.as_str())
             .map(parse_duration_text)
             .unwrap_or(0.0);
-        let artwork_url = r
-            .pointer("/thumbnail/thumbnails")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.last())
-            .and_then(|t| t.get("url"))
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        // Pick the AUDIO renderer's thumbnail regardless of whether
+        // it's the primary or the counterpart. YTM swaps which side
+        // is "primary" depending on the user's audio/video preference,
+        // so picking by label alone is wrong: we'd sometimes return
+        // the music-video frame as the "counterpart" of the playing
+        // audio track. Identify the audio side by content (album-art
+        // host = lh*.googleusercontent.com).
+        let wrapper = entry.get("playlistPanelVideoWrapperRenderer");
+        let audio_thumb = wrapper
+            .and_then(pick_audio_renderer)
+            .and_then(renderer_thumbnail);
+        let artwork_url = audio_thumb.or_else(|| thumbnail_of(&r));
 
         out.push(TrackInfo {
             video_id,
@@ -2574,5 +3129,652 @@ mod tests {
             }
         });
         assert!(extract_library_save_toggle(&data).is_none());
+    }
+
+    // =====================================================================
+    // Regression tests for features added since v0.7.0.
+    // Each block is annotated with the version that introduced it.
+    // =====================================================================
+
+    // ---- v0.9.0: timed-lyrics LRC parsing --------------------------------
+
+    #[test]
+    fn parse_lrc_timestamp_accepts_mm_ss() {
+        assert_eq!(parse_lrc_timestamp("01:23"), Some(83_000));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_accepts_centisecond_fraction() {
+        // ".42" → 420 ms
+        assert_eq!(parse_lrc_timestamp("00:01.42"), Some(1_420));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_accepts_millisecond_fraction() {
+        // ".123" → 123 ms
+        assert_eq!(parse_lrc_timestamp("00:00.123"), Some(123));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_truncates_long_fraction() {
+        // "1234" → first three digits (123), then ms = 123
+        assert_eq!(parse_lrc_timestamp("00:00.1234"), Some(123));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_pads_single_fraction_digit() {
+        // ".5" → 500 ms (NOT 5 ms)
+        assert_eq!(parse_lrc_timestamp("00:00.5"), Some(500));
+    }
+
+    #[test]
+    fn parse_lrc_timestamp_rejects_metadata_keys() {
+        assert_eq!(parse_lrc_timestamp("ar:Artist Name"), None);
+        assert_eq!(parse_lrc_timestamp("ti:Song Title"), None);
+    }
+
+    #[test]
+    fn parse_lrc_emits_sorted_lines_with_end_ms_filled() {
+        let lrc = "[00:05.00]Hello\n[00:01.00]Earlier\n[00:10.00]Last\n";
+        let lines = parse_lrc(lrc);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].start_ms, 1_000);
+        assert_eq!(lines[0].end_ms, Some(5_000));
+        assert_eq!(lines[0].text, "Earlier");
+        assert_eq!(lines[1].start_ms, 5_000);
+        assert_eq!(lines[1].end_ms, Some(10_000));
+        assert_eq!(lines[1].text, "Hello");
+        // Last line stays open-ended so the player extends it to track end.
+        assert_eq!(lines[2].end_ms, None);
+    }
+
+    #[test]
+    fn parse_lrc_handles_repeating_timestamps_per_line() {
+        // LRC supports `[t1][t2]Text` — same text emitted at each timestamp.
+        let lrc = "[00:00.00][00:30.00]Chorus\n";
+        let lines = parse_lrc(lrc);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].start_ms, 0);
+        assert_eq!(lines[1].start_ms, 30_000);
+        assert_eq!(lines[0].text, "Chorus");
+        assert_eq!(lines[1].text, "Chorus");
+    }
+
+    #[test]
+    fn parse_lrc_skips_metadata_headers() {
+        let lrc = "[ar:The Artist]\n[ti:The Title]\n[00:01.00]Lyric\n";
+        let lines = parse_lrc(lrc);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "Lyric");
+    }
+
+    #[test]
+    fn parse_lrc_skips_blank_text_after_timestamp() {
+        // Empty payload still produces a marker line — keeps timing for fades.
+        let lrc = "[00:00.00]\n";
+        let lines = parse_lrc(lrc);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "");
+    }
+
+    // ---- v0.9.1: extract_upcoming_tracks slicing --------------------------
+    // The Playing-queue panel depends on slicing the playlist panel after
+    // the currently-playing track. Bug previously: removing every entry
+    // matching the current videoId returned tracks that came BEFORE the
+    // cursor, so the panel disagreed with what nextVideo() would play.
+
+    fn make_panel_entry(video_id: &str, title: &str) -> Value {
+        json!({
+            "playlistPanelVideoRenderer": {
+                "videoId": video_id,
+                "title": { "runs": [{ "text": title }] },
+                "longBylineText": { "runs": [{ "text": "Artist" }] },
+                "lengthText": { "runs": [{ "text": "3:30" }] },
+                "thumbnail": {
+                    "thumbnails": [{
+                        "url": format!("https://i.ytimg.com/vi/{video_id}/hq.jpg"),
+                        "width": 480, "height": 360
+                    }]
+                }
+            }
+        })
+    }
+
+    fn make_panel(video_ids: &[&str]) -> Value {
+        let contents: Vec<Value> = video_ids
+            .iter()
+            .map(|v| make_panel_entry(v, v))
+            .collect();
+        json!({
+            "contents": {
+                "singleColumnMusicWatchNextResultsRenderer": {
+                    "tabbedRenderer": {
+                        "watchNextTabbedResultsRenderer": {
+                            "tabs": [{
+                                "tabRenderer": {
+                                    "content": {
+                                        "musicQueueRenderer": {
+                                            "content": {
+                                                "playlistPanelRenderer": {
+                                                    "contents": contents
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }]
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_slices_after_current_in_playlist() {
+        let data = make_panel(&["v1", "v2", "v3", "v4", "v5"]);
+        let out = extract_upcoming_tracks(&data, "v2", 100);
+        let ids: Vec<&str> = out.iter().map(|t| t.video_id.as_str()).collect();
+        assert_eq!(ids, vec!["v3", "v4", "v5"]);
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_returns_empty_when_current_is_last() {
+        let data = make_panel(&["v1", "v2", "v3"]);
+        let out = extract_upcoming_tracks(&data, "v3", 100);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_falls_back_when_current_not_in_panel() {
+        // E.g. song-radio responses where the seed isn't in the queue panel.
+        // Behaviour: return everything except entries matching the current id.
+        let data = make_panel(&["a", "b", "c"]);
+        let out = extract_upcoming_tracks(&data, "ZZZ_NOT_PRESENT", 100);
+        let ids: Vec<&str> = out.iter().map(|t| t.video_id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_respects_limit() {
+        let data = make_panel(&["v1", "v2", "v3", "v4", "v5"]);
+        let out = extract_upcoming_tracks(&data, "v1", 2);
+        let ids: Vec<&str> = out.iter().map(|t| t.video_id.as_str()).collect();
+        assert_eq!(ids, vec!["v2", "v3"]);
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_returns_empty_for_missing_panel() {
+        let data = json!({ "contents": {} });
+        assert!(extract_upcoming_tracks(&data, "v1", 100).is_empty());
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_supports_wrapper_renderer() {
+        // YTM newer responses wrap entries in
+        // playlistPanelVideoWrapperRenderer / primaryRenderer.
+        let wrapped = json!({
+            "playlistPanelVideoWrapperRenderer": {
+                "primaryRenderer": {
+                    "playlistPanelVideoRenderer": {
+                        "videoId": "wrapped_vid",
+                        "title": { "runs": [{ "text": "Wrapped" }] },
+                        "longBylineText": { "runs": [{ "text": "Artist" }] },
+                        "lengthText": { "runs": [{ "text": "3:00" }] },
+                        "thumbnail": { "thumbnails": [] }
+                    }
+                }
+            }
+        });
+        let data = json!({
+            "contents": {
+                "singleColumnMusicWatchNextResultsRenderer": {
+                    "tabbedRenderer": {
+                        "watchNextTabbedResultsRenderer": {
+                            "tabs": [{
+                                "tabRenderer": {
+                                    "content": {
+                                        "musicQueueRenderer": {
+                                            "content": {
+                                                "playlistPanelRenderer": {
+                                                    "contents": [wrapped]
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }]
+                        }
+                    }
+                }
+            }
+        });
+        let out = extract_upcoming_tracks(&data, "different_seed", 100);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].video_id, "wrapped_vid");
+        assert_eq!(out[0].title, "Wrapped");
+    }
+
+    // ---- audio counterpart parsing ----------------------------------------
+    //
+    // YTM matches every official music video (`MUSIC_VIDEO_TYPE_OMV`) to
+    // its audio track (`MUSIC_VIDEO_TYPE_ATV`) and exposes the audio
+    // counterpart's videoId + album-art thumbnail under
+    // `playlistPanelVideoWrapperRenderer.counterpartRenderer[0]
+    // .playlistPanelVideoRenderer`. We use this to (a) show the song's
+    // album-art cover in the queue instead of the video's 16:9 frame,
+    // and (b) re-issue /next against the audio counterpart for the
+    // lyrics tab YTM hides on most music-video pages.
+
+    fn build_next_with_counterpart(
+        primary_id: &str,
+        primary_thumb: &str,
+        counterpart_id: &str,
+        counterpart_thumb: &str,
+    ) -> Value {
+        json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": primary_id,
+                                "title": { "runs": [{ "text": "Little Lies" }] },
+                                "longBylineText": { "runs": [{ "text": "Fleetwood Mac" }] },
+                                "lengthText": { "runs": [{ "text": "3:42" }] },
+                                "thumbnail": { "thumbnails": [
+                                    { "url": primary_thumb }
+                                ]}
+                            }},
+                            "counterpart": [{
+                                "counterpartRenderer": {
+                                    "playlistPanelVideoRenderer": {
+                                        "videoId": counterpart_id,
+                                        "title": { "runs": [{ "text": "Little Lies" }] },
+                                        "longBylineText": { "runs": [{ "text": "Fleetwood Mac" }] },
+                                        "thumbnail": { "thumbnails": [
+                                            { "url": counterpart_thumb }
+                                        ]}
+                                    }
+                                }
+                            }]
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        })
+    }
+
+    #[test]
+    fn extract_audio_counterpart_returns_audio_video_id_when_playing_video() {
+        let data = build_next_with_counterpart(
+            "videoVID",
+            "https://i.ytimg.com/vi/videoVID/sddefault.jpg?sqp=foo",
+            "audioVID",
+            "https://lh3.googleusercontent.com/abc=w512-h512",
+        );
+        let out = extract_audio_counterpart_video_id(&data, "videoVID");
+        assert_eq!(out.as_deref(), Some("audioVID"));
+    }
+
+    #[test]
+    fn extract_audio_counterpart_returns_none_for_unknown_video() {
+        let data = build_next_with_counterpart("vidA", "x", "audA", "y");
+        assert!(extract_audio_counterpart_video_id(&data, "different_id").is_none());
+    }
+
+    #[test]
+    fn extract_audio_counterpart_returns_none_when_no_wrapper() {
+        // Older response shape with bare playlistPanelVideoRenderer:
+        // there's nothing to switch to.
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoRenderer": {
+                            "videoId": "soloVid",
+                            "title": { "runs": [{ "text": "Solo" }] },
+                            "longBylineText": { "runs": [{ "text": "Artist" }] },
+                            "thumbnail": { "thumbnails": [] }
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        assert!(extract_audio_counterpart_video_id(&data, "soloVid").is_none());
+    }
+
+    #[test]
+    fn first_byline_segment_drops_album_year_after_artist() {
+        // Real shape: YTM byline runs are
+        //   [{text:"Jolin Tsai"}, {text:" • "}, {text:"Cheng Bao"}, {text:" • "}, {text:"2004"}]
+        let renderer = json!({
+            "longBylineText": { "runs": [
+                { "text": "Jolin Tsai" },
+                { "text": " \u{2022} " },
+                { "text": "Cheng Bao (Castle)" },
+                { "text": " \u{2022} " },
+                { "text": "2004" }
+            ]}
+        });
+        assert_eq!(first_byline_segment(&renderer), "Jolin Tsai");
+    }
+
+    #[test]
+    fn first_byline_segment_falls_back_to_short_byline() {
+        let renderer = json!({
+            "shortBylineText": { "runs": [
+                { "text": "Bee Gees" },
+                { "text": " \u{2022} " },
+                { "text": "Album" }
+            ]}
+        });
+        assert_eq!(first_byline_segment(&renderer), "Bee Gees");
+    }
+
+    #[test]
+    fn first_byline_segment_returns_empty_when_no_runs() {
+        assert_eq!(first_byline_segment(&json!({})), "");
+    }
+
+    #[test]
+    fn looks_like_instrumental_catches_common_markers() {
+        assert!(looks_like_instrumental("Stayin' Alive (Instrumental)"));
+        assert!(looks_like_instrumental("Take On Me — Karaoke version"));
+        assert!(looks_like_instrumental("Wonderwall (Piano Cover)"));
+        assert!(looks_like_instrumental("Never Gonna Give You Up (8-Bit Version)"));
+        assert!(looks_like_instrumental("Bohemian Rhapsody (Music Box)"));
+    }
+
+    #[test]
+    fn looks_like_instrumental_rejects_normal_titles() {
+        assert!(!looks_like_instrumental("Love Love Love"));
+        assert!(!looks_like_instrumental("Stayin' Alive"));
+        assert!(!looks_like_instrumental("人世间"));
+        assert!(!looks_like_instrumental("APT."));
+    }
+
+    #[test]
+    fn extract_audio_counterpart_meta_returns_clean_song_title_and_artist() {
+        // Music video has a noisy "Stayin' Alive (Official Video)" title
+        // and "Bee Gees - Topic" / channel name as artist; the audio
+        // counterpart is the clean "Stayin' Alive" / "Bee Gees" pair
+        // with a real lengthText.
+        // Primary is the music video (i.ytimg.com video frame thumbnail);
+        // counterpart is the audio side (lh3.googleusercontent.com album
+        // art). pick_audio_renderer must identify the counterpart as
+        // audio by content (album-art host), not by JSON label.
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "videoVID",
+                                "title": { "runs": [{ "text": "Stayin' Alive (Official Music Video)" }] },
+                                "longBylineText": { "runs": [{ "text": "Bee Gees - Topic" }] },
+                                "lengthText": { "runs": [{ "text": "4:45" }] },
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://i.ytimg.com/vi/videoVID/hq720.jpg?sqp=foo&rs=bar" }
+                                ]}
+                            }},
+                            "counterpart": [{
+                                "counterpartRenderer": {
+                                    "playlistPanelVideoRenderer": {
+                                        "videoId": "audioVID",
+                                        "title": { "runs": [{ "text": "Stayin' Alive" }] },
+                                        "longBylineText": { "runs": [{ "text": "Bee Gees" }] },
+                                        "lengthText": { "runs": [{ "text": "4:09" }] },
+                                        "thumbnail": { "thumbnails": [
+                                            { "url": "https://lh3.googleusercontent.com/audioCover=w512-h512" }
+                                        ]}
+                                    }
+                                }
+                            }]
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        let meta = extract_audio_counterpart_meta(&data, "videoVID").expect("must find meta");
+        assert_eq!(meta.title, "Stayin' Alive");
+        assert_eq!(meta.artist, "Bee Gees");
+        // 4:09 = 249 seconds
+        assert_eq!(meta.duration_secs as i64, 249);
+    }
+
+    #[test]
+    fn extract_audio_counterpart_thumbnail_returns_audio_when_video_is_primary() {
+        // Same fixture orientation as above: primary = video, counterpart = audio.
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "videoVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://i.ytimg.com/vi/videoVID/hq720.jpg?sqp=x&rs=y" }
+                                ]}
+                            }},
+                            "counterpart": [{ "counterpartRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "audioVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://lh3.googleusercontent.com/audioCover=w512-h512" }
+                                ]}
+                            }}}]
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        let url = extract_audio_counterpart_thumbnail(&data, "videoVID")
+            .expect("must find audio thumbnail");
+        assert!(url.starts_with("https://lh3.googleusercontent.com/"), "got {url}");
+    }
+
+    #[test]
+    fn extract_audio_counterpart_thumbnail_returns_audio_when_audio_is_primary() {
+        // Inverse orientation: user is in audio mode, so primary = audio (lh3
+        // album art) and counterpart = video. The audio renderer is the
+        // primary itself; we should return the primary's lh3 thumbnail,
+        // NOT the counterpart's i.ytimg video frame.
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "audioVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://lh3.googleusercontent.com/audioCover=w512-h512" }
+                                ]}
+                            }},
+                            "counterpart": [{ "counterpartRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "videoVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://i.ytimg.com/vi/videoVID/hq720.jpg?sqp=x&rs=y" }
+                                ]}
+                            }}}]
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        let url = extract_audio_counterpart_thumbnail(&data, "audioVID")
+            .expect("must find audio thumbnail");
+        assert!(url.starts_with("https://lh3.googleusercontent.com/"), "got {url}");
+    }
+
+    #[test]
+    fn extract_audio_counterpart_video_id_returns_none_when_already_audio() {
+        // User is on the audio side (primary = audio). There's no need to
+        // switch — the videoId hop should return None.
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "audioVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://lh3.googleusercontent.com/audio=w512" }
+                                ]}
+                            }},
+                            "counterpart": [{ "counterpartRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "videoVID",
+                                "thumbnail": { "thumbnails": [
+                                    { "url": "https://i.ytimg.com/vi/videoVID/hq720.jpg?sqp=x&rs=y" }
+                                ]}
+                            }}}]
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        assert!(extract_audio_counterpart_video_id(&data, "audioVID").is_none());
+    }
+
+    #[test]
+    fn extract_audio_counterpart_meta_returns_none_for_unknown_video() {
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        { "playlistPanelVideoWrapperRenderer": {
+                            "primaryRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "xxx",
+                                "title": { "runs": [{ "text": "X" }] },
+                                "longBylineText": { "runs": [{ "text": "Y" }] },
+                                "lengthText": { "runs": [{ "text": "3:00" }] },
+                                "thumbnail": { "thumbnails": [] }
+                            }}
+                        }}
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        assert!(extract_audio_counterpart_meta(&data, "different").is_none());
+    }
+
+    #[test]
+    fn extract_audio_counterpart_returns_none_when_counterpart_id_matches_primary() {
+        // Defensive: if YTM ever returns a self-counterpart, we should
+        // not enter an infinite re-issue loop.
+        let data = build_next_with_counterpart("sameId", "x", "sameId", "y");
+        assert!(extract_audio_counterpart_video_id(&data, "sameId").is_none());
+    }
+
+    #[test]
+    fn extract_upcoming_tracks_uses_counterpart_thumbnail_when_present() {
+        // Two queue entries: one wraps a video with an audio counterpart
+        // (counterpart's lh3 thumbnail must be picked); the other has no
+        // counterpart (its own thumbnail must be picked).
+        let with_counterpart = json!({
+            "playlistPanelVideoWrapperRenderer": {
+                "primaryRenderer": { "playlistPanelVideoRenderer": {
+                    "videoId": "vidA",
+                    "title": { "runs": [{ "text": "A" }] },
+                    "longBylineText": { "runs": [{ "text": "Artist A" }] },
+                    "lengthText": { "runs": [{ "text": "3:00" }] },
+                    "thumbnail": { "thumbnails": [{ "url": "https://i.ytimg.com/vi/vidA/sd.jpg?sqp=x" }]}
+                }},
+                "counterpart": [{
+                    "counterpartRenderer": {
+                        "playlistPanelVideoRenderer": {
+                            "videoId": "audA",
+                            "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/audA=w512" }]}
+                        }
+                    }
+                }]
+            }
+        });
+        let without = json!({
+            "playlistPanelVideoWrapperRenderer": {
+                "primaryRenderer": { "playlistPanelVideoRenderer": {
+                    "videoId": "vidB",
+                    "title": { "runs": [{ "text": "B" }] },
+                    "longBylineText": { "runs": [{ "text": "Artist B" }] },
+                    "lengthText": { "runs": [{ "text": "3:00" }] },
+                    "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/vidB=w512" }]}
+                }}
+            }
+        });
+        let data = json!({
+            "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+                    "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                        with_counterpart,
+                        without,
+                    ]}}}
+                }}}]}
+            }}}
+        });
+        let out = extract_upcoming_tracks(&data, "_seed_", 100);
+        assert_eq!(out.len(), 2);
+        // First entry: counterpart's lh3 URL was picked.
+        assert_eq!(out[0].video_id, "vidA");
+        assert!(
+            out[0]
+                .artwork_url
+                .as_deref()
+                .unwrap_or("")
+                .contains("lh3.googleusercontent.com/audA"),
+            "expected counterpart thumbnail, got {:?}",
+            out[0].artwork_url
+        );
+        // Second entry: no counterpart, falls back to its own thumbnail.
+        assert_eq!(out[1].video_id, "vidB");
+        assert!(
+            out[1]
+                .artwork_url
+                .as_deref()
+                .unwrap_or("")
+                .contains("lh3.googleusercontent.com/vidB"),
+        );
+    }
+
+    // ---- v0.8.0: extract_audio_playlist_id (album OLAK lookup) ------------
+    // Albums use an MPRE browseId that YTM does NOT accept as a watch
+    // `&list=` parameter. The detail response surfaces an OLAK* id; the
+    // Playing-queue panel and "Save to library" both depend on this.
+
+    #[test]
+    fn extract_audio_playlist_id_finds_olak_in_watch_endpoint() {
+        let data = json!({
+            "deeply": { "nested": {
+                "watchEndpoint": { "playlistId": "OLAK5uy_abcdef123" }
+            }}
+        });
+        assert_eq!(
+            extract_audio_playlist_id(&data),
+            Some("OLAK5uy_abcdef123".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_audio_playlist_id_finds_rdclak() {
+        let data = json!({
+            "watchPlaylistEndpoint": { "playlistId": "RDCLAK5uy_xyz" }
+        });
+        assert_eq!(
+            extract_audio_playlist_id(&data),
+            Some("RDCLAK5uy_xyz".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_audio_playlist_id_ignores_non_playable_prefixes() {
+        // VL prefix is for browse, not watch — should NOT be returned.
+        let data = json!({
+            "watchEndpoint": { "playlistId": "VLPLnonsense" }
+        });
+        assert_eq!(extract_audio_playlist_id(&data), None);
+    }
+
+    #[test]
+    fn extract_audio_playlist_id_returns_none_when_absent() {
+        let data = json!({ "no": "playlist", "ids": "here" });
+        assert_eq!(extract_audio_playlist_id(&data), None);
     }
 }

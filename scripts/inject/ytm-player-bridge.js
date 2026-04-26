@@ -203,7 +203,20 @@
         if (args && typeof args.secs === 'number') player.seekTo(args.secs, true);
         break;
       case 'set_volume':
-        if (args && typeof args.level === 'number') player.setVolume(Math.round(args.level * 100));
+        if (args && typeof args.level === 'number') {
+          var lvlPct = Math.round(args.level * 100);
+          window.__VIBEYTM_DESIRED_VOLUME_PCT__ = lvlPct;
+          player.setVolume(lvlPct);
+          // Also apply to the <video> element directly — defeats the
+          // race where YTM resets it across track navigation.
+          try {
+            var vEl = document.querySelector('video');
+            if (vEl) {
+              vEl.volume = Math.max(0, Math.min(1, lvlPct / 100));
+              vEl.muted = lvlPct === 0;
+            }
+          } catch (e) {}
+        }
         break;
       case 'toggle_shuffle': {
         // Find by aria-label inside the player bar — stable across YTM
@@ -390,6 +403,279 @@
     stuckSinceMs = Date.now();
   }
 
+  /**
+   * Force YTM onto the audio ("Song") variant whenever a track offers both.
+   * YTM surfaces an AV toggle (`<ytmusic-av-toggle>`) for tracks that have
+   * both an audio track and a music video. We always prefer audio, so if
+   * the video tab is the selected one, click the song tab to switch back.
+   * No-op when the toggle isn't present (audio-only tracks).
+   */
+  function forceAudioMode() {
+    try {
+      var toggle = document.querySelector('ytmusic-av-toggle');
+      if (!toggle) return;
+      var songTab = toggle.querySelector('.song-button, [aria-label="Song" i], tp-yt-paper-tab:first-of-type');
+      var videoTab = toggle.querySelector('.video-button, [aria-label="Video" i], tp-yt-paper-tab:nth-of-type(2)');
+      if (!songTab || !videoTab) return;
+      var videoSelected =
+        videoTab.getAttribute('aria-selected') === 'true' ||
+        videoTab.classList.contains('selected') ||
+        videoTab.hasAttribute('selected');
+      var songSelected =
+        songTab.getAttribute('aria-selected') === 'true' ||
+        songTab.classList.contains('selected') ||
+        songTab.hasAttribute('selected');
+      if (videoSelected && !songSelected) {
+        songTab.click();
+        log('forceAudioMode: switched to Song');
+      }
+    } catch (e) {
+      // DOM may briefly be in an inconsistent state during navigation.
+    }
+  }
+
+  /**
+   * Read the authoritative playing queue exactly as YTM holds it.
+   *
+   * Source of truth: `player.getPlaylist()` returns the array of videoIds
+   * YTM will actually play, in order. That's the canonical answer to
+   * "what's the queue?" — the same data that drives YTM's nextVideo() and
+   * its own queue-panel rendering. Anything sourced from the DOM scrape
+   * alone could include nested template clones, hidden lazy-mounted rows,
+   * or stale items.
+   *
+   * We then enrich each id with metadata (title, artist, thumbnail) from
+   * the DOM `<ytmusic-player-queue-item>` whose videoId matches. Items
+   * without matching DOM nodes still appear (with whatever fields YTM has
+   * — at minimum the videoId for the YouTube CDN thumbnail fallback).
+   *
+   * Returns an array of { videoId, title, artist, artworkUrl, durationSecs }.
+   */
+  /**
+   * Scrape YTM's queue panel DOM. Verified at runtime: in a list/radio
+   * context the scoped container holds the FULL queue (e.g. 93 items),
+   * with no leak from outside the scope. The YouTube iframe-API
+   * `player.getPlaylist()` reports 0 in YTM, so it cannot be the source
+   * of truth — DOM is.
+   *
+   * Scope is `ytmusic-player-queue #contents` to exclude the
+   * now-playing-strip's `<ytmusic-player-queue-item>` and any template
+   * clones elsewhere in the DOM. A scrape-time dedup-by-videoId is
+   * applied as belt-and-suspenders against transient renders.
+   */
+  function readYtmQueue() {
+    var container =
+      document.querySelector('ytmusic-player-queue #contents') ||
+      document.querySelector('ytmusic-player-queue');
+    if (!container) return [];
+    var items = container.querySelectorAll('ytmusic-player-queue-item');
+
+    var out = [];
+    var seen = Object.create(null);
+    var lastAcceptedTitle = '';
+    function normalizeForDedupe(s) {
+      // Strip MV / official / lyric-video / language-tag / OST decorations
+      // so a music-video sibling with a noisy title compares equal to its
+      // audio counterpart. Conservative: only collapse when the cores
+      // match exactly after stripping a known-noise vocabulary.
+      var t = (s || '').toLowerCase();
+      // Drop known decorations / parens / brackets and run together.
+      t = t.replace(/[【〔《[(『「]\s*[^】〕》\])』」]*\s*[】〕》\])』」]/g, ' ');
+      t = t.replace(/\b(official\s+(music\s+)?video|music\s+video|mv|lyric(s)?\s+video|hd|4k|remaster(ed)?|audio|hq|topic)\b/g, ' ');
+      t = t.replace(/[\s\-–—|｜:,.!?'"]+/g, ' ');
+      return t.trim();
+    }
+    for (var i = 0; i < items.length; i++) {
+      var el = items[i];
+
+      // Counterpart dedupe: when YTM has matched a music video to its
+      // audio counterpart, both siblings render as separate
+      // `<ytmusic-player-queue-item>` elements. The audio side lives
+      // inside `<ytmusic-playlist-panel-video-wrapper-renderer> > div#primary-renderer`
+      // (or as a direct child of `#contents` when there's no pair), and
+      // the video sibling lives inside `... > div#counterpart-renderer`.
+      // YTM plays the primary; the counterpart is the duplicate we drop.
+      // Verified 2026-04-25 via live DOM dump in WKWebView (queue-dump
+      // diagnostic). The wrapper element name was previously guessed
+      // incorrectly (`ytmusic-player-queue-item-wrapper`); the correct
+      // discriminator is the parent slot's `id`, not the tag name.
+      var inCounterpartSlot = false;
+      var anc = el.parentElement;
+      var ancHops = 0;
+      while (anc && anc !== container && ancHops < 6) {
+        if (anc.id === 'counterpart-renderer') {
+          inCounterpartSlot = true;
+          break;
+        }
+        anc = anc.parentElement;
+        ancHops++;
+      }
+      if (inCounterpartSlot) continue;
+
+      var data = el.data || {};
+      var vid = '';
+      try {
+        vid = data.videoId || (data.renderer
+          && data.renderer.playlistPanelVideoRenderer
+          && data.renderer.playlistPanelVideoRenderer.videoId) || '';
+      } catch (e) {}
+      if (!vid) {
+        var thumbImg = el.querySelector('yt-img-shadow img, img');
+        if (thumbImg && thumbImg.src) {
+          var m = thumbImg.src.match(/\/vi\/([^/]+)\//);
+          if (m) vid = m[1];
+        }
+      }
+      if (!vid) continue;
+      if (seen[vid]) continue;
+      seen[vid] = true;
+      var titleEl = el.querySelector('.song-title, yt-formatted-string.song-title');
+      var bylineEl = el.querySelector('.byline, yt-formatted-string.byline');
+      var thumb = el.querySelector('yt-img-shadow img, img');
+      out.push({
+        videoId: vid,
+        title: titleEl ? (titleEl.textContent || '').trim() : '',
+        artist: bylineEl ? (bylineEl.textContent || '').trim() : '',
+        album: '',
+        artworkUrl: thumb && thumb.src ? thumb.src : '',
+        durationSecs: 0,
+      });
+    }
+    return out;
+  }
+
+  // Expose the latest queue read on a global so the Rust poller can pick it
+  // up the same way it reads player state. The YTM webview has no
+  // window.__TAURI__ binding (only __TAURI_INTERNALS__), so an invoke()-push
+  // path is unavailable here — pull is the only reliable pattern.
+  window.__VIBEYTM_QUEUE__ = [];
+  var lastLoggedQueueFingerprint = '';
+  function pushQueueIfChanged() {
+    try {
+      var q = readYtmQueue();
+      window.__VIBEYTM_QUEUE__ = q;
+      // Also log a one-line summary into the bridge debug ring so the Rust
+      // poller surfaces it in the dev-server output. Lets us reason about
+      // exactly what the panel is rendering without WebView devtools.
+      var fp = q.map(function (t) { return t.videoId; }).join('|');
+      if (fp !== lastLoggedQueueFingerprint) {
+        lastLoggedQueueFingerprint = fp;
+        var summary = q.slice(0, 10).map(function (t, i) {
+          return '[' + (i + 1) + '] ' + (t.videoId || '?') + ' ' +
+            (t.title || '').slice(0, 40);
+        }).join(' | ');
+        log('queue (' + q.length + ' items): ' + summary +
+          (q.length > 10 ? ' …' : ''));
+      }
+    } catch (e) {
+      // Queue DOM can transiently be missing during navigation; try again next tick.
+    }
+  }
+
+  // Lock the desired volume against YTM's behaviour of resetting the
+  // <video> element's volume across track navigation. The previous
+  // pattern (poll + listeners) had a race: when YTM creates a NEW
+  // <video> element for the next track, audio starts playing at the
+  // element's default volume BEFORE the next poll cycle re-attaches
+  // listeners. The user heard a brief loud burst.
+  //
+  // Fix: intercept `volume` and `muted` at the prototype level via
+  // `Object.defineProperty`. ANY <video> or <audio> element — present
+  // or future — that gets its volume changed will pass through our
+  // setter, which clamps to the user's desired value. Audio cannot
+  // physically play at the wrong volume even for one frame because
+  // the underlying media engine reads the property value we control.
+  //
+  // No-op until the user has issued a `set_volume` (`__VIBEYTM_DESIRED_VOLUME_PCT__`
+  // stays undefined). After that, every assignment to `.volume` or
+  // `.muted` is forced to the desired value.
+  function installVolumeLock() {
+    if (window.__VIBEYTM_VOLUME_LOCK_INSTALLED__) return;
+    window.__VIBEYTM_VOLUME_LOCK_INSTALLED__ = true;
+    try {
+      var proto = HTMLMediaElement.prototype;
+      var nativeVolume = Object.getOwnPropertyDescriptor(proto, 'volume');
+      var nativeMuted = Object.getOwnPropertyDescriptor(proto, 'muted');
+      if (!nativeVolume || !nativeMuted) {
+        // Some browser variants put these on the instance. Bail; the
+        // 200 ms fallback poll is the safety net.
+        return;
+      }
+      function desiredVolume() {
+        var d = window.__VIBEYTM_DESIRED_VOLUME_PCT__;
+        if (typeof d !== 'number') return null;
+        return Math.max(0, Math.min(1, d / 100));
+      }
+      function desiredMuted() {
+        var d = window.__VIBEYTM_DESIRED_VOLUME_PCT__;
+        return typeof d === 'number' && d === 0;
+      }
+      Object.defineProperty(proto, 'volume', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return nativeVolume.get.call(this); },
+        set: function (v) {
+          var override = desiredVolume();
+          var effective = override === null ? v : override;
+          nativeVolume.set.call(this, effective);
+        },
+      });
+      Object.defineProperty(proto, 'muted', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return nativeMuted.get.call(this); },
+        set: function (m) {
+          var force = desiredMuted();
+          nativeMuted.set.call(this, force ? true : !!m);
+        },
+      });
+    } catch (e) {
+      // Defensive: some WebKit versions disallow this. Log so we
+      // know the fallback poll is the only guard.
+      log('volume-lock install failed: ' + e);
+    }
+  }
+
+  // Lightweight fallback: re-apply on every poll in case some path
+  // bypassed the prototype setter (e.g. native code mutating internal
+  // state directly). Fires every 100 ms.
+  function enforceVolumeFallback() {
+    var d = window.__VIBEYTM_DESIRED_VOLUME_PCT__;
+    if (typeof d !== 'number') return;
+    var target = Math.max(0, Math.min(1, d / 100));
+    var elements = document.querySelectorAll('video, audio');
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      if (Math.abs(el.volume - target) > 0.005 || (d === 0 && !el.muted)) {
+        try { el.volume = target; el.muted = d === 0; } catch (e) {}
+      }
+    }
+  }
+
+  function observeQueue() {
+    var container = document.querySelector('ytmusic-player-queue #contents')
+      || document.querySelector('ytmusic-player-queue');
+    if (!container) {
+      // Queue DOM isn't mounted yet — retry. YTM lazily renders it.
+      setTimeout(observeQueue, 1000);
+      return;
+    }
+    try {
+      var obs = new MutationObserver(function () { pushQueueIfChanged(); });
+      obs.observe(container, { childList: true, subtree: true, characterData: true });
+      log('queue observer attached');
+      pushQueueIfChanged();
+    } catch (e) {
+      log('queue observer failed: ' + e);
+    }
+  }
+
+  // (Diagnostic SELFTEST removed after verification — confirmed YTM's
+  // player.nextVideo() skips same-title-different-videoId entries in its
+  // DOM queue. The QueuePanel's title-based dedup with seedCurrent handles
+  // exactly this case, producing an Up-Next list that matches YTM's actual
+  // playback path. See: scripts/inject/ytm-player-bridge.js git log.)
+
   function waitForPlayer() {
     var p = getPlayer();
     if (p) {
@@ -397,6 +683,14 @@
       attachPlayerErrorListener(p);
       setInterval(update, 150);
       setInterval(checkStuck, 1000);
+      setInterval(forceAudioMode, 500);
+      installVolumeLock();
+      setInterval(enforceVolumeFallback, 100);
+      enforceVolumeFallback();
+      observeQueue();
+      // Belt and suspenders: the observer may miss edge cases (e.g. the
+      // queue container gets re-created). Poll every 2s as a fallback.
+      setInterval(pushQueueIfChanged, 2000);
       update();
     } else {
       log('waiting for player...');
@@ -601,6 +895,10 @@
     log('bridge loaded on ' + window.location.href);
     log('__TAURI__ available: ' + (typeof window.__TAURI__ !== 'undefined'));
     log('__TAURI_INTERNALS__ available: ' + (typeof window.__TAURI_INTERNALS__ !== 'undefined'));
+    // Install the volume lock at script-injection time, BEFORE any
+    // <video> element gets created — otherwise YTM's own initial
+    // setup runs first and a brief audio burst sneaks past us.
+    installVolumeLock();
     waitForPlayer();
     setInterval(checkLoginStatus, 1500);
     checkLoginStatus();

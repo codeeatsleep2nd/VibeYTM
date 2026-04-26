@@ -22,6 +22,21 @@ export function useSmoothedPosition(
   constantOffsetMs = 0,
 ): number {
   const [value, setValue] = useState(positionSecs + constantOffsetMs / 1000);
+  // Track the last positionSecs we saw during render. When positionSecs
+  // jumps BACKWARD (e.g. usePlayerState resets it to 0 on TRACK_CHANGED
+  // for a Next/Prev click), snap the returned value to the new
+  // baseline SYNCHRONOUSLY during this render — don't wait for the
+  // useEffect below. Without this snap, the lyrics panel renders one
+  // frame with the new track's lyrics but the OLD playback position,
+  // which auto-scrolls to a random mid-track line before the effect
+  // re-bases on the next tick.
+  const [lastSeenPositionSecs, setLastSeenPositionSecs] = useState(positionSecs);
+  if (positionSecs < lastSeenPositionSecs) {
+    setLastSeenPositionSecs(positionSecs);
+    setValue(positionSecs + constantOffsetMs / 1000);
+  } else if (positionSecs !== lastSeenPositionSecs) {
+    setLastSeenPositionSecs(positionSecs);
+  }
 
   useEffect(() => {
     // Snapshot the backend reading and the instant we saw it. Everything

@@ -27,6 +27,9 @@ export interface PlayerState {
   repeatMode: RepeatMode;
   isShuffled: boolean;
   queue: TrackInfo[];
+  /** Restored from last session on launch; updated whenever the user
+   *  explicitly starts playing from a playlist/album/radio. */
+  activePlaylistId?: string | null;
   account: AccountInfo | null;
 }
 
