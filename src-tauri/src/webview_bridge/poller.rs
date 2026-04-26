@@ -126,6 +126,19 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
     // (or any item's id) actually changes — avoids spamming queue events
     // for unchanged metadata flicker.
     let last_queue_fingerprint = Arc::new(TokioMutex::new(String::new()));
+    // Last volume value forwarded to the frontend. We only emit `player:volume`
+    // when this changes — every-cycle emits made the slider vulnerable to
+    // stale bridge values slipping through (issue #76: slider snapped to 100%
+    // after a page navigation when YTM's fresh <video> momentarily reported
+    // its default 1.0 before our `set_volume` push landed).
+    let last_emitted_volume = Arc::new(TokioMutex::new(f64::NAN));
+    // Wall-clock instant of the last `set_volume` push to the bridge (user
+    // IPC OR bridge_just_loaded re-seed). Within
+    // `VOLUME_PUSH_SETTLE_MS` of a push, we trust `ps.volume` over `bs.volume`
+    // because the bridge's reported value can lag YTM's internal volume by
+    // 1-2 poll cycles after a page reload.
+    let last_volume_push_at: Arc<Mutex<Option<std::time::Instant>>> =
+        Arc::new(Mutex::new(None));
     #[cfg(debug_assertions)]
     let last_debug_len = Arc::new(TokioMutex::new(0usize));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -265,6 +278,9 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                         "set_volume",
                         &args,
                     );
+                    if let Ok(mut g) = last_volume_push_at.lock() {
+                        *g = Some(std::time::Instant::now());
+                    }
                     tracing::info!(
                         volume = stored_vol,
                         "pushed persisted volume on bridge load"
@@ -526,20 +542,40 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
 
             // YTM occasionally resets volume across track transitions (the
             // <video> element loses attribute state when the src changes).
-            // On the cycle that reports a new track, refuse to overwrite our
-            // stored volume and push it back to YTM instead. Outside of that
-            // window we accept bs.volume as truth so tweaks made directly in
-            // the YTM UI are still reflected.
-            let effective_volume = if track_changed
+            // Two reconcile windows trust `stored_volume` over `bs.volume`:
+            //
+            //   1. `track_changed` cycle — the new <video>'s default of 1.0
+            //      shows up before YTM applies our setVolume.
+            //   2. `VOLUME_PUSH_SETTLE_MS` after any `set_volume` push (user
+            //      slider IPC OR bridge_just_loaded re-seed) — YTM's reported
+            //      `getVolume()` lags our IPC by 1-2 poll cycles. Without this
+            //      window, the stale 1.0 reading slipped past the frontend's
+            //      1200ms echo filter and snapped the slider to MAX (issue #76).
+            //
+            // Outside both windows we accept `bs.volume` as truth so tweaks
+            // made directly in the YTM UI are still reflected.
+            const VOLUME_PUSH_SETTLE_MS: u128 = 2000;
+            let within_push_settle = last_volume_push_at
+                .lock()
+                .ok()
+                .and_then(|g| *g)
+                .map(|t| t.elapsed().as_millis() < VOLUME_PUSH_SETTLE_MS)
+                .unwrap_or(false);
+            let effective_volume = if (track_changed || within_push_settle)
                 && (bs.volume - stored_volume).abs() > 0.01
             {
-                if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
-                    let args = format!("{{\"level\":{}}}", stored_volume);
-                    let _ = crate::webview_bridge::exec_playback_command_with_args(
-                        &window,
-                        "set_volume",
-                        &args,
-                    );
+                if track_changed {
+                    if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
+                        let args = format!("{{\"level\":{}}}", stored_volume);
+                        let _ = crate::webview_bridge::exec_playback_command_with_args(
+                            &window,
+                            "set_volume",
+                            &args,
+                        );
+                        if let Ok(mut g) = last_volume_push_at.lock() {
+                            *g = Some(std::time::Instant::now());
+                        }
+                    }
                 }
                 stored_volume
             } else {
@@ -566,7 +602,19 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             if !suppress_position {
                 let _ = app.emit("player:position", &bs.position_secs);
             }
-            let _ = app.emit("player:volume", &effective_volume);
+            // Only emit when the value actually changes. Every-cycle emission
+            // gave stale bridge values (e.g. YTM's default 1.0 right after a
+            // page reload) extra chances to slip past the frontend echo
+            // filter once its 1200ms window expired. NaN-initialized so the
+            // first real value always emits.
+            {
+                let mut last_v = last_emitted_volume.lock().await;
+                if (*last_v - effective_volume).abs() > 0.001 || last_v.is_nan() {
+                    *last_v = effective_volume;
+                    drop(last_v);
+                    let _ = app.emit("player:volume", &effective_volume);
+                }
+            }
             if prev_shuffled != bs.is_shuffled {
                 let _ = app.emit("player:shuffle-changed", &bs.is_shuffled);
             }
