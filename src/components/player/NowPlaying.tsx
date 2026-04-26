@@ -187,14 +187,15 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
               style={{
                 width: '100%',
                 height: '100%',
+                // No `transform` on this wrapper — translate-X creates a
+                // containing block that interfered with the auto-scroll
+                // math (`getBoundingClientRect` / `scrollBy`) inside the
+                // `LyricsPanel`'s scroll container. The column's
+                // flex-basis animation above (0 → 1) already produces a
+                // right-edge slide-in effect when LRC opens; opacity
+                // alone is enough for the fade.
                 opacity: showLyrics ? 1 : 0,
-                // Slide the lyric content in from the right edge so the
-                // open animation matches the queue drawer's translateX
-                // gesture. Closed state parks it off-screen-right.
-                transform: showLyrics ? 'translateX(0)' : 'translateX(100%)',
-                transition:
-                  'transform 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
-                willChange: 'transform',
+                transition: 'opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
               }}
             >
               <LyricsPanel
@@ -504,6 +505,7 @@ const TimedLyrics: FC<TimedLyricsProps> = ({
   // we look up an EARLIER line for a given moment.
   const positionMs = Math.max(0, positionSecs * 1000 - offsetMs);
   const activeIndex = useMemo(() => findActiveLine(lines, positionMs), [lines, positionMs]);
+
 
   // Auto-scroll: when the active line changes OR the panel becomes visible,
   // bring the active line to the center of the scroll container. First

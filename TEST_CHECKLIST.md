@@ -147,6 +147,20 @@ Apply to: Home, Search (Albums/Artists tabs), Explore, Library, Playlist detail
       Closing both drawers re-centers the cover.
 - [ ] **Volume bar width** Volume slider in the player bar is ~55px wide,
       noticeably more compact than before (was 83px).
+- [ ] **Seek does not desync lyrics** Click the progress bar mid-track to
+      jump forward or backward by ≥ 30 s. The lyric panel must scroll to
+      the new line and stay there — no flash to an old line, no slow
+      reverse-drift. Verified by `seekFilter.test.ts` for the pure echo
+      filter; this manual check covers the end-to-end YTM-bridge path
+      where a stale pre-seek POSITION_UPDATED can arrive 1-4 s after the
+      seek and previously snapped `useSmoothedPosition` backward.
+- [ ] **No volume burst on track change** Set the volume to a non-default
+      level (say 30%), let the track end, and listen carefully as the next
+      track starts. Audio must come in at the user-set level — no audible
+      jump-to-default before clamping. Repeat for an explicit Next click.
+      The fix routes the desired volume through `localStorage` on the YTM
+      origin so the bridge's prototype-level volume lock is armed before
+      YTM creates the new `<video>` element.
 
 ## Login Flow
 - [ ] First launch (no cached session): LoginPage appears and the YouTube
