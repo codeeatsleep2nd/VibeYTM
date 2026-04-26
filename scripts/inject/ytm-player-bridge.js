@@ -576,54 +576,83 @@
   }
 
   // Lock the desired volume against YTM's behaviour of resetting the
-  // <video> element's volume across track navigation. The Rust poller
-  // re-pushes our stored volume after detecting a track-change in
-  // its next cycle, but that leaves a 100-300 ms window where the
-  // user hears audio at YTM's default (often ~50%) before it mutes.
+  // <video> element's volume across track navigation. The previous
+  // pattern (poll + listeners) had a race: when YTM creates a NEW
+  // <video> element for the next track, audio starts playing at the
+  // element's default volume BEFORE the next poll cycle re-attaches
+  // listeners. The user heard a brief loud burst.
   //
-  // The fix here intercepts at the source: install a `volumechange`
-  // listener on the <video> element that, whenever YTM tries to set
-  // a volume different from `__VIBEYTM_DESIRED_VOLUME_PCT__`, slams
-  // it back. Re-attaches when the <video> element gets recreated
-  // (track navigation can swap the element). No-op until the user
-  // has issued a `set_volume` (the desired var stays undefined).
-  var lastVideoEl = null;
-  function enforceVolume() {
-    var v = document.querySelector('video');
-    if (!v || v === lastVideoEl) {
-      // Already attached. But still re-apply on every poll just in
-      // case YTM raced past us between `volumechange` events.
-      if (v && typeof window.__VIBEYTM_DESIRED_VOLUME_PCT__ === 'number') {
-        var d = window.__VIBEYTM_DESIRED_VOLUME_PCT__;
-        var target = Math.max(0, Math.min(1, d / 100));
-        if (Math.abs(v.volume - target) > 0.005 || (d === 0 && !v.muted)) {
-          try { v.volume = target; v.muted = d === 0; } catch (e) {}
-        }
-      }
-      return;
-    }
-    lastVideoEl = v;
+  // Fix: intercept `volume` and `muted` at the prototype level via
+  // `Object.defineProperty`. ANY <video> or <audio> element — present
+  // or future — that gets its volume changed will pass through our
+  // setter, which clamps to the user's desired value. Audio cannot
+  // physically play at the wrong volume even for one frame because
+  // the underlying media engine reads the property value we control.
+  //
+  // No-op until the user has issued a `set_volume` (`__VIBEYTM_DESIRED_VOLUME_PCT__`
+  // stays undefined). After that, every assignment to `.volume` or
+  // `.muted` is forced to the desired value.
+  function installVolumeLock() {
+    if (window.__VIBEYTM_VOLUME_LOCK_INSTALLED__) return;
+    window.__VIBEYTM_VOLUME_LOCK_INSTALLED__ = true;
     try {
-      v.addEventListener('volumechange', function () {
-        if (typeof window.__VIBEYTM_DESIRED_VOLUME_PCT__ !== 'number') return;
+      var proto = HTMLMediaElement.prototype;
+      var nativeVolume = Object.getOwnPropertyDescriptor(proto, 'volume');
+      var nativeMuted = Object.getOwnPropertyDescriptor(proto, 'muted');
+      if (!nativeVolume || !nativeMuted) {
+        // Some browser variants put these on the instance. Bail; the
+        // 200 ms fallback poll is the safety net.
+        return;
+      }
+      function desiredVolume() {
         var d = window.__VIBEYTM_DESIRED_VOLUME_PCT__;
-        var target = Math.max(0, Math.min(1, d / 100));
-        if (Math.abs(v.volume - target) > 0.005 || (d === 0 && !v.muted)) {
-          try { v.volume = target; v.muted = d === 0; } catch (e) {}
-        }
-      });
-      // Also handle <video> reload — `loadedmetadata` fires after the
-      // src swap completes; force the desired volume before audio
-      // actually starts.
-      v.addEventListener('loadedmetadata', function () {
-        if (typeof window.__VIBEYTM_DESIRED_VOLUME_PCT__ !== 'number') return;
+        if (typeof d !== 'number') return null;
+        return Math.max(0, Math.min(1, d / 100));
+      }
+      function desiredMuted() {
         var d = window.__VIBEYTM_DESIRED_VOLUME_PCT__;
-        try {
-          v.volume = Math.max(0, Math.min(1, d / 100));
-          v.muted = d === 0;
-        } catch (e) {}
+        return typeof d === 'number' && d === 0;
+      }
+      Object.defineProperty(proto, 'volume', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return nativeVolume.get.call(this); },
+        set: function (v) {
+          var override = desiredVolume();
+          var effective = override === null ? v : override;
+          nativeVolume.set.call(this, effective);
+        },
       });
-    } catch (e) {}
+      Object.defineProperty(proto, 'muted', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return nativeMuted.get.call(this); },
+        set: function (m) {
+          var force = desiredMuted();
+          nativeMuted.set.call(this, force ? true : !!m);
+        },
+      });
+    } catch (e) {
+      // Defensive: some WebKit versions disallow this. Log so we
+      // know the fallback poll is the only guard.
+      log('volume-lock install failed: ' + e);
+    }
+  }
+
+  // Lightweight fallback: re-apply on every poll in case some path
+  // bypassed the prototype setter (e.g. native code mutating internal
+  // state directly). Fires every 100 ms.
+  function enforceVolumeFallback() {
+    var d = window.__VIBEYTM_DESIRED_VOLUME_PCT__;
+    if (typeof d !== 'number') return;
+    var target = Math.max(0, Math.min(1, d / 100));
+    var elements = document.querySelectorAll('video, audio');
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      if (Math.abs(el.volume - target) > 0.005 || (d === 0 && !el.muted)) {
+        try { el.volume = target; el.muted = d === 0; } catch (e) {}
+      }
+    }
   }
 
   function observeQueue() {
@@ -658,8 +687,9 @@
       setInterval(update, 150);
       setInterval(checkStuck, 1000);
       setInterval(forceAudioMode, 500);
-      setInterval(enforceVolume, 200);
-      enforceVolume();
+      installVolumeLock();
+      setInterval(enforceVolumeFallback, 100);
+      enforceVolumeFallback();
       observeQueue();
       // Belt and suspenders: the observer may miss edge cases (e.g. the
       // queue container gets re-created). Poll every 2s as a fallback.
@@ -868,6 +898,10 @@
     log('bridge loaded on ' + window.location.href);
     log('__TAURI__ available: ' + (typeof window.__TAURI__ !== 'undefined'));
     log('__TAURI_INTERNALS__ available: ' + (typeof window.__TAURI_INTERNALS__ !== 'undefined'));
+    // Install the volume lock at script-injection time, BEFORE any
+    // <video> element gets created — otherwise YTM's own initial
+    // setup runs first and a brief audio burst sneaks past us.
+    installVolumeLock();
     waitForPlayer();
     setInterval(checkLoginStatus, 1500);
     checkLoginStatus();
