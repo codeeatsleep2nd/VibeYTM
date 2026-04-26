@@ -7,6 +7,8 @@ export interface CacheStats {
   image_bytes: number;
   track_count: number;
   track_bytes: number;
+  lyric_count: number;
+  lyric_bytes: number;
   total_bytes: number;
   max_bytes: number;
 }
@@ -16,6 +18,20 @@ export const cacheApi = {
   clear: () => invoke<number>('cache_clear'),
   stats: () => invoke<CacheStats>('cache_stats'),
   convertToAssetUrl: (path: string) => convertFileSrc(path),
+};
+
+export interface AboutInfo {
+  version: string;
+  tagline: string;
+  built_with: string;
+  visit_prefix: string;
+  visit_suffix: string;
+  website_url: string;
+  website_label: string;
+}
+
+export const aboutApi = {
+  get: () => invoke<AboutInfo>('get_about_info'),
 };
 
 // Last playlist/album the user explicitly started playing. YTM's `next`
@@ -198,6 +214,18 @@ export interface AppSettings {
 export const settingsApi = {
   get: () => invoke<AppSettings>('get_settings'),
   set: (settings: AppSettings) => invoke<void>('set_settings', { new: settings }),
+};
+
+export interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  releaseUrl: string;
+  releaseNotes: string;
+  updateAvailable: boolean;
+}
+
+export const updateApi = {
+  check: () => invoke<UpdateInfo>('check_for_updates'),
 };
 
 export const browseApi = {

@@ -11,6 +11,29 @@ const MIN_QUERY_LENGTH = 2;
 const MIN_SUGGEST_LENGTH = 3;
 const MAX_SUGGESTIONS = 5;
 const PREVIEW_TRACK_COUNT = 3;
+const RECENT_SEARCH_KEY = 'vibeytm.search.recent';
+const MAX_RECENT_SEARCHES = 5;
+
+function loadRecentSearches(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_SEARCH_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((s): s is string => typeof s === 'string').slice(0, MAX_RECENT_SEARCHES)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentSearches(list: string[]): void {
+  try {
+    localStorage.setItem(RECENT_SEARCH_KEY, JSON.stringify(list));
+  } catch {
+    // Storage may be unavailable (private mode, quota); recents are best-effort.
+  }
+}
 
 const CATEGORY_TABS = ['Songs', 'Albums', 'Artists', 'Playlists'] as const;
 type CategoryTab = (typeof CATEGORY_TABS)[number];
@@ -46,6 +69,12 @@ export const SearchPage: FC<SearchPageProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   // null = no tab selected → unified default view
   const [activeCategory, setActiveCategory] = useState<CategoryTab | null>(null);
+
+  // Persisted MRU list of submitted queries; rendered as quick-tap chips
+  // before the user runs any search this session.
+  const [recentSearches, setRecentSearches] = useState<string[]>(() =>
+    loadRecentSearches(),
+  );
 
   // Autocomplete state
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -187,6 +216,17 @@ export const SearchPage: FC<SearchPageProps> = ({
     setSubmittedQuery(trimmed);
     setShowSuggestions(false);
     setSuggestions([]);
+    setRecentSearches((prev) => {
+      const next = [trimmed, ...prev.filter((x) => x.toLowerCase() !== trimmed.toLowerCase())]
+        .slice(0, MAX_RECENT_SEARCHES);
+      saveRecentSearches(next);
+      return next;
+    });
+  };
+
+  const clearRecentSearches = () => {
+    setRecentSearches([]);
+    saveRecentSearches([]);
   };
 
   // When the app routes us here with a pending query (e.g. from Library →
@@ -426,22 +466,91 @@ export const SearchPage: FC<SearchPageProps> = ({
       >
 
       {!results && !isLoading && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minHeight: '200px',
-          }}
-        >
-          <p
-            style={{
-              fontSize: 'var(--text-base)',
-              color: 'var(--color-text-tertiary)',
-            }}
-          >
-            Search YouTube Music
-          </p>
+        <div style={{ minHeight: '200px' }}>
+          {recentSearches.length > 0 ? (
+            <div style={{ paddingTop: 'var(--space-2)' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  marginBottom: 'var(--space-3)',
+                }}
+              >
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: 'var(--text-sm)',
+                    fontWeight: 600,
+                    color: 'var(--color-text-secondary)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                  }}
+                >
+                  Recent searches
+                </h2>
+                <button
+                  type="button"
+                  onClick={clearRecentSearches}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    fontSize: 'var(--text-xs)',
+                    color: 'var(--color-text-tertiary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Clear
+                </button>
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 'var(--space-2)',
+                }}
+              >
+                {recentSearches.map((kw) => (
+                  <button
+                    key={kw}
+                    type="button"
+                    onClick={() => submitQuery(kw)}
+                    style={{
+                      padding: 'var(--space-2) var(--space-4)',
+                      fontSize: 'var(--text-sm)',
+                      background: 'var(--color-surface-2)',
+                      border: '1px solid oklch(100% 0 0 / 0.08)',
+                      borderRadius: 'var(--radius-full)',
+                      color: 'var(--color-text-primary)',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {kw}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '200px',
+              }}
+            >
+              <p
+                style={{
+                  fontSize: 'var(--text-base)',
+                  color: 'var(--color-text-tertiary)',
+                }}
+              >
+                Search YouTube Music
+              </p>
+            </div>
+          )}
         </div>
       )}
 

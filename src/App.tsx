@@ -9,6 +9,7 @@ import { SettingsPage } from './components/pages/SettingsPage';
 import { LoginPage } from './components/pages/LoginPage';
 import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
 import { WelcomeScreen } from './components/WelcomeScreen';
+import { UpdateBanner } from './components/UpdateBanner';
 import { useLoginState } from './hooks/useLoginState';
 import { ytmApi } from './lib/ipc';
 
@@ -239,6 +240,7 @@ const App: FC = () => {
       </div>
     </AppShell>
     <WelcomeScreen isDone={isHomeReady} />
+    <UpdateBanner />
     </>
   );
 };

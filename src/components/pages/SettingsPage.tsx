@@ -1,6 +1,6 @@
 import { type FC, useEffect, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
-import { cacheApi, settingsApi, ytmApi, type AppSettings, type CacheStats } from '../../lib/ipc';
+import { aboutApi, cacheApi, settingsApi, ytmApi, type AboutInfo, type AppSettings, type CacheStats } from '../../lib/ipc';
 
 declare const __APP_VERSION__: string;
 // Fallback only — the real version is fetched at runtime via Tauri's getVersion()
@@ -197,6 +197,7 @@ export const SettingsPage: FC = () => {
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [appVersion, setAppVersion] = useState<string>(FALLBACK_VERSION);
+  const [aboutInfo, setAboutInfo] = useState<AboutInfo | null>(null);
   // Suppress the first save: we receive the persisted state from the
   // backend and would otherwise immediately round-trip it right back.
   const hydratedRef = useRef(false);
@@ -220,6 +221,10 @@ export const SettingsPage: FC = () => {
     getVersion()
       .then(setAppVersion)
       .catch((e) => console.error('getVersion failed', e));
+    aboutApi
+      .get()
+      .then(setAboutInfo)
+      .catch((e) => console.error('about info load failed', e));
   }, []);
 
   useEffect(() => {
@@ -366,7 +371,7 @@ export const SettingsPage: FC = () => {
         description={
           cacheStats
             ? `${formatBytes(cacheStats.total_bytes)} / ${formatBytes(cacheStats.max_bytes)} — ` +
-              `${cacheStats.image_count} images, ${cacheStats.track_count} tracks`
+              `${cacheStats.image_count} images, ${cacheStats.track_count} tracks, ${cacheStats.lyric_count} lyrics`
             : 'Loading…'
         }
       >
@@ -398,7 +403,16 @@ export const SettingsPage: FC = () => {
             marginBottom: 'var(--space-1)',
           }}
         >
-          Built with Tauri + React
+          {aboutInfo?.built_with ?? 'Built with Tauri + React'}
+        </div>
+        <div
+          style={{
+            fontSize: 'var(--text-sm)',
+            color: 'var(--color-text-tertiary)',
+            marginBottom: 'var(--space-1)',
+          }}
+        >
+          {aboutInfo?.tagline ?? 'A YouTube Music desktop client'}
         </div>
         <div
           style={{
@@ -406,7 +420,19 @@ export const SettingsPage: FC = () => {
             color: 'var(--color-text-tertiary)',
           }}
         >
-          A YouTube Music desktop client
+          {(aboutInfo?.visit_prefix ?? 'Visit') + ' '}
+          <a
+            href={aboutInfo?.website_url ?? 'https://ytm.gleevibe.ai'}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              color: 'var(--color-accent)',
+              textDecoration: 'none',
+            }}
+          >
+            {aboutInfo?.website_label ?? 'ytm.gleevibe.ai'}
+          </a>{' '}
+          {aboutInfo?.visit_suffix ?? 'for more information'}
         </div>
       </div>
     </section>
