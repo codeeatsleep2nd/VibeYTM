@@ -11,6 +11,7 @@ import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
 import { ArtistPage } from './components/pages/ArtistPage';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { UpdateBanner } from './components/UpdateBanner';
+import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
 import { useBootState } from './hooks/useBootState';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
 import { ytmApi, playerApi } from './lib/ipc';
@@ -36,6 +37,7 @@ const App: FC = () => {
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
   const [viewingArtist, setViewingArtist] = useState<string | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
+  const [isCheatsheetOpen, setIsCheatsheetOpen] = useState(false);
   // Bumped whenever the user saves or removes a playlist/album so the
   // LibraryPage knows to refetch even when it stays mounted under the
   // playlist-detail overlay.
@@ -199,6 +201,20 @@ const App: FC = () => {
           hint: '⌘,',
           onActivate: () => goSidebar('settings'),
         },
+        {
+          key: '/',
+          meta: true,
+          label: 'Show keyboard shortcuts',
+          hint: '⌘/',
+          onActivate: () => setIsCheatsheetOpen((v) => !v),
+        },
+        {
+          key: '?',
+          shift: true,
+          label: 'Show keyboard shortcuts',
+          hint: '?',
+          onActivate: () => setIsCheatsheetOpen((v) => !v),
+        },
       ]
     : [];
   useGlobalShortcuts(shortcutBindings);
@@ -354,6 +370,11 @@ const App: FC = () => {
     </AppShell>
     <WelcomeScreen isDone={isSplashDone} />
     <UpdateBanner />
+    <ShortcutCheatsheet
+      isOpen={isCheatsheetOpen}
+      onClose={() => setIsCheatsheetOpen(false)}
+      bindings={shortcutBindings}
+    />
     </>
   );
 };

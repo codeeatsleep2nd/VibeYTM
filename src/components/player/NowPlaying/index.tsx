@@ -203,7 +203,7 @@ const NowPlayingBody: FC<NowPlayingBodyProps> = ({
         overflow: 'hidden',
       }}
     >
-      <CoverBackdrop colors={coverColors} />
+      <CoverBackdrop colors={coverColors} coverUrl={backdropUrl} />
       {!track ? (
         <p
           style={{
