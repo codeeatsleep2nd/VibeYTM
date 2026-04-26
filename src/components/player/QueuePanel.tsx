@@ -649,6 +649,7 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
           Playing queue
         </h2>
         <button
+          type="button"
           onClick={onClose}
           aria-label="Close queue"
           style={{

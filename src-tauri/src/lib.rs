@@ -45,10 +45,13 @@ pub fn run() {
             {
                 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 
-                // muda's predefined About item passes `credits` to NSApp's
-                // standard about panel as a plain NSString — no link
-                // attribute, no paragraph alignment. So clickable URLs and
-                // centered text aren't reachable through that path.
+                // As of muda 0.17.2 (current Cargo.lock pin), the predefined
+                // About item passes `credits` to NSApp's standard about
+                // panel as a plain NSString — no link attribute, no
+                // paragraph alignment. So clickable URLs and centered
+                // text aren't reachable through that path. If muda gains
+                // a richer credits field in a later version, re-evaluate
+                // whether this custom webview workaround can be dropped.
                 //
                 // Replace the predefined About with a custom MenuItem that
                 // opens a small Tauri webview window rendering inline HTML —
@@ -186,9 +189,24 @@ pub fn run() {
   </script>
 </body></html>"##;
                 // data: URLs over a few hundred chars commonly fail to parse
-                // as a tauri Url, so write the HTML to the OS temp dir and
-                // load it via file:// instead — works regardless of size.
-                let path = std::env::temp_dir().join("vibeytm-about.html");
+                // as a tauri Url, so write the HTML to the user-scoped app
+                // cache dir and load it via file:// instead. We deliberately
+                // avoid `std::env::temp_dir()` (resolves to world-writable
+                // `/tmp` on macOS with a fixed filename) — anything in /tmp
+                // is open to a race-write between `fs::write` and
+                // `WebviewWindowBuilder` from any other process.
+                let cache_dir = match app_handle.path().app_cache_dir() {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "no app cache dir for about.html");
+                        return;
+                    }
+                };
+                if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                    tracing::warn!(error = %e, "create app cache dir");
+                    return;
+                }
+                let path = cache_dir.join("about.html");
                 if let Err(e) = std::fs::write(&path, html.as_bytes()) {
                     tracing::warn!(error = %e, "failed to write about.html");
                     return;
@@ -235,7 +253,19 @@ pub fn run() {
                         return true;
                     }
                     use tauri_plugin_opener::OpenerExt;
-                    let _ = app_for_nav.opener().open_url(url.as_str(), None::<&str>);
+                    // The return value is `false` either way (navigation
+                    // blocked), but logging the failure means a missing
+                    // default browser / sandbox-denied open isn't an
+                    // invisible "click does nothing" experience.
+                    if let Err(e) =
+                        app_for_nav.opener().open_url(url.as_str(), None::<&str>)
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            url = %url,
+                            "about: opener failed to launch system browser"
+                        );
+                    }
                     false
                 })
                 .build()
@@ -342,6 +372,7 @@ pub fn run() {
             commands::browse::save_playlist_to_library,
             commands::browse::remove_playlist_from_library,
             commands::browse::get_lyrics,
+            commands::browse::invalidate_lyrics_cache,
             commands::browse::get_upcoming_tracks,
             commands::browse::get_audio_counterpart_artwork,
             commands::cache::cache_fetch_image,
@@ -396,7 +427,7 @@ pub fn run() {
             app.manage(cache);
 
             // Restore last session (track + position + volume) so the
-            // bottom player shows where the user left off. No autoplay —
+            // player chrome shows where the user left off. No autoplay —
             // status stays idle until the user hits Play.
             if let Some(session) = state::persistence::load(app.handle()) {
                 let state_for_restore = player_state.clone();

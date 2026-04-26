@@ -195,7 +195,19 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
 
             let bs: BridgeState = match serde_json::from_str(json_str) {
                 Ok(s) => s,
-                Err(_) => continue,
+                Err(e) => {
+                    // Schema drift between the JS bridge and `BridgeState`
+                    // makes the poller silently lose every frame. Without
+                    // a log line here, the app appears to stop tracking
+                    // playback with no diagnostic signal — a debugging
+                    // black hole when the bridge's JSON shape changes.
+                    tracing::warn!(
+                        error = %e,
+                        raw_len = json_str.len(),
+                        "bridge JSON parse failed — frame dropped"
+                    );
+                    continue;
+                }
             };
 
             // Surface bridge-side debug lines to the Rust log. Gated behind

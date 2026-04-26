@@ -23,6 +23,23 @@ pub const MAX_IMAGE_CACHE_BYTES: u64 = 1024 * 1024 * 1024; // 1 GB
 pub const BASE_TTL_SECS: u64 = 7 * 24 * 60 * 60; // 7 days
 pub const MAX_JITTER_SECS: u64 = 24 * 60 * 60; // up to +24h per entry
 
+/// Hard cap on the on-disk lyrics directory. Lyrics entries are small
+/// (per-track JSON, typically a few KB), so 50 MB easily holds tens of
+/// thousands of tracks while bounding worst-case disk use. Eviction at
+/// the cap is the ONLY way a hit gets removed — no time-based TTL —
+/// because once we've matched the correct lyrics for a track they
+/// don't go stale, and re-fetching wastes a YTM/LRCLIB/NetEase round
+/// trip the user already paid for.
+pub const MAX_LYRICS_CACHE_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Subdirectory holding cached lyrics keyed by videoId. Bumped from
+/// `"lyrics"` → `"lyrics-v2"` on 2026-04-26 to invalidate every existing
+/// entry — older versions of the matcher pinned wrong lyrics to many
+/// videoIds, and `get_lyrics` short-circuits on a cache hit so matcher
+/// improvements never reached affected tracks. The legacy `lyrics/` dir
+/// is removed at `Cache::new` time.
+const LYRICS_DIR: &str = "lyrics-v2";
+
 /// Compute a deterministic, per-key TTL in seconds: 7 days + 0..24h derived
 /// from the key's hash. Using the hash keeps jitter stable across restarts so
 /// we never flip a live entry to expired mid-session.
@@ -57,8 +74,21 @@ impl Cache {
             .with_context(|| format!("creating {}/images", root.display()))?;
         fs::create_dir_all(root.join("tracks"))
             .with_context(|| format!("creating {}/tracks", root.display()))?;
-        fs::create_dir_all(root.join("lyrics"))
-            .with_context(|| format!("creating {}/lyrics", root.display()))?;
+        fs::create_dir_all(root.join(LYRICS_DIR))
+            .with_context(|| format!("creating {}/{}", root.display(), LYRICS_DIR))?;
+        // One-shot cleanup of the v1 lyrics directory. Wrong lyrics
+        // matched in earlier versions (#67 APT/ROSÉ; the 2026-04-26
+        // wrong-lyrics-on-current-track report) are pinned to
+        // {root}/lyrics/<videoId>.json forever — `get_lyrics` short-
+        // circuits on a cache hit, so improvements to the matcher
+        // never reach affected tracks. Renaming the active directory
+        // to `lyrics-v2` invalidates every prior entry; this remove
+        // call reclaims the disk space too. Best-effort — a failure
+        // here just leaves an orphan dir behind.
+        let legacy = root.join("lyrics");
+        if legacy.exists() {
+            let _ = fs::remove_dir_all(&legacy);
+        }
         Ok(Self {
             root,
             lock: Arc::new(Mutex::new(())),
@@ -70,28 +100,38 @@ impl Cache {
         hasher.update(video_id.as_bytes());
         let hash: [u8; 32] = hasher.finalize().into();
         (
-            self.root.join("lyrics").join(format!("{video_id}.json")),
+            self.root.join(LYRICS_DIR).join(format!("{video_id}.json")),
             hash,
         )
     }
 
-    /// Read a cached lyrics JSON payload, or `None` if absent/expired.
+    /// Read a cached lyrics JSON payload, or `None` if absent.
+    ///
+    /// Lyrics intentionally have NO time-based expiry: once we've matched
+    /// the correct text for a track it doesn't go stale, and re-fetching
+    /// wastes a YTM/LRCLIB/NetEase round trip the user already paid for.
+    /// The only way an entry leaves the cache is the LRU eviction in
+    /// `put_lyrics` once the directory exceeds `MAX_LYRICS_CACHE_BYTES`,
+    /// or an explicit `invalidate_lyrics(...)` call (e.g. user clicks
+    /// Refresh, or the artist/title sanity check finds a mismatch).
     pub fn get_lyrics(&self, video_id: &str) -> Result<Option<String>> {
-        let (path, hash) = self.lyrics_path(video_id);
+        let (path, _hash) = self.lyrics_path(video_id);
         if !path.exists() {
             return Ok(None);
         }
-        if Self::is_expired(&path, &hash) {
-            let _ = fs::remove_file(&path);
-            return Ok(None);
-        }
+        // Touch the file's mtime so the LRU eviction in `put_lyrics`
+        // treats this entry as recently used and keeps it ahead of
+        // genuinely cold entries when the cap is reached.
         let _ = touch(&path);
         let content = fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
         Ok(Some(content))
     }
 
-    /// Persist a lyrics JSON payload. Overwrites any prior entry.
+    /// Persist a lyrics JSON payload. Overwrites any prior entry. After
+    /// writing, runs an LRU eviction pass when the directory exceeds
+    /// `MAX_LYRICS_CACHE_BYTES` — this is the only path that removes a
+    /// hit entry, since lyrics have no time-based TTL.
     pub fn put_lyrics(&self, video_id: &str, json: &str) -> Result<()> {
         if video_id.is_empty() {
             return Ok(());
@@ -99,7 +139,30 @@ impl Cache {
         let (path, _) = self.lyrics_path(video_id);
         fs::write(&path, json)
             .with_context(|| format!("writing {}", path.display()))?;
+        // Best-effort: a failed eviction must not prevent the user from
+        // seeing freshly-fetched lyrics. The cap is soft; we'll try
+        // again on the next put.
+        if let Err(e) = self.evict_lyrics_if_needed() {
+            tracing::warn!(error = %e, "lyrics eviction failed");
+        }
         Ok(())
+    }
+
+    /// Remove the cached lyrics entry for a single videoId. No-op if the
+    /// file doesn't exist. Used when the user manually triggers a re-fetch
+    /// (the "Refresh lyrics" affordance in the lyric panel) to defeat both
+    /// the disk-side cache and the same-fetch dedup in `get_lyrics`.
+    pub fn invalidate_lyrics(&self, video_id: &str) -> Result<()> {
+        if video_id.is_empty() {
+            return Ok(());
+        }
+        let (path, _) = self.lyrics_path(video_id);
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(anyhow::Error::from(e)
+                .context(format!("removing {}", path.display()))),
+        }
     }
 
     fn image_path(&self, url: &str) -> (PathBuf, [u8; 32]) {
@@ -208,7 +271,10 @@ impl Cache {
     pub async fn clear(&self) -> Result<u64> {
         let _guard = self.lock.lock().await;
         let mut freed = 0u64;
-        for sub in ["images", "tracks", "lyrics"] {
+        // Includes the legacy `lyrics` dir so a user clicking "Clear
+        // cache" also wipes any orphaned v1 lyrics that the startup
+        // cleanup didn't reach (e.g. due to filesystem permission).
+        for sub in ["images", "tracks", "lyrics", LYRICS_DIR] {
             let dir = self.root.join(sub);
             if !dir.exists() {
                 continue;
@@ -228,7 +294,7 @@ impl Cache {
     pub fn stats(&self) -> Result<CacheStats> {
         let (image_count, image_bytes) = dir_stats(&self.root.join("images"))?;
         let (track_count, track_bytes) = dir_stats(&self.root.join("tracks"))?;
-        let (lyric_count, lyric_bytes) = dir_stats(&self.root.join("lyrics"))?;
+        let (lyric_count, lyric_bytes) = dir_stats(&self.root.join(LYRICS_DIR))?;
         Ok(CacheStats {
             image_count,
             image_bytes,
@@ -273,6 +339,54 @@ impl Cache {
             }
         }
 
+        Ok(())
+    }
+
+    /// Sized-LRU eviction for the lyrics directory. Mirrors the image-
+    /// cache approach: bound to `MAX_LYRICS_CACHE_BYTES`, evict by oldest
+    /// mtime down to 90% so we don't re-evict on every insert. Lyrics
+    /// have NO time-based TTL (see `get_lyrics`), so this is the only
+    /// path that ever removes a hit entry. `get_lyrics` touches the file
+    /// on every read so frequently-played tracks naturally rise to the
+    /// top of the LRU.
+    fn evict_lyrics_if_needed(&self) -> Result<()> {
+        let dir = self.root.join(LYRICS_DIR);
+        let (_, mut bytes) = dir_stats(&dir)?;
+        if bytes <= MAX_LYRICS_CACHE_BYTES {
+            return Ok(());
+        }
+
+        let mut files: Vec<(PathBuf, std::time::SystemTime, u64)> = Vec::new();
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let meta = entry.metadata()?;
+            if meta.is_file() {
+                let mtime = meta
+                    .modified()
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                files.push((entry.path(), mtime, meta.len()));
+            }
+        }
+        files.sort_by_key(|(_, m, _)| *m);
+
+        let target = (MAX_LYRICS_CACHE_BYTES as f64 * 0.9) as u64;
+        let mut evicted = 0u32;
+        for (path, _, size) in files {
+            if bytes <= target {
+                break;
+            }
+            if fs::remove_file(&path).is_ok() {
+                bytes = bytes.saturating_sub(size);
+                evicted += 1;
+            }
+        }
+        if evicted > 0 {
+            tracing::info!(
+                evicted,
+                bytes_after = bytes,
+                "lyrics cache LRU eviction"
+            );
+        }
         Ok(())
     }
 }
@@ -416,6 +530,44 @@ mod tests {
         assert_eq!(stats.max_bytes, MAX_IMAGE_CACHE_BYTES);
     }
 
+    #[test]
+    fn stats_count_lyrics_and_include_in_total() {
+        // Settings page surfaces "N images, N tracks, N lyrics", and the
+        // "Disk cache" total has to include lyrics so the size shown to the
+        // user lines up with the on-disk footprint.
+        let (cache, _root) = make_cache();
+        cache.put_lyrics("vid-a", r#"{"text":"hello"}"#).unwrap();
+        cache.put_lyrics("vid-b", r#"{"text":"world"}"#).unwrap();
+        let stats = cache.stats().unwrap();
+        assert_eq!(stats.lyric_count, 2);
+        assert!(stats.lyric_bytes > 0);
+        assert_eq!(
+            stats.total_bytes,
+            stats.image_bytes + stats.track_bytes + stats.lyric_bytes,
+            "total_bytes must include lyric_bytes"
+        );
+    }
+
+    #[test]
+    fn stats_lyric_count_zero_after_construction() {
+        let (cache, _root) = make_cache();
+        let stats = cache.stats().unwrap();
+        assert_eq!(stats.lyric_count, 0);
+        assert_eq!(stats.lyric_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn clear_removes_lyrics_too() {
+        let (cache, _root) = make_cache();
+        cache.put_lyrics("vid", r#"{"text":"x"}"#).unwrap();
+        cache.put_track("a", r#"{}"#).unwrap();
+        cache.clear().await.unwrap();
+        let after = cache.stats().unwrap();
+        assert_eq!(after.lyric_count, 0);
+        assert_eq!(after.track_count, 0);
+        assert_eq!(after.total_bytes, 0);
+    }
+
     #[tokio::test]
     async fn clear_removes_tracks_and_returns_freed_bytes() {
         let (cache, _root) = make_cache();
@@ -434,5 +586,30 @@ mod tests {
         let missing = std::env::temp_dir().join("vibeytm-definitely-missing-xyz");
         let _ = fs::remove_file(&missing);
         assert!(Cache::is_expired(&missing, &[0u8; 32]));
+    }
+
+    #[test]
+    fn lyrics_cache_has_no_time_ttl() {
+        // Once written, a lyrics entry must keep being readable until
+        // either explicit invalidation or the size-based eviction. This
+        // test pins the new contract — `get_lyrics` previously returned
+        // None when the file was older than BASE_TTL_SECS, leaving
+        // re-fetches on every long-lived install.
+        let (cache, root) = make_cache();
+        cache.put_lyrics("vid-old", r#"{"text":"keep me"}"#).unwrap();
+        // Backdate the file's mtime to beyond the (former) TTL window.
+        let path = root
+            .join(LYRICS_DIR)
+            .join("vid-old.json");
+        let ancient = std::time::SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(1_000_000); // 1970-01-12
+        let f = fs::File::options().write(true).open(&path).unwrap();
+        let times = fs::FileTimes::new()
+            .set_modified(ancient)
+            .set_accessed(ancient);
+        f.set_times(times).unwrap();
+
+        let got = cache.get_lyrics("vid-old").unwrap();
+        assert_eq!(got, Some(r#"{"text":"keep me"}"#.to_string()));
     }
 }

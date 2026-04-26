@@ -74,9 +74,11 @@ function setActivePlaylistId(id: string | null): void {
  * changes from its current value.
  */
 export function bootstrapActivePlaylistFromState(state: PlayerState): void {
-  const stateAny = state as PlayerState & { activePlaylistId?: string | null };
-  if (stateAny.activePlaylistId !== undefined) {
-    setActivePlaylistId(stateAny.activePlaylistId ?? null);
+  // `activePlaylistId` is already declared on `PlayerState` (lib/types.ts);
+  // no widening cast needed. Reading it directly preserves the type-checker's
+  // ability to flag a future removal of the field.
+  if (state.activePlaylistId !== undefined) {
+    setActivePlaylistId(state.activePlaylistId ?? null);
   }
 }
 
@@ -247,13 +249,19 @@ export const browseApi = {
     artist?: string | null;
     title?: string | null;
     durationSecs?: number | null;
+    /** Bypass disk cache + YTM-synced short-circuit; force LRCLIB/NetEase
+     *  race. Used by the Refresh button when YTM has wrong lyrics. */
+    forceExternal?: boolean;
   }) =>
     invoke<Lyrics>('get_lyrics', {
       videoId: params.videoId,
       artist: params.artist ?? null,
       title: params.title ?? null,
       durationSecs: params.durationSecs ?? null,
+      forceExternal: params.forceExternal ?? false,
     }),
+  invalidateLyricsCache: (videoId: string) =>
+    invoke<void>('invalidate_lyrics_cache', { videoId }),
   getUpcomingTracks: (videoId: string, limit = 3, playlistId?: string | null) =>
     invoke<TrackInfo[]>('get_upcoming_tracks', {
       videoId,

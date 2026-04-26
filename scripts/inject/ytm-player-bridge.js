@@ -14,6 +14,28 @@
   // { name: string, avatarUrl: string } once the nav-bar avatar is rendered.
   window.__VIBEYTM_ACCOUNT__ = null;
 
+  // Seed the desired-volume global from localStorage on EVERY page load
+  // (this script runs as Tauri's `initialization_script`, so it fires
+  // before YTM's page scripts create the <video> element). Without this
+  // seed, every track navigation creates a fresh window context where
+  // `__VIBEYTM_DESIRED_VOLUME_PCT__` is undefined — the prototype volume
+  // lock no-ops, YTM's audio plays at default volume=1, and the user
+  // hears a brief loud burst until Rust pushes the persisted volume one
+  // poll cycle later. Reading from localStorage seeds the global ahead
+  // of YTM's <video> creation so the lock clamps from frame zero.
+  try {
+    var raw = localStorage.getItem('__VIBEYTM_VOLUME_PCT__');
+    if (raw !== null) {
+      var n = Number(raw);
+      if (Number.isFinite(n)) {
+        window.__VIBEYTM_DESIRED_VOLUME_PCT__ = Math.max(0, Math.min(100, Math.round(n)));
+      }
+    }
+  } catch (e) {
+    // localStorage unavailable; the Rust-pushed volume one cycle later
+    // is the safety net.
+  }
+
   function log(msg) {
     window.__VIBEYTM_DEBUG__.push(new Date().toISOString() + ': ' + msg);
     if (window.__VIBEYTM_DEBUG__.length > 50) window.__VIBEYTM_DEBUG__.shift();
@@ -163,7 +185,13 @@
         window.__TAURI__.core.invoke('on_track_changed', {
           track: window.__VIBEYTM_STATE__
         });
-      } catch(e) { /* ignore */ }
+      } catch(e) {
+        // Route to the debug ring so the Rust poller surfaces it via
+        // tracing. Silently dropping this catch hides the case where
+        // the IPC channel isn't actually available — which would mean
+        // every track-change notification is lost until the next poll.
+        log('IPC on_track_changed failed: ' + (e && e.message ? e.message : e));
+      }
     }
   }
 
@@ -206,6 +234,12 @@
         if (args && typeof args.level === 'number') {
           var lvlPct = Math.round(args.level * 100);
           window.__VIBEYTM_DESIRED_VOLUME_PCT__ = lvlPct;
+          // Persist to localStorage on the YTM origin so the next page
+          // navigation's bridge init (which runs BEFORE YTM creates the
+          // new <video> element) can seed the global immediately. Without
+          // this, the prototype volume lock no-ops on every fresh page
+          // and the user hears a brief loud burst at default volume.
+          try { localStorage.setItem('__VIBEYTM_VOLUME_PCT__', String(lvlPct)); } catch (e) {}
           player.setVolume(lvlPct);
           // Also apply to the <video> element directly — defeats the
           // race where YTM resets it across track navigation.

@@ -1,6 +1,6 @@
-import { type FC, forwardRef, useEffect, useMemo, useRef } from 'react';
+import { type FC, forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
-import { useLyrics } from '../../hooks/useLyrics';
+import { invalidateLyrics, useLyrics } from '../../hooks/useLyrics';
 import { useLyricsOffset } from '../../hooks/useLyricsOffset';
 import { useSmoothedPosition } from '../../hooks/useSmoothedPosition';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
@@ -19,8 +19,11 @@ interface NowPlayingProps {
   isOpen: boolean;
   /**
    * Retained in the prop contract because AppShell always passes it, but the
-   * overlay has no in-panel close affordance — the player-bar artwork button
-   * is the single source of truth for opening and closing Now Playing.
+   * overlay has no in-panel close affordance — the cover thumbnail in
+   * `NowPlayingCard` (mounted inside `PlayerChrome`) is the single source
+   * of truth for opening and closing Now Playing. Kept on the API for
+   * forwards-compatibility with any future close affordance + because the
+   * sidebar's onNavigate handler resets every overlay flag through props.
    */
   onClose: () => void;
   /** When true, show lyrics in place of the cover centerpiece. */
@@ -32,13 +35,14 @@ interface NowPlayingProps {
 }
 
 /**
- * Now Playing — full-page overlay that covers the main content area (between
- * the sidebar and the player bar). Triggered by clicking the cover thumbnail
- * in the PlayerBar; toggling closes it.
+ * Now Playing — full-page overlay that covers the main content area between
+ * the sidebar and the bottom of the window (the chrome lives at the top now,
+ * `--player-bar-height` is 0). Triggered by clicking the cover thumbnail
+ * inside `NowPlayingCard` (in `PlayerChrome`); toggling closes it.
  *
- * When `showLyrics` is true, the cover is swapped out for a lyrics panel.
- * If YTM returned synced lyrics for the track, lines auto-highlight and
- * auto-scroll with playback; otherwise the plain text is shown.
+ * When `showLyrics` is true, a lyrics drawer slides in from the right. If
+ * YTM returned synced lyrics for the track, lines auto-highlight and auto-
+ * scroll with playback; otherwise the plain text is shown.
  */
 export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, queueOpen = false }) => {
   // The right-slot drawer (queue OR lyrics) shares one cover-shift layout.
@@ -56,6 +60,13 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
     status === 'playing',
     LYRICS_CONSTANT_OFFSET_MS,
   );
+  // Bumped by `handleRefreshLyrics` to force `useLyrics` to re-run its
+  // fetch effect even though videoId/title/artist are unchanged. After a
+  // user-triggered cache invalidation the lookup metadata is identical;
+  // without this counter dep the effect is a no-op and the panel stays
+  // in `loading` forever waiting for a fetch that never fires.
+  const [lyricsRefetchEpoch, setLyricsRefetchEpoch] = useState(0);
+  const [isRefreshingLyrics, setIsRefreshingLyrics] = useState(false);
   const { status: lyricsStatus, lyrics, error: lyricsError } = useLyrics(
     track
       ? {
@@ -67,10 +78,25 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
       : null,
     showLyrics && isOpen,
     true, // user-initiated — skip the track-change debounce
+    lyricsRefetchEpoch,
   );
 
   const [lyricsOffsetMs, setLyricsOffsetMs, resetLyricsOffsetMs] =
     useLyricsOffset(track?.videoId);
+
+  const handleRefreshLyrics = async () => {
+    const videoId = track?.videoId;
+    if (!videoId || isRefreshingLyrics) return;
+    setIsRefreshingLyrics(true);
+    try {
+      await invalidateLyrics(videoId);
+      setLyricsRefetchEpoch((n) => n + 1);
+    } finally {
+      // Brief debounce so the spinner doesn't disappear before the new
+      // fetch's `loading` status takes over the panel.
+      setTimeout(() => setIsRefreshingLyrics(false), 250);
+    }
+  };
 
   return (
     <div
@@ -183,14 +209,15 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
               style={{
                 width: '100%',
                 height: '100%',
+                // No `transform` on this wrapper — translate-X creates a
+                // containing block that interfered with the auto-scroll
+                // math (`getBoundingClientRect` / `scrollBy`) inside the
+                // `LyricsPanel`'s scroll container. The column's
+                // flex-basis animation above (0 → 1) already produces a
+                // right-edge slide-in effect when LRC opens; opacity
+                // alone is enough for the fade.
                 opacity: showLyrics ? 1 : 0,
-                // Slide the lyric content in from the right edge so the
-                // open animation matches the queue drawer's translateX
-                // gesture. Closed state parks it off-screen-right.
-                transform: showLyrics ? 'translateX(0)' : 'translateX(100%)',
-                transition:
-                  'transform 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
-                willChange: 'transform',
+                transition: 'opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
               }}
             >
               <LyricsPanel
@@ -203,6 +230,8 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
                 offsetMs={lyricsOffsetMs}
                 onAdjustOffsetMs={setLyricsOffsetMs}
                 onResetOffsetMs={resetLyricsOffsetMs}
+                onRefresh={handleRefreshLyrics}
+                isRefreshing={isRefreshingLyrics}
               />
             </div>
           </div>
@@ -337,6 +366,12 @@ interface LyricsPanelProps {
   offsetMs: number;
   onAdjustOffsetMs: (next: number) => void;
   onResetOffsetMs: () => void;
+  /** Invoked by the bottom-bar Refresh affordance — invalidates both the
+   *  FE and Rust lyric caches for the current track and re-fetches. */
+  onRefresh: () => void;
+  /** True while a refresh is in flight, so the button can render a
+   *  spinner / disable itself. */
+  isRefreshing: boolean;
 }
 
 const CONTAINER_STYLE: React.CSSProperties = {
@@ -372,6 +407,8 @@ const LyricsPanel: FC<LyricsPanelProps> = ({
   offsetMs,
   onAdjustOffsetMs,
   onResetOffsetMs,
+  onRefresh,
+  isRefreshing,
 }) => {
   if (status === 'loading') {
     return (
@@ -419,6 +456,7 @@ const LyricsPanel: FC<LyricsPanelProps> = ({
         {error && (
           <p style={{ fontSize: 'var(--text-xs)', marginTop: 'var(--space-2)' }}>{error}</p>
         )}
+        <RefreshLyricsButton onClick={onRefresh} isRefreshing={isRefreshing} />
       </div>
     );
   }
@@ -438,7 +476,45 @@ const LyricsPanel: FC<LyricsPanelProps> = ({
       offsetMs={offsetMs}
       onAdjustOffsetMs={onAdjustOffsetMs}
       onResetOffsetMs={onResetOffsetMs}
+      onRefresh={onRefresh}
+      isRefreshing={isRefreshing}
     />
+  );
+};
+
+interface RefreshLyricsButtonProps {
+  onClick: () => void;
+  isRefreshing: boolean;
+}
+
+/** Small text button used in the lyric panel's bottom row. Clears both
+ *  caches for the current track and triggers a fresh fetch — the only
+ *  user-facing escape hatch when the matcher returned wrong lyrics in an
+ *  earlier session and they got pinned in the persistent caches. */
+const RefreshLyricsButton: FC<RefreshLyricsButtonProps> = ({ onClick, isRefreshing }) => {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={isRefreshing}
+      title="Re-fetch lyrics for this track (clears the cached match)"
+      style={{
+        marginTop: 'var(--space-3)',
+        padding: 'var(--space-1) var(--space-3)',
+        fontSize: 'var(--text-xs)',
+        fontWeight: 500,
+        background: 'transparent',
+        border: '1px solid oklch(100% 0 0 / 0.14)',
+        borderRadius: 'var(--radius-full)',
+        color: 'var(--color-text-secondary)',
+        cursor: isRefreshing ? 'progress' : 'pointer',
+        opacity: isRefreshing ? 0.6 : 1,
+        transition:
+          'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out)',
+      }}
+    >
+      {isRefreshing ? 'Refreshing…' : 'Refresh lyrics'}
+    </button>
   );
 };
 
@@ -475,6 +551,8 @@ interface TimedLyricsProps {
   offsetMs: number;
   onAdjustOffsetMs: (next: number) => void;
   onResetOffsetMs: () => void;
+  onRefresh: () => void;
+  isRefreshing: boolean;
 }
 
 const TimedLyrics: FC<TimedLyricsProps> = ({
@@ -485,6 +563,8 @@ const TimedLyrics: FC<TimedLyricsProps> = ({
   offsetMs,
   onAdjustOffsetMs,
   onResetOffsetMs,
+  onRefresh,
+  isRefreshing,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -500,6 +580,7 @@ const TimedLyrics: FC<TimedLyricsProps> = ({
   // we look up an EARLIER line for a given moment.
   const positionMs = Math.max(0, positionSecs * 1000 - offsetMs);
   const activeIndex = useMemo(() => findActiveLine(lines, positionMs), [lines, positionMs]);
+
 
   // Auto-scroll: when the active line changes OR the panel becomes visible,
   // bring the active line to the center of the scroll container. First
@@ -591,11 +672,21 @@ const TimedLyrics: FC<TimedLyricsProps> = ({
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {source ?? ''}
         </span>
-        <LyricsOffsetControl
-          offsetMs={offsetMs}
-          onAdjust={onAdjustOffsetMs}
-          onReset={onResetOffsetMs}
-        />
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+            flexShrink: 0,
+          }}
+        >
+          <LyricsOffsetControl
+            offsetMs={offsetMs}
+            onAdjust={onAdjustOffsetMs}
+            onReset={onResetOffsetMs}
+          />
+          <RefreshLyricsButton onClick={onRefresh} isRefreshing={isRefreshing} />
+        </div>
       </div>
     </div>
   );
