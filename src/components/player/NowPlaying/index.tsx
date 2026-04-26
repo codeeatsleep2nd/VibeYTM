@@ -4,12 +4,14 @@ import { invalidateLyrics, useLyrics } from '../../../hooks/useLyrics';
 import { useLyricsOffset } from '../../../hooks/useLyricsOffset';
 import { useSmoothedPosition } from '../../../hooks/useSmoothedPosition';
 import { useAudioCounterpartArtwork } from '../../../hooks/useAudioCounterpartArtwork';
+import { useCoverColors } from '../../../hooks/useCoverColors';
 import { albumArtOrNothing } from '../../../lib/artwork';
 import { ArtworkPlaceholder } from '../../ArtworkPlaceholder';
 import { CachedImage } from '../../CachedImage';
 import { MarqueeText } from '../../MarqueeText';
 import { SafeOverlay, useOverlayOpen } from '../../overlay/SafeOverlay';
 import { LyricsPanel } from './LyricsPanel';
+import { CoverBackdrop } from './CoverBackdrop';
 
 /** Residual constant lag added on top of rAF interpolation. Covers the
  *  fixed-ish pipeline delay (bridge poll read cycle + IPC + audio output
@@ -167,9 +169,16 @@ const NowPlayingBody: FC<NowPlayingBodyProps> = ({
   onRefreshLyrics,
 }) => {
   const isOpen = useOverlayOpen();
+  // Cover-tinted backdrop: extract dominant + secondary colors from the
+  // current track's album art and render a soft gradient behind the
+  // hero. Resolves to a deep neutral fallback while the extraction is
+  // in flight or when there's no track. Memoized per URL.
+  const backdropUrl = albumArtOrNothing(track?.artworkUrl);
+  const coverColors = useCoverColors(backdropUrl ?? undefined);
   return (
     <div
       style={{
+        position: 'relative',
         height: '100%',
         width: '100%',
         display: 'flex',
@@ -194,9 +203,12 @@ const NowPlayingBody: FC<NowPlayingBodyProps> = ({
         overflow: 'hidden',
       }}
     >
+      <CoverBackdrop colors={coverColors} />
       {!track ? (
         <p
           style={{
+            position: 'relative',
+            zIndex: 1,
             color: 'var(--color-text-tertiary)',
             fontSize: 'var(--text-base)',
           }}
@@ -207,9 +219,13 @@ const NowPlayingBody: FC<NowPlayingBodyProps> = ({
         // Single layout in both modes — cover/title column on the left,
         // lyrics column on the right. Toggling LRC animates the lyrics
         // column's width and opacity (plus the left-margin gap) so the
-        // cover slides smoothly into place instead of remounting.
+        // cover slides smoothly into place instead of remounting. The
+        // `position: relative; z-index: 1` lifts this layer above the
+        // CoverBackdrop's absolute fill (which has z-index: 0).
         <div
           style={{
+            position: 'relative',
+            zIndex: 1,
             display: 'flex',
             flexDirection: 'row',
             alignItems: 'flex-start',

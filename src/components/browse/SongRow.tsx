@@ -3,6 +3,8 @@ import type { TrackInfo } from '../../lib/types';
 import { playerApi } from '../../lib/ipc';
 import { CachedImage } from '../CachedImage';
 import { MarqueeText } from '../MarqueeText';
+import { ContextMenuTarget } from '../contextMenu/ContextMenu';
+import { buildTrackContextMenu } from '../contextMenu/trackActions';
 
 interface SongRowProps {
   track: TrackInfo;
@@ -29,6 +31,7 @@ export const SongRow: FC<SongRowProps> = ({ track, index, onClick, playlistId })
   };
 
   return (
+    <ContextMenuTarget buildSections={() => buildTrackContextMenu({ track })}>
     <button
       onClick={handleClick}
       onMouseEnter={() => setIsHovered(true)}
@@ -121,5 +124,6 @@ export const SongRow: FC<SongRowProps> = ({ track, index, onClick, playlistId })
         </span>
       )}
     </button>
+    </ContextMenuTarget>
   );
 };

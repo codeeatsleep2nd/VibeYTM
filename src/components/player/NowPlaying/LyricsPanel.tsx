@@ -12,6 +12,7 @@ import {
   findActiveLine,
   synthesizeLines,
 } from './lyricsLogic';
+import { hasChinese, romanizeChinese } from '../../../lib/romanize';
 
 interface LyricsPanelProps {
   status: 'idle' | 'loading' | 'available' | 'missing';
@@ -428,6 +429,12 @@ const LyricLineView = forwardRef<HTMLDivElement, LyricLineViewProps>(
         ? 'var(--color-text-tertiary)'
         : 'var(--color-text-secondary)';
 
+    // Inline pinyin under any line containing Han ideographs, in a
+    // muted secondary tone. Sits below the original text — never
+    // replaces it, never participates in the karaoke wipe — purely a
+    // reading aid for non-readers of hanzi.
+    const pinyinSubline = hasChinese(text) ? romanizeChinese(text) : null;
+
     return (
       <div
         ref={ref}
@@ -461,6 +468,26 @@ const LyricLineView = forwardRef<HTMLDivElement, LyricLineViewProps>(
             up pixel-for-pixel with the base — no overlap. Font properties
             (weight, size, letter-spacing, line-height, color) match the
             active base too, so the two layers wrap identically. */}
+        {pinyinSubline && (
+          <span
+            aria-hidden
+            style={{
+              display: 'block',
+              marginTop: '2px',
+              fontSize: isActive ? 'var(--text-sm)' : 'var(--text-xs)',
+              fontWeight: 400,
+              letterSpacing: '0.02em',
+              color: 'var(--color-text-tertiary)',
+              opacity: 0.85,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              transition: 'font-size var(--duration-normal) var(--ease-out)',
+            }}
+          >
+            {pinyinSubline}
+          </span>
+        )}
+
         <span
           aria-hidden
           style={{

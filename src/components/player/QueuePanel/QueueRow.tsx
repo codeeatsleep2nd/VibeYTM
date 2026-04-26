@@ -1,6 +1,8 @@
 import { type FC } from 'react';
 import type { TrackInfo } from '../../../lib/types';
 import { QueueArtwork } from './QueueArtwork';
+import { ContextMenuTarget } from '../../contextMenu/ContextMenu';
+import { buildTrackContextMenu } from '../../contextMenu/trackActions';
 
 /**
  * Three vertical bars that bounce in sequence — the universal "audio is
@@ -129,25 +131,41 @@ export const QueueRow: FC<QueueRowProps> = ({
                  opacity var(--duration-fast) var(--ease-out)`,
   };
 
+  // Right-click menu: Play now / Add to queue / Copy link. Built lazily
+  // via `buildTrackContextMenu` so the same set of actions is shared
+  // with every other track surface (song rows, top results, etc.) once
+  // they wire up the same primitive. Queue rows don't expose Remove yet
+  // because the YTM `remove_from_queue` IPC takes an in-memory index
+  // that doesn't map cleanly to the rendered row index when liveQueue
+  // and frozenQueue diverge — addressed in a follow-up.
+  const buildSections = () =>
+    buildTrackContextMenu({ track });
+
   if (!interactive) {
-    return <div style={baseStyle}>{content}</div>;
+    return (
+      <ContextMenuTarget buildSections={buildSections}>
+        <div style={baseStyle}>{content}</div>
+      </ContextMenuTarget>
+    );
   }
 
   return (
-    <button
-      type="button"
-      onClick={onPlay}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = 'var(--color-surface-2)';
-        e.currentTarget.style.opacity = '1';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent';
-        e.currentTarget.style.opacity = dimmed ? '0.55' : '1';
-      }}
-      style={baseStyle}
-    >
-      {content}
-    </button>
+    <ContextMenuTarget buildSections={buildSections}>
+      <button
+        type="button"
+        onClick={onPlay}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--color-surface-2)';
+          e.currentTarget.style.opacity = '1';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.opacity = dimmed ? '0.55' : '1';
+        }}
+        style={baseStyle}
+      >
+        {content}
+      </button>
+    </ContextMenuTarget>
   );
 };

@@ -11,7 +11,8 @@ import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { UpdateBanner } from './components/UpdateBanner';
 import { useBootState } from './hooks/useBootState';
-import { ytmApi } from './lib/ipc';
+import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
+import { ytmApi, playerApi } from './lib/ipc';
 
 interface ViewingPlaylist {
   id: string;
@@ -107,6 +108,85 @@ const App: FC = () => {
       });
     }
   }, [phase]);
+
+  // Global keyboard shortcuts. Active only in the app phase (no point
+  // intercepting Cmd+L while the LoginPage is up). Bindings stay as a
+  // const-array — `useGlobalShortcuts` re-attaches the listener when
+  // it changes, so any state captured by the callbacks is current.
+  const goSidebar = useCallback((path: string) => {
+    setViewingPlaylist(null);
+    setIsNowPlayingOpen(false);
+    setIsQueueOpen(false);
+    setIsLyricsOpen(false);
+    setCurrentPath(path);
+  }, []);
+  const shortcutBindings: ShortcutBinding[] = phase === 'app'
+    ? [
+        {
+          key: ' ',
+          label: 'Toggle play / pause',
+          hint: 'Space',
+          onActivate: () => playerApi.togglePlay().catch(() => {}),
+        },
+        {
+          key: 'l',
+          meta: true,
+          label: 'Toggle lyrics',
+          hint: '⌘L',
+          onActivate: toggleLyrics,
+        },
+        {
+          key: 'q',
+          meta: true,
+          label: 'Toggle queue',
+          hint: '⌘Q',
+          onActivate: toggleQueue,
+        },
+        {
+          key: 'f',
+          meta: true,
+          label: 'Search',
+          hint: '⌘F',
+          onActivate: () => goSidebar('search'),
+        },
+        {
+          key: '1',
+          meta: true,
+          label: 'Home',
+          hint: '⌘1',
+          onActivate: () => goSidebar('home'),
+        },
+        {
+          key: '2',
+          meta: true,
+          label: 'Search',
+          hint: '⌘2',
+          onActivate: () => goSidebar('search'),
+        },
+        {
+          key: '3',
+          meta: true,
+          label: 'Explore',
+          hint: '⌘3',
+          onActivate: () => goSidebar('explore'),
+        },
+        {
+          key: '4',
+          meta: true,
+          label: 'Library',
+          hint: '⌘4',
+          onActivate: () => goSidebar('library'),
+        },
+        {
+          key: ',',
+          meta: true,
+          label: 'Settings',
+          hint: '⌘,',
+          onActivate: () => goSidebar('settings'),
+        },
+      ]
+    : [];
+  useGlobalShortcuts(shortcutBindings);
 
   if (phase === 'loading') {
     // Sign-in state hasn't reported yet — splash is the ONLY surface so
