@@ -7,6 +7,16 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      liquidGL — real-refraction WebGL glass for the chrome + queue
+      drawer. Vendored from naughtyduk/liquidGL (MIT) so we don't
+      depend on a CDN at runtime (Tauri can run offline). html2canvas
+      is the snapshot dependency liquidGL requires. Both load `defer`
+      so they don't block the React mount; the useLiquidGL hook
+      gracefully no-ops until they're ready.
+    -->
+    <script src="/scripts/html2canvas.min.js" defer></script>
+    <script src="/scripts/liquidGL.js" defer></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

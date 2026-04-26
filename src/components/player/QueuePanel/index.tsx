@@ -545,6 +545,7 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       isOpen={isOpen}
       ariaLabel="Playing queue"
       as="aside"
+      className="liquidGL-pane"
       slideFrom="right"
       zIndex={90}
       boxShadow={isOpen ? '-8px 0 24px oklch(0% 0 0 / 0.35)' : undefined}

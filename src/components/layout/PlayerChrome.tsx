@@ -294,20 +294,24 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
 
   return (
     <footer
+      className="liquidGL-pane"
       style={{
         position: 'fixed',
         bottom: 0,
         left: 'var(--sidebar-width)',
         right: 0,
         height: 'var(--player-bar-height)',
-        // Liquid-glass treatment: translucent surface + heavy backdrop
-        // blur + faint inner top highlight. Picks up the cover-tinted
-        // backdrop bleeding through from Now Playing for a unified
-        // look. Background uses --glass-bg (already a token tuned for
-        // ~0.72 alpha) so themability stays consistent. The two box-
-        // shadows are: (1) inner-top white-ish highlight at 8 % alpha
-        // for the Liquid-Glass edge gleam, (2) outer drop-shadow so
-        // the chrome reads as a discrete plate over the page.
+        // Liquid-glass treatment. When the liquidGL WebGL pane attaches
+        // (via useLiquidGL on this `.liquidGL-pane` selector) the
+        // background of the footer is replaced by a real-time
+        // refraction of the page content underneath. Until then —
+        // first paint, jsdom, no-WebGL fallback — the static
+        // backdrop-filter below stands in so the chrome never
+        // renders as a transparent gap.
+        //   background:           translucent --glass-bg surface
+        //   backdrop-filter:      40 px blur + 180 % saturate
+        //   inset-top box-shadow: 1 px white-ish highlight (Liquid-Glass edge gleam)
+        //   outer box-shadow:     drop shadow so the chrome reads as a discrete plate
         background: 'var(--glass-bg)',
         backdropFilter: 'blur(40px) saturate(180%)',
         WebkitBackdropFilter: 'blur(40px) saturate(180%)',

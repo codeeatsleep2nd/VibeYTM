@@ -137,6 +137,16 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     };
   }, [playlistId, autoPlay]);
 
+  // Drives the cover-tinted gradient behind the hero. MUST be called
+  // before any early returns so React's hook-call order stays
+  // identical across all render branches (loading / error / empty /
+  // loaded). Was previously declared after the early returns and
+  // tripped React's "rendered more hooks than the previous render"
+  // invariant when `playlist` flipped from null → loaded.
+  const heroColors = useCoverColors(
+    albumArtOrNothing(playlist?.artworkUrl) ?? undefined,
+  );
+
   // PlaylistDetailPage resets `playlist` to null before each fetch, so there
   // is no stale content to blur mid-load — keep the plain spinner here.
   if (isLoading) {
@@ -276,13 +286,6 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
       </section>
     );
   }
-
-  // Drives the cover-tinted gradient behind the hero. The hook returns
-  // a deep neutral fallback while the canvas-based palette extraction
-  // settles, so the page is never colorless.
-  const heroColors = useCoverColors(
-    albumArtOrNothing(playlist.artworkUrl) ?? undefined,
-  );
 
   // Same playlist-context resolution the action handlers need. Album
   // browseIds (MPRE) save through their underlying audioPlaylistId

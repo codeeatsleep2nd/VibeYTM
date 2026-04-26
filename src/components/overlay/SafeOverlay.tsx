@@ -60,6 +60,9 @@ interface SafeOverlayProps {
    *  that want their own children to flex-stack inside the wrapper. */
   display?: CSSProperties['display'];
   flexDirection?: CSSProperties['flexDirection'];
+  /** Optional className applied to the wrapper. Used by liquidGL to
+   *  attach a glass pane via a CSS selector (`.liquidGL-pane`). */
+  className?: string;
 }
 
 const DEFAULT_INSET: Required<SafeOverlayInset> = {
@@ -105,6 +108,7 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
     padding,
     display,
     flexDirection,
+    className,
   },
   ref,
 ) {
@@ -179,6 +183,7 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
     <OverlayContext.Provider value={{ isOpen }}>
       <Tag
         ref={ref as Ref<HTMLDivElement & HTMLElement>}
+        className={className}
         role={role}
         aria-label={ariaLabel}
         aria-hidden={!isOpen}
