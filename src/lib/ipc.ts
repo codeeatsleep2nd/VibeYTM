@@ -18,6 +18,16 @@ export const cacheApi = {
   clear: () => invoke<number>('cache_clear'),
   stats: () => invoke<CacheStats>('cache_stats'),
   convertToAssetUrl: (path: string) => convertFileSrc(path),
+  /**
+   * Build a `vibeytm-cache://` URL the webview can use as an `<img src>`
+   * directly. The custom URI scheme handler in
+   * `src-tauri/src/protocols/cache_image.rs` resolves it through the
+   * same disk cache `cache_fetch_image` uses, but without the
+   * JS↔Rust IPC + `convertFileSrc` round trip — so home-page mounts
+   * with 100+ thumbnails no longer back up against the IPC bridge.
+   */
+  buildCacheUrl: (url: string): string =>
+    `vibeytm-cache://localhost/?u=${encodeURIComponent(url)}`,
 };
 
 export interface AboutInfo {

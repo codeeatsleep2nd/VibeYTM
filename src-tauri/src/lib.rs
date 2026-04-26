@@ -7,6 +7,7 @@ mod commands;
 pub mod events;
 mod integrations;
 mod logging;
+mod protocols;
 pub mod state;
 mod tray;
 mod updater;
@@ -39,6 +40,16 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
+        // Custom URI scheme for cached images. Lets `<img src="vibeytm-
+        // cache://localhost/?u=…">` resolve directly through the
+        // existing disk cache, bypassing the `cache_fetch_image` IPC +
+        // `convertFileSrc` round trip on every image load. The webview
+        // handles concurrency natively; the frontend's hand-rolled
+        // 6-slot limiter is no longer needed once consumers migrate.
+        .register_asynchronous_uri_scheme_protocol(
+            "vibeytm-cache",
+            protocols::cache_image::handler,
+        )
         // Build the macOS app menu BEFORE the event loop starts so the About
         // dialog metadata (website + comments) is wired into NSApp's standard
         // about panel from launch. Setting this from inside `setup` lands
