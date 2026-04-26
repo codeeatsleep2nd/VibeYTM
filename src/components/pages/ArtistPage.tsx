@@ -2,9 +2,12 @@ import { type FC, useEffect, useState } from 'react';
 import type { AlbumSummary, SearchResults, TrackInfo } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
 import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
+import { useCoverColors } from '../../hooks/useCoverColors';
+import { albumArtOrNothing } from '../../lib/artwork';
 import { SongRow } from '../browse/SongRow';
 import { AlbumCard } from '../browse/AlbumCard';
 import { LoadingSpinner } from '../LoadingOverlay';
+import { DetailPageHero } from '../DetailPageHero';
 
 interface ArtistPageProps {
   /** Artist's display name. The page runs YTM searches scoped to this
@@ -94,6 +97,15 @@ export const ArtistPage: FC<ArtistPageProps> = ({
     void playerApi.playTrack(first.videoId).catch(() => {});
   };
 
+  // Pull the cover from the first matched track / album so the hero
+  // gets a real palette to extract. Falls through to undefined when
+  // nothing is loaded yet — the hook returns a neutral fallback.
+  const heroCover =
+    albumArtOrNothing(songs[0]?.artworkUrl) ??
+    albumArtOrNothing(albums[0]?.artworkUrl) ??
+    undefined;
+  const heroColors = useCoverColors(heroCover);
+
   return (
     <section
       style={{
@@ -101,65 +113,30 @@ export const ArtistPage: FC<ArtistPageProps> = ({
         flexDirection: 'column',
         height: '100%',
         overflow: 'auto',
-        padding: 'var(--space-6)',
-        gap: 'var(--space-6)',
       }}
     >
-      <header style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label="Back"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 32,
-            height: 32,
-            borderRadius: 'var(--radius-full)',
-            background: 'var(--color-surface-2)',
-            color: 'var(--color-text-primary)',
-            border: 'none',
-            cursor: 'pointer',
-            fontSize: 'var(--text-base)',
-          }}
-        >
-          {'←'}
-        </button>
-        <h1
-          style={{
-            margin: 0,
-            fontSize: 'var(--text-2xl)',
-            letterSpacing: '-0.02em',
-            color: 'var(--color-text-primary)',
-          }}
-        >
-          {artistName}
-        </h1>
-        {songs.length > 0 && (
-          <button
-            type="button"
-            onClick={handlePlayAll}
-            style={{
-              marginLeft: 'auto',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 'var(--space-2)',
-              padding: 'var(--space-2) var(--space-4)',
-              background: 'var(--color-accent)',
-              color: 'oklch(100% 0 0)',
-              border: 'none',
-              borderRadius: 'var(--radius-full)',
-              fontSize: 'var(--text-sm)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            {'▶'} Play
-          </button>
-        )}
-      </header>
+      <DetailPageHero
+        title={artistName}
+        kind="Artist"
+        coverUrl={heroCover ?? ''}
+        colors={heroColors}
+        meta={
+          songs.length > 0 || albums.length > 0
+            ? `${songs.length} songs · ${albums.length} albums`
+            : undefined
+        }
+        onBack={onBack}
+        onPlay={handlePlayAll}
+      />
 
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--space-6)',
+          padding: 'var(--space-6)',
+        }}
+      >
       {isLoading && (
         <div style={{ height: 240 }}>
           <LoadingSpinner />
@@ -242,6 +219,7 @@ export const ArtistPage: FC<ArtistPageProps> = ({
           </div>
         </section>
       )}
+      </div>
     </section>
   );
 };
