@@ -203,7 +203,20 @@
         if (args && typeof args.secs === 'number') player.seekTo(args.secs, true);
         break;
       case 'set_volume':
-        if (args && typeof args.level === 'number') player.setVolume(Math.round(args.level * 100));
+        if (args && typeof args.level === 'number') {
+          var lvlPct = Math.round(args.level * 100);
+          window.__VIBEYTM_DESIRED_VOLUME_PCT__ = lvlPct;
+          player.setVolume(lvlPct);
+          // Also apply to the <video> element directly — defeats the
+          // race where YTM resets it across track navigation.
+          try {
+            var vEl = document.querySelector('video');
+            if (vEl) {
+              vEl.volume = Math.max(0, Math.min(1, lvlPct / 100));
+              vEl.muted = lvlPct === 0;
+            }
+          } catch (e) {}
+        }
         break;
       case 'toggle_shuffle': {
         // Find by aria-label inside the player bar — stable across YTM
@@ -562,6 +575,57 @@
     }
   }
 
+  // Lock the desired volume against YTM's behaviour of resetting the
+  // <video> element's volume across track navigation. The Rust poller
+  // re-pushes our stored volume after detecting a track-change in
+  // its next cycle, but that leaves a 100-300 ms window where the
+  // user hears audio at YTM's default (often ~50%) before it mutes.
+  //
+  // The fix here intercepts at the source: install a `volumechange`
+  // listener on the <video> element that, whenever YTM tries to set
+  // a volume different from `__VIBEYTM_DESIRED_VOLUME_PCT__`, slams
+  // it back. Re-attaches when the <video> element gets recreated
+  // (track navigation can swap the element). No-op until the user
+  // has issued a `set_volume` (the desired var stays undefined).
+  var lastVideoEl = null;
+  function enforceVolume() {
+    var v = document.querySelector('video');
+    if (!v || v === lastVideoEl) {
+      // Already attached. But still re-apply on every poll just in
+      // case YTM raced past us between `volumechange` events.
+      if (v && typeof window.__VIBEYTM_DESIRED_VOLUME_PCT__ === 'number') {
+        var d = window.__VIBEYTM_DESIRED_VOLUME_PCT__;
+        var target = Math.max(0, Math.min(1, d / 100));
+        if (Math.abs(v.volume - target) > 0.005 || (d === 0 && !v.muted)) {
+          try { v.volume = target; v.muted = d === 0; } catch (e) {}
+        }
+      }
+      return;
+    }
+    lastVideoEl = v;
+    try {
+      v.addEventListener('volumechange', function () {
+        if (typeof window.__VIBEYTM_DESIRED_VOLUME_PCT__ !== 'number') return;
+        var d = window.__VIBEYTM_DESIRED_VOLUME_PCT__;
+        var target = Math.max(0, Math.min(1, d / 100));
+        if (Math.abs(v.volume - target) > 0.005 || (d === 0 && !v.muted)) {
+          try { v.volume = target; v.muted = d === 0; } catch (e) {}
+        }
+      });
+      // Also handle <video> reload — `loadedmetadata` fires after the
+      // src swap completes; force the desired volume before audio
+      // actually starts.
+      v.addEventListener('loadedmetadata', function () {
+        if (typeof window.__VIBEYTM_DESIRED_VOLUME_PCT__ !== 'number') return;
+        var d = window.__VIBEYTM_DESIRED_VOLUME_PCT__;
+        try {
+          v.volume = Math.max(0, Math.min(1, d / 100));
+          v.muted = d === 0;
+        } catch (e) {}
+      });
+    } catch (e) {}
+  }
+
   function observeQueue() {
     var container = document.querySelector('ytmusic-player-queue #contents')
       || document.querySelector('ytmusic-player-queue');
@@ -594,6 +658,8 @@
       setInterval(update, 150);
       setInterval(checkStuck, 1000);
       setInterval(forceAudioMode, 500);
+      setInterval(enforceVolume, 200);
+      enforceVolume();
       observeQueue();
       // Belt and suspenders: the observer may miss edge cases (e.g. the
       // queue container gets re-created). Poll every 2s as a fallback.

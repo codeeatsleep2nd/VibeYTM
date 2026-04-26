@@ -19,9 +19,16 @@ const inFlight = new Map<string, Promise<void>>();
 // case YTM later indexes timed lyrics for the track. Transient errors
 // also enter a short cooldown so a saturated YTM /next channel doesn't
 // get hammered with retries during the outage.
-const HITS_KEY = 'vibeytm:lyrics:v1:hits';
-const MISSES_KEY = 'vibeytm:lyrics:v1:misses';
-const FAILURES_KEY = 'vibeytm:lyrics:v1:failures';
+// v2 namespace bump (2026-04-26): the v1 misses cache stored a 14-day
+// "no lyrics" verdict for any track where YTM's audio counterpart
+// returned empty — a result we now know to be a false negative for
+// many regular tracks (the "Love Love Love" by Jolin Tsai case).
+// The lyrics flow today re-routes to LRCLIB+NetEase whenever the
+// title doesn't look like an instrumental, so old "missing" entries
+// must not resurrect — invalidate by bumping the namespace.
+const HITS_KEY = 'vibeytm:lyrics:v2:hits';
+const MISSES_KEY = 'vibeytm:lyrics:v2:misses';
+const FAILURES_KEY = 'vibeytm:lyrics:v2:failures';
 const MAX_HITS_BYTES = 4_000_000; // ~4MB — well under typical 5MB localStorage cap
 const MISS_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 const FAILURE_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
