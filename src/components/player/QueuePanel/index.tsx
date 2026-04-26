@@ -547,11 +547,17 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       as="aside"
       slideFrom="right"
       zIndex={90}
-      // Transparent so the `.liquidGL-pane` child can carry the glass
-      // surface (or the WebGL refraction once liquidGL attaches). See
-      // the lens div below.
-      background="transparent"
-      boxShadow={isOpen ? '-8px 0 24px oklch(0% 0 0 / 0.35)' : undefined}
+      // CSS Liquid Glass treatment — matches the player chrome plate
+      // (PlayerChrome.tsx). The drawer slides over content from the
+      // right; the left edge gets the same bright rim treatment that
+      // sells the chrome as a physical glass plate.
+      background="linear-gradient(90deg, oklch(100% 0 0 / 0.12) 0%, oklch(100% 0 0 / 0.04) 4%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.10) 100%), oklch(28% 0 0 / 0.62)"
+      backdropFilter="blur(48px) saturate(220%) brightness(1.05)"
+      boxShadow={
+        isOpen
+          ? 'inset 1px 0 0 oklch(100% 0 0 / 0.28), -12px 0 36px oklch(0% 0 0 / 0.35)'
+          : undefined
+      }
       inset={{
         top: 'calc(var(--title-bar-height) + var(--space-3))',
         right: '0',
@@ -562,33 +568,8 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       display="flex"
       flexDirection="column"
     >
-      {/*
-        liquidGL lens — empty pane sized to the drawer; carries the
-        glass styling so the drawer reads as Liquid-Glass even when
-        liquidGL hasn't initialised. Positioned absolutely behind the
-        contents (zIndex 0) so the WebGL refraction lands at the
-        drawer's rect once the lens is promoted. `pointer-events:none`
-        keeps clicks live on the queue rows above. See PlayerChrome
-        for the same pattern + rationale.
-      */}
-      <div
-        className="liquidGL-pane"
-        aria-hidden="true"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          pointerEvents: 'none',
-          zIndex: 0,
-          background: 'var(--glass-bg)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-          borderLeft: '1px solid oklch(100% 0 0 / 0.06)',
-        }}
-      />
       <header
         style={{
-          position: 'relative',
-          zIndex: 1,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -629,8 +610,6 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       <div
         ref={scrollContainerRef}
         style={{
-          position: 'relative',
-          zIndex: 1,
           overflowY: 'auto',
           paddingTop: 'var(--space-3)',
           flex: 1,

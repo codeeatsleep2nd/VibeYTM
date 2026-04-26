@@ -167,18 +167,14 @@ describe('PlayerChrome — contract after Liquid-Glass visual refactor', () => {
     expect(container.innerHTML).not.toMatch(/scale\(/);
   });
 
-  it('chrome lens pane carries the backdrop-filter fallback', () => {
+  it('chrome footer carries the Liquid Glass backdrop-filter', () => {
     render(<PlayerChrome {...baseProps} />);
-    // The Liquid-Glass treatment now lives on a dedicated `.liquidGL-pane`
-    // lens div inside the footer (so liquidGL can promote it to a real
-    // refraction without hiding the controls — see PlayerChrome.tsx).
-    // The footer itself stays transparent so the WebGL canvas paints
-    // through into the chrome rect; the lens carries the static fallback
-    // style for first-paint / no-WebGL.
-    const lens = document.querySelector('.liquidGL-pane') as HTMLElement;
-    expect(lens).not.toBeNull();
-    expect(lens.style.backdropFilter).toMatch(/blur\(40px\)/);
+    // jsdom doesn't actually composite backdrop-filter, but it preserves
+    // the declared value on the inline style. Pin presence so a future
+    // refactor doesn't silently drop the Liquid Glass treatment back to
+    // a flat panel.
     const footer = document.querySelector('footer') as HTMLElement;
-    expect(footer.style.background).toBe('transparent');
+    expect(footer.style.backdropFilter).toMatch(/blur\(\d+px\)/);
+    expect(footer.style.backdropFilter).toMatch(/saturate\(/);
   });
 });

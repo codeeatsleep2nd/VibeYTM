@@ -14,7 +14,6 @@ import { UpdateBanner } from './components/UpdateBanner';
 import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
 import { useBootState } from './hooks/useBootState';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
-import { useLiquidGL } from './hooks/useLiquidGL';
 import { ytmApi, playerApi } from './lib/ipc';
 import { registerOpenArtist } from './lib/appNav';
 
@@ -126,37 +125,6 @@ const App: FC = () => {
     registerOpenArtist(searchForArtist);
     return () => registerOpenArtist(null);
   }, [searchForArtist]);
-
-  // liquidGL real-refraction glass on chrome + queue drawer. Both
-  // surfaces tag themselves with `.liquidGL-pane`; the singleton
-  // WebGL renderer manages them together. Gated on the `app` boot
-  // phase so we don't initialise behind the WelcomeScreen / login —
-  // the targets aren't in the DOM yet at those phases. Hook is
-  // idempotent across re-renders (internal initializedRef).
-  // Tuned so the glass character reads at a glance against YTM's mostly
-  // dark backgrounds:
-  //   refraction 0.025 — strong enough to bend visible carousel edges
-  //                      behind the chrome.
-  //   bevelDepth/Width — pronounced rim catches whatever light bleeds
-  //                      through, drawing the glass plate.
-  //   frost 0.18      — frosted layer keeps content recognisable while
-  //                      clearly marking the surface as glass.
-  //   specular        — highlight gleam on top.
-  // Defaults from naughtyduk/liquidGL (refraction 0.01, frost 0) read
-  // as "almost transparent" against dark surfaces — barely a UI change.
-  useLiquidGL(
-    {
-      target: '.liquidGL-pane',
-      refraction: 0.025,
-      bevelDepth: 0.18,
-      bevelWidth: 0.22,
-      frost: 0.18,
-      shadow: true,
-      specular: true,
-      reveal: 'fade',
-    },
-    phase === 'app',
-  );
 
   // Global keyboard shortcuts. Active only in the app phase (no point
   // intercepting Cmd+L while the LoginPage is up). Bindings stay as a

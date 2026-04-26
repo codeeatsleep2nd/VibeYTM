@@ -60,9 +60,12 @@ interface SafeOverlayProps {
    *  that want their own children to flex-stack inside the wrapper. */
   display?: CSSProperties['display'];
   flexDirection?: CSSProperties['flexDirection'];
-  /** Optional className applied to the wrapper. Used by liquidGL to
-   *  attach a glass pane via a CSS selector (`.liquidGL-pane`). */
+  /** Optional className applied to the wrapper. */
   className?: string;
+  /** Optional CSS `backdrop-filter` (and `-webkit-backdrop-filter`) for
+   *  drawers that want a Liquid-Glass surface. Translucent backgrounds
+   *  on `position:fixed` overlays look flat without it. */
+  backdropFilter?: string;
 }
 
 const DEFAULT_INSET: Required<SafeOverlayInset> = {
@@ -109,6 +112,7 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
     display,
     flexDirection,
     className,
+    backdropFilter,
   },
   ref,
 ) {
@@ -155,7 +159,7 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
           }
         : {};
 
-  const style: CSSProperties = {
+  const style: CSSProperties & { WebkitBackdropFilter?: string } = {
     position: 'fixed',
     top,
     left,
@@ -175,6 +179,8 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
     display,
     flexDirection,
     overflow: display === 'flex' ? 'hidden' : undefined,
+    backdropFilter,
+    WebkitBackdropFilter: backdropFilter,
     ...paddingStyle,
   };
 
