@@ -38,9 +38,11 @@ export const AppShell: FC<AppShellProps> = ({
     }}
   >
     {/*
-      Ambient colour wash — covers the visible app body, leaving the
-      top --title-bar-height strip transparent so the Tauri window's
-      transparent zone shows through to the desktop.
+      Ambient colour wash — sits BEHIND every other layer (z-index: -1)
+      and starts at y = --title-bar-height so the top drag-region strip
+      stays truly transparent (Tauri window is transparent there). The
+      Liquid Glass surfaces (sidebar / chrome / queue / title plates)
+      refract this wash via liquidGL.
     */}
     <div className="app-ambient" aria-hidden="true" />
 
@@ -64,11 +66,12 @@ export const AppShell: FC<AppShellProps> = ({
     <main
       style={{
         overflow: 'auto',
-        // No paddingTop — pages render up to y=0 of the window so the
-        // sticky title plate's top edge touches the very top of the
-        // app. Pages absorb the --title-bar-height offset themselves
-        // in their first element's paddingTop so visible content
-        // (title text, buttons) clears the drag region.
+        // Reserve space for the title-bar drag region — page content
+        // renders below it so the sticky title plate floats as a
+        // rounded capsule with the body's ambient gradient visible
+        // above its top edge (instead of the plate's top edge being
+        // hidden under the drag region).
+        paddingTop: 'var(--title-bar-height)',
         paddingBottom: 'var(--player-bar-height)',
       }}
     >
