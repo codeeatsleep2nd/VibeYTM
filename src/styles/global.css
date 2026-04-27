@@ -149,32 +149,45 @@ body {
 }
 
 /* liquidGL active mode — set on <html> by useLiquidGL once the WebGL
-   snapshot texture has loaded. Disables the CSS-only fallback
-   backgrounds + backdrop-filter on every glass surface so the WebGL
-   canvas (painted behind each surface at z = lensZ - 1) is no longer
-   occluded. The bright rim border + box-shadow stay (they're not
-   refracted by liquidGL — they're decorative glass character that
-   reads on top of the WebGL refraction). */
+   snapshot texture has loaded. Drops everything that would compete
+   with or occlude the WebGL refraction:
+     • background — would paint over the canvas
+     • backdrop-filter — would frost the page before liquidGL
+       refracts it
+     • border + inset box-shadows — liquidGL paints its OWN bevel
+       (u_bevelDepth, u_bevelWidth) + specular highlight on the
+       refraction; our CSS rim would double-render and clip the
+       WebGL bevel
+   The OUTER drop shadow stays because liquidGL renders its shadow
+   on a separate `_shadowEl` div that we're not styling here. */
 :root.liquidGL-active .liquid-glass-chrome,
 :root.liquidGL-active .liquid-glass-card,
 :root.liquidGL-active .liquid-glass-subtle {
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  border: none;
+  box-shadow: none;
 }
 
-/* The lens marker — an invisible empty element that liquidGL targets.
-   `position:absolute; inset:0; pointer-events:none` so the lens
-   coincides with its parent's bounding rect (the WebGL canvas paints
-   refraction at this rect) and clicks pass through to the parent's
-   real content above. liquidGL sets `opacity:0` on this element when
-   it activates — the parent surface's content (sibling to this
-   element, or above via z-index) stays visible. */
+/* The lens marker — `position:absolute; inset:0; pointer-events:none`
+   so the lens coincides with its parent's bounding rect.
+   `z-index: auto` (not 0!) is critical: liquidGL's `effectiveZ`
+   walks UP the DOM until it finds a positioned ancestor with an
+   EXPLICIT z-index. With auto, the walk reaches the surface
+   (sidebar / chrome / title plate / etc.) and reads its real
+   z-index, so the WebGL canvas sits at `surface.z - 1` — just
+   below the surface but ABOVE all the page content the lens is
+   supposed to refract. With z-index:0 the walk stopped at the
+   lens itself and the canvas defaulted to z:0, sinking below
+   most surfaces. Mirrors naughtyduk's own pattern: their lens
+   `.menu-wrap` has z-index:auto and inherits 9999 from its
+   parent `.menu-anchor`. */
 .liquidGL-pane {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 0;
+  z-index: auto;
   /* Inherit the parent's border-radius so liquidGL's WebGL bevel
      follows the rounded plate's edges instead of clipping at a
      rectangular boundary. liquidGL reads `border-top-left-radius`

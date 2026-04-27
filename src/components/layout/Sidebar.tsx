@@ -157,6 +157,12 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
       className="liquid-glass-chrome"
       style={{
         position: 'relative',
+        // Explicit z-index so liquidGL's `effectiveZ` walks up from
+        // the lens child and finds 50 — canvas then paints at z=49,
+        // ABOVE page content but BELOW the sidebar plate. Without
+        // this, walk-up returns 0 and the canvas defaults below the
+        // sidebar's stacking context, hiding the refraction.
+        zIndex: 50,
         width: 'var(--sidebar-width)',
         height: '100%',
         paddingTop: 'var(--title-bar-height)',
