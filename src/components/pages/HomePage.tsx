@@ -196,23 +196,21 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
         className="liquid-glass-chrome"
         style={{
           position: 'sticky',
-          // Plate hugs the top of the main scroll area (which itself
-          // sits at y = --title-bar-height, just under the drag
-          // region) so the title text appears just a notch below the
-          // app's top border instead of being pushed down by an
-          // extra gap.
-          top: 0,
+          // Sit with breathing room from the drag region above so the
+          // plate's top rounded corners + bevel rim are fully visible.
+          top: 'var(--space-3)',
           zIndex: 10,
-          // Plate spans the parent <section>'s padded content area
-          // (24 px from each edge). NO horizontal inner padding so
-          // the title TEXT inside sits at exactly the same x as the
-          // album-row text below. Larger vertical padding only.
+          // Plate's left/right edges align exactly with the content
+          // rows below (the parent <section> already pads
+          // horizontally with var(--space-6); plate adds none of its
+          // own so its rim sits flush with those rows). Larger
+          // vertical padding gives the capsule visible presence.
           marginBottom: 'var(--space-4)',
           borderRadius: 'var(--radius-xl)',
-          paddingTop: 'var(--space-3)',
-          paddingBottom: 'var(--space-3)',
-          paddingLeft: 0,
-          paddingRight: 0,
+          paddingTop: 'var(--space-8)',
+          paddingBottom: 'var(--space-8)',
+          paddingLeft: 'var(--space-6)',
+          paddingRight: 'var(--space-6)',
         }}
       >
       <div className="liquidGL-pane" aria-hidden="true" />

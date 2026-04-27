@@ -147,11 +147,21 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
 
   return (
     <aside
+      // Liquid Glass plate — same chrome class as the player bar /
+      // queue drawer / sticky page titles. The class supplies the
+      // uniform rim treatment on all four sides; the sidebar drops its
+      // off-screen left border for crispness only.
+      // The `<div className="liquidGL-pane">` child is the lens marker
+      // that liquidGL targets — once the WebGL texture loads, the
+      // canvas paints a real refraction at this lens's bounding rect.
       className="liquid-glass-chrome"
       style={{
         position: 'relative',
         // Explicit z-index so liquidGL's `effectiveZ` walks up from
-        // the lens child and finds 50 — canvas then paints at z=49.
+        // the lens child and finds 50 — canvas then paints at z=49,
+        // ABOVE page content but BELOW the sidebar plate. Without
+        // this, walk-up returns 0 and the canvas defaults below the
+        // sidebar's stacking context, hiding the refraction.
         zIndex: 50,
         width: 'var(--sidebar-width)',
         height: '100%',

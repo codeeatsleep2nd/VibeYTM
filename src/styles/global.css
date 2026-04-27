@@ -19,13 +19,25 @@ body {
   font-family: var(--font-sans);
   font-size: var(--text-base);
   color: var(--color-text-primary);
-  /* Body is transparent so the title-bar drag region (the top
-     --title-bar-height of the window) shows through to the desktop.
-     The ambient gradient that the Liquid Glass surfaces refract is
-     applied INSIDE the AppShell content cells (`.app-ambient`) so it
-     covers the visible app area but stops at the top transparent
-     strip. */
-  background: transparent;
+  /* Ambient page background — two soft colour washes layered on top of
+     the base dark surface. Without these, every `backdrop-filter` in
+     the app sees a uniform dark page and refracts to dark, defeating
+     the Liquid Glass system. The washes are deliberately broad and
+     low-saturation: they only need to give the glass surfaces SOME
+     colour to refract; they should never read as a foreground gradient. */
+  background:
+    radial-gradient(
+      ellipse 1200px 800px at 15% 10%,
+      var(--ambient-tint-1) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 1100px 900px at 85% 95%,
+      var(--ambient-tint-2) 0%,
+      transparent 50%
+    ),
+    var(--color-bg);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /*
@@ -158,45 +170,28 @@ body {
   box-shadow: none;
 }
 
-/* Ambient page colour wash — applied to the AppShell area below the
-   drag region. Same recipe that used to sit on body, but offset so the
-   top --title-bar-height stays transparent (Tauri window is now
-   transparent for that strip). Layered behind every page so liquidGL
-   has colour to refract. */
-.app-ambient {
-  position: absolute;
-  top: var(--title-bar-height);
-  left: 0;
-  right: 0;
-  bottom: 0;
-  pointer-events: none;
-  z-index: -1;
-  background:
-    radial-gradient(
-      ellipse 1200px 800px at 15% 10%,
-      var(--ambient-tint-1) 0%,
-      transparent 55%
-    ),
-    radial-gradient(
-      ellipse 1100px 900px at 85% 95%,
-      var(--ambient-tint-2) 0%,
-      transparent 50%
-    ),
-    var(--color-bg);
-}
-
+/* The lens marker — `position:absolute; inset:0; pointer-events:none`
+   so the lens coincides with its parent's bounding rect.
+   `z-index: auto` (not 0!) is critical: liquidGL's `effectiveZ`
+   walks UP the DOM until it finds a positioned ancestor with an
+   EXPLICIT z-index. With auto, the walk reaches the surface
+   (sidebar / chrome / title plate / etc.) and reads its real
+   z-index, so the WebGL canvas sits at `surface.z - 1` — just
+   below the surface but ABOVE all the page content the lens is
+   supposed to refract. With z-index:0 the walk stopped at the
+   lens itself and the canvas defaulted to z:0, sinking below
+   most surfaces. Mirrors naughtyduk's own pattern: their lens
+   `.menu-wrap` has z-index:auto and inherits 9999 from its
+   parent `.menu-anchor`. */
 .liquidGL-pane {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  /* `z-index: auto` is critical — liquidGL's `effectiveZ` walks up
-     until it finds an explicit z-index. With auto, the walk reaches
-     the surface (sidebar / chrome / title plate) and reads its real
-     z-index, putting the WebGL canvas at `surface.z - 1`. */
   z-index: auto;
   /* Inherit the parent's border-radius so liquidGL's WebGL bevel
      follows the rounded plate's edges instead of clipping at a
-     rectangular boundary. */
+     rectangular boundary. liquidGL reads `border-top-left-radius`
+     from the lens's computed style for `u_radius`. */
   border-radius: inherit;
 }
 

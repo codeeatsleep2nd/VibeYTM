@@ -29,7 +29,6 @@ export const AppShell: FC<AppShellProps> = ({
 }) => (
   <div
     style={{
-      position: 'relative',
       display: 'grid',
       gridTemplateColumns: 'var(--sidebar-width) 1fr',
       gridTemplateRows: '1fr',
@@ -37,15 +36,6 @@ export const AppShell: FC<AppShellProps> = ({
       overflow: 'hidden',
     }}
   >
-    {/*
-      Ambient colour wash — sits BEHIND every other layer (z-index: -1)
-      and starts at y = --title-bar-height so the top drag-region strip
-      stays truly transparent (Tauri window is transparent there). The
-      Liquid Glass surfaces (sidebar / chrome / queue / title plates)
-      refract this wash via liquidGL.
-    */}
-    <div className="app-ambient" aria-hidden="true" />
-
     {/* Title bar drag region */}
     <div
       data-tauri-drag-region
