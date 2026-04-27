@@ -27,10 +27,13 @@
      the glass look ALIVE on dark UIs — without it the bleed-through
      desaturates to gray. The brightness lifts shadow areas so the
      ambient page gradient reads through. */
-  --glass-bg-chrome: oklch(28% 0.005 270 / 0.62);
-  --glass-bg-card: oklch(24% 0.005 270 / 0.45);
-  --glass-bg-subtle: oklch(20% 0.005 270 / 0.30);
-  --glass-bg-hover: oklch(80% 0.02 270 / 0.10);
+  /* Tier opacities tuned for visible-glass-but-readable. Lower opacity
+     than before so the ambient page colour passes through every glass
+     surface, matching the uniform liquidGL look. */
+  --glass-bg-chrome: oklch(30% 0.005 270 / 0.40);
+  --glass-bg-card: oklch(28% 0.005 270 / 0.30);
+  --glass-bg-subtle: oklch(24% 0.005 270 / 0.18);
+  --glass-bg-hover: oklch(80% 0.02 270 / 0.14);
   --glass-blur: 48px;
   --glass-blur-strong: 64px;
   --glass-saturate: 220%;

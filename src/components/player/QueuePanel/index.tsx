@@ -547,14 +547,15 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       as="aside"
       slideFrom="right"
       zIndex={90}
-      // Same Liquid Glass plate as the player chrome — see
-      // `.liquid-glass-chrome` in src/styles/global.css. SafeOverlay
-      // sets these inline so the values mirror the utility class.
-      background="linear-gradient(90deg, oklch(100% 0 0 / 0.12) 0%, oklch(100% 0 0 / 0.04) 4%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.10) 100%), var(--glass-bg-chrome)"
+      // Same Liquid Glass plate as the player chrome / sidebar / sticky
+      // titles. Recipe mirrors `.liquid-glass-chrome` from global.css
+      // (SafeOverlay sets these inline so we can't use the className —
+      // its inline `background` would win anyway).
+      background="linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 35%, oklch(0% 0 0 / 0.16) 100%), var(--glass-bg-chrome)"
       backdropFilter="blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))"
       boxShadow={
         isOpen
-          ? 'inset 1px 0 0 var(--glass-rim-bright), -12px 0 36px oklch(0% 0 0 / 0.35)'
+          ? 'inset 0 1px 0 var(--glass-rim-bright), inset 1px 0 0 var(--glass-rim-mid), inset 0 -1px 0 oklch(0% 0 0 / 0.20), -12px 0 36px oklch(0% 0 0 / 0.35)'
           : undefined
       }
       inset={{

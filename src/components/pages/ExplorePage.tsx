@@ -110,19 +110,20 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
       }}
     >
       <div
+        // Full Liquid Glass plate — same chrome tier as the player bar /
+        // sidebar / queue. Title reads as a discrete glass plate
+        // matching naughtyduk.com.
+        className="liquid-glass-chrome"
         style={{
           position: 'sticky',
           top: 0,
           zIndex: 10,
-          background: 'var(--color-surface-1)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          // Align the Explore title with the sidebar's Explore button
-          // (issue #59).
-          paddingTop: 'var(--space-3)',
+          // Title plate extends to y=0 of the window — see HomePage.tsx
+          // for the rationale. Inner padding clears the drag region.
+          paddingTop: 'calc(var(--title-bar-height) + var(--space-3))',
           paddingBottom: 'var(--space-4)',
           marginBottom: 'var(--space-4)',
         }}

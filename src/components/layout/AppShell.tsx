@@ -56,7 +56,11 @@ export const AppShell: FC<AppShellProps> = ({
     <main
       style={{
         overflow: 'auto',
-        paddingTop: 'var(--title-bar-height)',
+        // No paddingTop — pages render up to y=0 of the window so their
+        // sticky `.liquid-glass-chrome` title bar's bright top border
+        // touches the very top of the app. Pages absorb the
+        // `--title-bar-height` offset themselves (in their first
+        // element's paddingTop).
         paddingBottom: 'var(--player-bar-height)',
       }}
     >

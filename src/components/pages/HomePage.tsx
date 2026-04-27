@@ -188,22 +188,23 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
       }}
     >
       <div
+        // Full Liquid Glass plate — matches the chrome surfaces (player
+        // bar / sidebar / queue) and the naughtyduk.com / liquidgl.js
+        // nav. Translucent gradient + heavy backdrop blur + bright
+        // inset rim + outer drop shadow turn the title strip into a
+        // discrete glass plate, not just a frosted band.
+        className="liquid-glass-chrome"
         style={{
           position: 'sticky',
           top: 0,
           zIndex: 10,
-          // Liquid Glass sticky header — translucent so the page content
-          // visibly scrolls under it; blur + saturate diffuse it.
-          background:
-            'linear-gradient(180deg, oklch(100% 0 0 / 0.06) 0%, oklch(100% 0 0 / 0) 30%), var(--glass-bg-subtle)',
-          backdropFilter:
-            'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
-          WebkitBackdropFilter:
-            'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
-          boxShadow: 'inset 0 -1px 0 var(--glass-rim-dim)',
-          // Match the sidebar nav's top padding so the greeting vertically
-          // aligns with the Home button (issue #59).
-          paddingTop: 'var(--space-3)',
+          // Title plate extends to y=0 of the window (AppShell main has
+          // no paddingTop). The drag region (zIndex 200) sits over the
+          // top --title-bar-height; its clicks still work, but visually
+          // the bright top border of this plate touches the very top
+          // of the app. Inner padding pushes the title TEXT down past
+          // the drag region.
+          paddingTop: 'calc(var(--title-bar-height) + var(--space-3))',
           paddingBottom: 'var(--space-3)',
           marginBottom: 'var(--space-3)',
         }}

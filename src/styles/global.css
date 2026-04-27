@@ -50,17 +50,30 @@ body {
   cursor: default;
 }
 
-/* Liquid Glass utility classes. Apply via className on any surface
-   that should read as glass. Three tiers map to the token system:
-     .liquid-glass-chrome  — fixed plates (player bar, queue drawer)
-     .liquid-glass-card    — content cards (albums, playlists, rows)
-     .liquid-glass-subtle  — section backgrounds, headers
-   The recipe is identical across tiers (gradient on top of a
-   translucent tint, heavy backdrop-filter, bright inset rim,
-   outer drop shadow) — only the strength of each layer differs.
-   The bright top inset is what makes glass read as glass even
-   when the content directly behind it is uniformly dark; without
-   it the surface looks like a flat panel.
+/* Liquid Glass utility classes. Three tiers map to the token system:
+     .liquid-glass-chrome  — fixed plates (player bar, queue drawer,
+                             sidebar, sticky title bars)
+     .liquid-glass-card    — content cards, popovers, modals
+     .liquid-glass-subtle  — section backgrounds (rare)
+
+   UNIFORM RIM CONTRACT — every glass surface in the app, regardless
+   of tier, gets the SAME visual border: a 1 px translucent border
+   plus an inset bright top highlight. The user requested every
+   surface read as the same physical material. Surfaces that are
+   pinned to a window edge (sidebar's right edge, player bar's top
+   edge, queue's left edge) override `border-*` to drop the rim on
+   the side that touches the edge — that's purely a layout call,
+   the glass treatment itself is identical.
+
+   Colour bleed-through is supplied by `backdrop-filter: blur +
+   saturate`; the lower opacity tints in tokens.css let the body's
+   ambient gradient pass through.
+
+   Animation: a `transition` on background, border, box-shadow,
+   transform routes every hover / focus / state change through
+   the compositor. Hover on `.liquid-glass-card` lifts the surface
+   with a brighter rim. Other tiers can be lifted via inline style
+   with the same transition for free.
 */
 .liquid-glass-chrome,
 .liquid-glass-card,
@@ -69,23 +82,28 @@ body {
     brightness(var(--glass-brightness));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate))
     brightness(var(--glass-brightness));
+  border: 1px solid var(--glass-rim-mid);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim-bright),
+    inset 0 -1px 0 oklch(0% 0 0 / 0.20),
+    var(--glass-shadow);
+  transition:
+    background var(--duration-normal) var(--ease-out),
+    border-color var(--duration-normal) var(--ease-out),
+    box-shadow var(--duration-normal) var(--ease-out),
+    transform var(--duration-normal) var(--ease-out);
 }
 
 .liquid-glass-chrome {
   background:
     linear-gradient(
       180deg,
-      oklch(100% 0 0 / 0.12) 0%,
-      oklch(100% 0 0 / 0.04) 4%,
-      oklch(100% 0 0 / 0) 30%,
-      oklch(0% 0 0 / 0.18) 100%
+      oklch(100% 0 0 / 0.10) 0%,
+      oklch(100% 0 0 / 0.02) 6%,
+      oklch(100% 0 0 / 0) 35%,
+      oklch(0% 0 0 / 0.16) 100%
     ),
     var(--glass-bg-chrome);
-  border-top: 1px solid var(--glass-rim-mid);
-  box-shadow:
-    inset 0 1px 0 var(--glass-rim-bright),
-    inset 0 -1px 0 oklch(0% 0 0 / 0.30),
-    var(--glass-shadow-strong);
 }
 
 .liquid-glass-card {
@@ -98,10 +116,6 @@ body {
       oklch(0% 0 0 / 0.10) 100%
     ),
     var(--glass-bg-card);
-  border: 1px solid var(--glass-rim-dim);
-  box-shadow:
-    inset 0 1px 0 var(--glass-rim-mid),
-    var(--glass-shadow);
   border-radius: var(--radius-lg);
 }
 
@@ -115,10 +129,12 @@ body {
       oklch(0% 0 0 / 0.10) 100%
     ),
     var(--glass-bg-hover);
-  border-color: var(--glass-rim-mid);
+  border-color: var(--glass-rim-bright);
   box-shadow:
     inset 0 1px 0 var(--glass-rim-bright),
+    inset 0 -1px 0 oklch(0% 0 0 / 0.20),
     var(--glass-shadow-strong);
+  transform: translateY(-1px);
 }
 
 .liquid-glass-subtle {
@@ -129,8 +145,6 @@ body {
       oklch(100% 0 0 / 0) 30%
     ),
     var(--glass-bg-subtle);
-  border: 1px solid var(--glass-rim-dim);
-  box-shadow: inset 0 1px 0 var(--glass-rim-dim);
   border-radius: var(--radius-md);
 }
 

@@ -247,20 +247,17 @@ export const SearchPage: FC<SearchPageProps> = ({
         (issue #59).
       */}
       <div
+        // Full Liquid Glass plate — same chrome tier as the player bar /
+        // sidebar / queue. Bright rim + gradient + drop shadow turn the
+        // search strip into a discrete glass plate matching naughtyduk.com.
+        className="liquid-glass-chrome"
         style={{
           position: 'sticky',
           top: 0,
           zIndex: 20,
-          // Liquid Glass sticky search bar — translucent so the search
-          // results scroll visibly under it.
-          background:
-            'linear-gradient(180deg, oklch(100% 0 0 / 0.06) 0%, oklch(100% 0 0 / 0) 30%), var(--glass-bg-subtle)',
-          backdropFilter:
-            'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
-          WebkitBackdropFilter:
-            'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
-          boxShadow: 'inset 0 -1px 0 var(--glass-rim-dim)',
-          paddingTop: 'var(--space-3)',
+          // Title plate extends to y=0 of the window — see HomePage.tsx
+          // for the rationale. Inner padding clears the drag region.
+          paddingTop: 'calc(var(--title-bar-height) + var(--space-3))',
           paddingBottom: 'var(--space-3)',
           marginBottom: 'var(--space-3)',
         }}

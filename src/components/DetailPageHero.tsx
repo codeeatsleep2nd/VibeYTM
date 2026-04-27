@@ -93,7 +93,11 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
       style={{
         position: 'relative',
         minHeight: HERO_HEIGHT,
-        padding: 'var(--space-3) var(--space-6) var(--space-6)',
+        // AppShell main no longer reserves --title-bar-height — the
+        // hero absorbs that offset itself so the colour-extracted
+        // backdrop extends to y=0 of the window.
+        padding:
+          'calc(var(--title-bar-height) + var(--space-3)) var(--space-6) var(--space-6)',
         background: backdrop,
         // Smooth color transition when colors prop updates after async
         // palette extraction settles.
