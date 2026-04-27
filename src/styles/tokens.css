@@ -10,9 +10,12 @@
   --color-text-secondary: oklch(82% 0 0);
   --color-text-tertiary: oklch(75% 0 0);
 
-  /* Accent — warm red, YouTube Music-inspired */
-  --color-accent: oklch(62% 0.24 25);
-  --color-accent-hover: oklch(68% 0.24 25);
+  /* Accent — YouTube logo red (#FF0000) converted to oklch.
+     Pure RGB red lands at ~oklch(63% 0.258 29). The hover variant
+     lifts lightness without shifting hue or chroma so the relationship
+     between rest and hover stays neutral. */
+  --color-accent: oklch(63% 0.258 29);
+  --color-accent-hover: oklch(69% 0.258 29);
 
   /* Glass — Liquid Glass system. Three opacity tiers cover every
      surface in the UI:
@@ -51,9 +54,11 @@
      sees the uniform --color-bg and refracts to dark — making the
      glass invisible. Two soft radial colour washes on the body give
      the glass surfaces something visible to refract, even on pages
-     that are otherwise mostly dark. */
-  --ambient-tint-1: oklch(40% 0.16 280);
-  --ambient-tint-2: oklch(45% 0.18 25);
+     that are otherwise mostly dark. Lightness reduced again
+     (24→14, 26→16) so the gradient reads properly dark while still
+     leaving a hint of chroma for the glass plates to refract. */
+  --ambient-tint-1: oklch(14% 0.10 280);
+  --ambient-tint-2: oklch(16% 0.12 25);
 
   /* Typography */
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',

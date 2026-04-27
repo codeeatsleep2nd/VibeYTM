@@ -89,7 +89,7 @@ textarea,
 }
 
 ::selection {
-  background: oklch(62% 0.24 25 / 0.4);
+  background: oklch(63% 0.258 29 / 0.4);
   color: var(--color-text-primary);
 }
 

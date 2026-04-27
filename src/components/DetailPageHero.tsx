@@ -1,4 +1,5 @@
 import { type FC, type ReactNode, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import type { CoverColors } from '../lib/coverColors';
 import { CachedImage } from './CachedImage';
 
@@ -47,8 +48,6 @@ interface DetailPageHeroProps {
   extra?: ReactNode;
 }
 
-const HERO_HEIGHT = 320;
-
 /**
  * Color-extracted detail-page hero. Cover art on the left, kind +
  * title + meta + description on the right, a primary Play / optional
@@ -92,36 +91,57 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
     <header
       style={{
         position: 'relative',
-        minHeight: HERO_HEIGHT,
-        padding:
-          'calc(var(--title-bar-height) + var(--space-3)) var(--space-6) var(--space-6)',
+        // paddingTop matches the sidebar Home button's y
+        // (title-bar-height + space-3 = 50) so the cover image (first
+        // in-flow child now that the back button is position: fixed)
+        // sits at the same y as the Home button. paddingBottom hugs
+        // the cover/title block so the track list sits directly below
+        // the hero with no extra gap.
+        padding: 'calc(var(--title-bar-height) + var(--space-3)) var(--space-6) var(--space-3)',
         background: backdrop,
         // Smooth color transition when colors prop updates after async
         // palette extraction settles.
         transition: 'background 700ms var(--ease-out)',
       }}
     >
-      <button
-        type="button"
-        onClick={onBack}
-        aria-label="Back"
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 32,
-          height: 32,
-          borderRadius: 'var(--radius-full)',
-          background: 'oklch(0% 0 0 / 0.35)',
-          color: 'var(--color-text-primary)',
-          border: 'none',
-          cursor: 'pointer',
-          fontSize: 'var(--text-base)',
-          marginBottom: 'var(--space-4)',
-        }}
-      >
-        ←
-      </button>
+      {createPortal(
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="Back"
+          style={{
+            // Portaled to document.body so the button shares the body
+            // stacking context with the title-bar drag region (z 200)
+            // — it can then sit above with `zIndex: 250`. Inside the
+            // page tree, the button would be trapped in `<main>`'s
+            // ancestor stacking context (capped below the drag
+            // region's z), which is why a plain `position: fixed`
+            // alone wasn't enough. Also flagged `no-drag` so macOS
+            // WKWebView returns clicks to it instead of treating the
+            // y-band as a window-drag handle.
+            position: 'fixed',
+            top: 'var(--space-2)',
+            left: 'calc(var(--sidebar-width) + var(--space-6))',
+            zIndex: 250,
+            // @ts-expect-error -- non-standard WebKit property for Tauri window dragging
+            WebkitAppRegion: 'no-drag',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 32,
+            height: 32,
+            borderRadius: 'var(--radius-full)',
+            background: 'oklch(0% 0 0 / 0.35)',
+            color: 'var(--color-text-primary)',
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: 'var(--text-base)',
+          }}
+        >
+          ←
+        </button>,
+        document.body,
+      )}
 
       <div
         style={{

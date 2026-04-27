@@ -8,7 +8,6 @@ import { SongRow } from '../browse/SongRow';
 import { LoadingSpinner } from '../LoadingOverlay';
 import { DetailPageHero } from '../DetailPageHero';
 import { SkeletonDetailHero, SkeletonRow } from '../Skeleton';
-import { LiquidGlass } from '@liquidglass/react';
 
 interface PlaylistDetailPageProps {
   playlistId: string;
@@ -307,95 +306,65 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
   return (
     <section
       style={{
+        // Cover the entire right column of the AppShell grid — top to
+        // bottom, edge to edge of the right side. The hero (cover, title,
+        // play-all, save) is pinned to the top of the page; only the
+        // track list inside the lower flex child scrolls.
         display: 'flex',
         flexDirection: 'column',
-        overflowY: 'auto',
-        height: '100%',
+        height: '100vh',
+        overflow: 'hidden',
       }}
     >
-      {/* 12 px seam — see HomePage. */}
-      <div style={{ height: 'var(--space-3)', flexShrink: 0 }} aria-hidden="true" />
+      {/* Fixed hero block — flexShrink: 0 keeps it at its natural
+          height while the sibling track list owns the scroll. */}
+      <div style={{ flexShrink: 0 }}>
+        <DetailPageHero
+          title={playlist.title}
+          kind={isShow ? 'Show' : isAlbum ? 'Album' : 'Playlist'}
+          coverUrl={playlist.artworkUrl ?? ''}
+          colors={heroColors}
+          meta={
+            playlist.trackCount !== undefined
+              ? `${playlist.trackCount} ${isShow ? 'episodes' : 'songs'}`
+              : undefined
+          }
+          description={playlist.description ?? undefined}
+          onBack={onBack}
+          onPlay={handlePlayAll}
+          save={
+            // Save block hidden for shows — the YTM save target for a
+            // podcast lives on a different library surface we don't
+            // round-trip yet.
+            isShow
+              ? undefined
+              : {
+                  isSaved,
+                  isAlbum,
+                  isSaving,
+                  onToggle: toggleSaved,
+                  error: saveError,
+                }
+          }
+        />
+      </div>
+
+      {/* Track list — only scrolling region on the page. The wrapper
+          shares the hero's left margin (space-6) so the row's outer
+          edge — and the hover/selection background that paints to
+          that edge — aligns with the hero cover image's left. The
+          row's own internal padding stays inside that edge as
+          breathing room for the row's content. */}
       <div
         style={{
-          position: 'sticky',
-          top: 'var(--space-3)',
-          zIndex: 10,
-          margin: '0 var(--space-6) var(--space-4)',
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '0 var(--space-6) 0 var(--space-6)',
         }}
       >
-        <LiquidGlass
-          borderRadius={150}
-          blur={8}
-          contrast={1.2}
-          brightness={1.05}
-          saturation={1.1}
-          shadowIntensity={0.25}
-          displacementScale={1}
-          elasticity={1}
-          zIndex={10}
-        >
-          <div
-            style={{
-              width: '100%',
-              padding:
-                'calc(var(--title-bar-height) - var(--space-3)) var(--space-10) var(--space-3)',
-              background: 'oklch(20% 0.005 270 / 0.30)',
-              borderRadius: 'inherit',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 'var(--space-3)',
-            }}
-          >
-            <h1
-              style={{
-                fontSize: 'var(--text-2xl)',
-                fontWeight: 700,
-                letterSpacing: '-0.02em',
-                color: 'var(--color-text-primary)',
-                margin: 0,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                minWidth: 0,
-              }}
-            >
-              {playlist.title}
-            </h1>
-          </div>
-        </LiquidGlass>
-      </div>
-      <DetailPageHero
-        title={playlist.title}
-        kind={isShow ? 'Show' : isAlbum ? 'Album' : 'Playlist'}
-        coverUrl={playlist.artworkUrl ?? ''}
-        colors={heroColors}
-        meta={
-          playlist.trackCount !== undefined
-            ? `${playlist.trackCount} ${isShow ? 'episodes' : 'songs'}`
-            : undefined
-        }
-        description={playlist.description ?? undefined}
-        onBack={onBack}
-        onPlay={handlePlayAll}
-        save={
-          // Save block hidden for shows — the YTM save target for a
-          // podcast lives on a different library surface we don't
-          // round-trip yet.
-          isShow
-            ? undefined
-            : {
-                isSaved,
-                isAlbum,
-                isSaving,
-                onToggle: toggleSaved,
-                error: saveError,
-              }
-        }
-      />
-
-      {/* Track list */}
-      <div style={{ display: 'flex', flexDirection: 'column', padding: '0 var(--space-6) var(--space-8)' }}>
         {playlist.tracks.map((track, i) => (
           <SongRow
             key={track.videoId || `track-${i}`}
@@ -416,6 +385,21 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
             No tracks found
           </div>
         )}
+        {/* Invisible spacer so the last song row clears the floating
+            player chrome. Height = player-bar-height (chrome itself) +
+            space-3 (chrome's bottom margin from the window) + space-3
+            (breathing room above the chrome). WebKit's
+            `overflow: auto` excludes paddingBottom from `scrollHeight`,
+            so the spacer must be a real DOM child to extend the
+            scrollable area. */}
+        <div
+          aria-hidden="true"
+          style={{
+            flexShrink: 0,
+            height:
+              'calc(var(--player-bar-height) + var(--space-3) * 2)',
+          }}
+        />
       </div>
     </section>
   );
