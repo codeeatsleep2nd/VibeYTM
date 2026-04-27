@@ -19,12 +19,11 @@ body {
   font-family: var(--font-sans);
   font-size: var(--text-base);
   color: var(--color-text-primary);
-  /* Body is transparent so the title-bar drag region (the top
-     --title-bar-height of the window) shows through to the desktop.
-     The ambient gradient that the Liquid Glass surfaces refract is
-     applied INSIDE the AppShell content cells (`.app-ambient`) so it
-     covers the visible app area but stops at the top transparent
-     strip. */
+  /* Body is transparent so the top --title-bar-height strip of the
+     Tauri window shows through to whatever is behind the window
+     (desktop wallpaper). The ambient gradient that Liquid Glass
+     surfaces refract is painted by `.app-ambient` inside AppShell,
+     starting BELOW that strip. */
   background: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -158,11 +157,10 @@ body {
   box-shadow: none;
 }
 
-/* Ambient page colour wash — applied to the AppShell area below the
-   drag region. Same recipe that used to sit on body, but offset so the
-   top --title-bar-height stays transparent (Tauri window is now
-   transparent for that strip). Layered behind every page so liquidGL
-   has colour to refract. */
+/* Ambient colour wash — covers the whole visible app area EXCEPT the
+   top --title-bar-height strip (which is left transparent by design,
+   showing the desktop through the Tauri window). Stays behind every
+   other layer (z-index: -1) so liquidGL surfaces refract it. */
 .app-ambient {
   position: absolute;
   top: var(--title-bar-height);
