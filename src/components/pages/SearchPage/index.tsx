@@ -253,15 +253,16 @@ export const SearchPage: FC<SearchPageProps> = ({
         className="liquid-glass-chrome"
         style={{
           position: 'sticky',
-          top: 'var(--space-3)',
+          // Plate hugs main's top edge — see HomePage.
+          top: 0,
           zIndex: 20,
-          // Plate edges align with content rows below — see HomePage.
+          // Title text aligns with content text below — see HomePage.
           marginBottom: 'var(--space-4)',
           borderRadius: 'var(--radius-xl)',
-          paddingTop: 'var(--space-8)',
-          paddingBottom: 'var(--space-8)',
-          paddingLeft: 'var(--space-6)',
-          paddingRight: 'var(--space-6)',
+          paddingTop: 'var(--space-3)',
+          paddingBottom: 'var(--space-3)',
+          paddingLeft: 0,
+          paddingRight: 0,
         }}
       >
       <div className="liquidGL-pane" aria-hidden="true" />
