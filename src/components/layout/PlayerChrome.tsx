@@ -1,4 +1,5 @@
 import { type FC, type ReactNode, useEffect, useRef } from 'react';
+import { LiquidGlass } from '@liquidglass/react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { preloadLyrics } from '../../hooks/useLyrics';
 import { preloadAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
@@ -294,24 +295,51 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
 
   return (
     <footer
+      // Positioning wrapper — a fixed strip at the bottom of the
+      // window. The visible glass capsule is the `<LiquidGlass>` child;
+      // matches the floating-pill shape used by every page's top
+      // title plate.
       style={{
         position: 'fixed',
-        bottom: 0,
-        left: 'var(--sidebar-width)',
-        right: 0,
+        bottom: 'var(--space-3)',
+        left: 'calc(var(--sidebar-width) + var(--space-4))',
+        right: 'var(--space-4)',
+        // Explicit height — `<LiquidGlass>` inside takes 100 % of its
+        // parent. Without this the footer auto-fits and the WebGL/SVG
+        // wrapper collapses, clipping the controls' top edge.
         height: 'var(--player-bar-height)',
-        background: 'var(--glass-bg-chrome)',
-        backdropFilter: 'blur(var(--glass-blur))',
-        WebkitBackdropFilter: 'blur(var(--glass-blur))',
-        borderTop: '1px solid var(--glass-rim-mid)',
-        boxShadow: 'inset 0 1px 0 var(--glass-rim-mid)',
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 var(--space-4)',
-        gap: 'var(--space-3)',
-        zIndex: 100,
+        // Above every overlay surface so the floating capsule is
+        // never occluded — sits below only the title-bar drag region
+        // (z 200, top of window only).
+        zIndex: 150,
       }}
     >
+      <LiquidGlass
+        borderRadius={150}
+        blur={8}
+        contrast={1.2}
+        brightness={1.05}
+        saturation={1.1}
+        shadowIntensity={0.25}
+        displacementScale={1}
+        elasticity={1}
+        zIndex={150}
+      ><div
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 var(--space-10)',
+          gap: 'var(--space-3)',
+          // Semi-transparent dark wash inside the LiquidGlass capsule
+          // so the chrome reads as a discrete plate even in WebKit
+          // (where LiquidGlass's SVG displacement filter is dropped
+          // and only the backdrop-filter blur applies). Translucent
+          // enough that the page still bleeds through.
+          background: 'oklch(20% 0.005 270 / 0.30)',
+        }}
+      >
       {/* LEFT — transports (Apple Music: flat white glyphs, prev/play/next
           rendered as filled SF-Symbol shapes; shuffle/repeat are smaller
           stroke icons that bracket the row at lower visual weight) */}
@@ -467,6 +495,8 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
           <QueueIcon size={20} />
         </ChromeButton>
       </div>
+      </div>
+      </LiquidGlass>
     </footer>
   );
 };

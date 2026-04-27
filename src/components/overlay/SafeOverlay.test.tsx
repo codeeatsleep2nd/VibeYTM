@@ -72,7 +72,7 @@ describe('SafeOverlay', () => {
     expect(wrapper.style.transform).toMatch(/translateY\(\d+(\.\d+)?px\)/);
   });
 
-  it('slideFrom=right: open=translateX(0), closed=translateX(100%)', () => {
+  it('slideFrom=right: open=translateX(0), closed=translateX past the right inset', () => {
     const { rerender } = render(
       <SafeOverlay isOpen slideFrom="right" ariaLabel="test">
         <div>content</div>
@@ -84,10 +84,15 @@ describe('SafeOverlay', () => {
         <div>content</div>
       </SafeOverlay>,
     );
-    expect(screen.getByLabelText('test').style.transform).toMatch(/translateX\(100%\)/);
+    // Translation must move past the right inset to fully clear the
+    // window edge (otherwise a sliver of the panel's left edge stays
+    // visible when the drawer is meant to be hidden).
+    expect(screen.getByLabelText('test').style.transform).toMatch(
+      /translateX\(calc\(100% \+ /,
+    );
   });
 
-  it('slideFrom=right: opacity stays 1 (slide-only motion, no fade)', () => {
+  it('slideFrom=right: closed opacity drops to 0 so the panel is fully hidden', () => {
     const { rerender } = render(
       <SafeOverlay isOpen slideFrom="right" ariaLabel="test">
         <div>content</div>
@@ -99,7 +104,7 @@ describe('SafeOverlay', () => {
         <div>content</div>
       </SafeOverlay>,
     );
-    expect(screen.getByLabelText('test').style.opacity).toBe('1');
+    expect(screen.getByLabelText('test').style.opacity).toBe('0');
   });
 
   it('NEVER applies transform: scale on the wrapper', () => {

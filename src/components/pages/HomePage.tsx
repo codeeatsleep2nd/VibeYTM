@@ -183,11 +183,18 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
   const content = (
     <section
       style={{
-        padding: '0 var(--space-6) var(--space-8)',
+        padding: '0 var(--space-6)',
         overflowY: 'auto',
         height: '100%',
       }}
     >
+      {/* 12 px seam spacer — pushes the plate down by `--space-3` at
+          scroll=0 so the seam is visible above the plate. As the user
+          scrolls, this spacer scrolls up and out, and content rows
+          that have scrolled past the plate's sticky position are
+          briefly visible in the seam before being clipped at
+          section's top edge. */}
+      <div style={{ height: 'var(--space-3)', flexShrink: 0 }} aria-hidden="true" />
       <div
         // Sticky positioning wrapper. The actual glass surface is the
         // `<LiquidGlass>` child — it can't carry sticky positioning
@@ -195,6 +202,10 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
         // children via flex), so we wrap it.
         style={{
           position: 'sticky',
+          // Sticks 12 px below section's viewport top — the seam
+          // window. Scrolled content is visible passing through that
+          // 12 px gap as it scrolls past the plate's sticky position
+          // and is clipped at section.top.
           top: 'var(--space-3)',
           zIndex: 10,
           marginBottom: 'var(--space-4)',
@@ -202,15 +213,33 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
       >
       <LiquidGlass
         borderRadius={150}
-        blur={1}
+        blur={8}
         contrast={1.2}
         brightness={1.05}
         saturation={1.1}
         shadowIntensity={0.25}
         displacementScale={1}
-        elasticity={0.6}
+        elasticity={1}
         zIndex={10}
-      ><div style={{ width: '100%', padding: 'var(--space-6) 0' }}>
+      ><div
+        style={{
+          width: '100%',
+          // Top padding includes `--title-bar-height` so the title
+          // text clears the drag region (the plate now touches y=0
+          // of the window — see AppShell main's removed paddingTop).
+          // Title text lands at `y = title-bar-height` (just under the
+          // drag region). main has `paddingTop: var(--space-3)` (the
+          // visible seam), so the plate's own paddingTop only needs
+          // to cover the remaining `title-bar-height - space-3`.
+          padding:
+            'calc(var(--title-bar-height) - var(--space-3)) var(--space-10) var(--space-3)',
+          // Same semi-transparent dark wash as the player chrome — the
+          // capsule reads as a discrete plate even when WebKit drops
+          // the LiquidGlass SVG displacement filter.
+          background: 'oklch(20% 0.005 270 / 0.30)',
+          borderRadius: 'inherit',
+        }}
+      >
       <div
         style={{
           display: 'flex',
@@ -346,6 +375,16 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
             {renderShelfContent(shelf, onOpenPlaylist)}
           </ShelfRow>
         ))}
+      {/* Spacer reserves scroll room above the floating player chrome.
+          A real DOM child (not padding-bottom) — WebKit drops
+          padding-bottom from `scrollHeight` on overflow containers. */}
+      <div
+        style={{
+          height: 'calc(var(--player-bar-height) + var(--space-6))',
+          flexShrink: 0,
+        }}
+        aria-hidden="true"
+      />
     </section>
   );
 

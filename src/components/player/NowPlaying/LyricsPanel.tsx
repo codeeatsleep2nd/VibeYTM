@@ -48,8 +48,12 @@ const CONTAINER_STYLE: CSSProperties = {
   // title-bar and player-bar on the outside; only the top space-3 padding
   // is on the inside (no bottom padding — the panel's bottom edge aligns
   // exactly with the chrome's top, per user request).
+  // Bottom edge matches the QueuePanel's bottom edge: sit
+  // `var(--space-3)` above the player chrome's top so the rounded
+  // bottom corners are visible (without this gap the panel ends
+  // flush with the chrome's top edge).
   height:
-    'calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3))',
+    'calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) * 2)',
   padding: 'var(--space-6)',
   // Liquid Glass card tier — translucent surface so the cover-tinted
   // backdrop and ambient page colour bleed through. Backdrop-filter

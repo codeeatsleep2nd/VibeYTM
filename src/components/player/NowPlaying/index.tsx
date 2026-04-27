@@ -107,8 +107,18 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
       ariaLabel="Now playing"
       slideFrom="bottom"
       zIndex={80}
-      background="var(--glass-bg-chrome)"
-      backdropFilter="blur(var(--glass-blur))"
+      // Cover the entire main content area (right of the sidebar) —
+      // top to bottom of the window, edge to edge of the right side.
+      // Sidebar stays visible on the left; title-bar drag region and
+      // player chrome remain on top via their higher z-indexes.
+      inset={{
+        top: '0',
+        left: 'var(--sidebar-width)',
+        right: '0',
+        bottom: '0',
+      }}
+      background="transparent"
+      backdropFilter="blur(40px) saturate(180%)"
       boxShadow="0 -8px 32px oklch(0% 0 0 / 0.35)"
     >
       <NowPlayingBody
@@ -187,13 +197,12 @@ const NowPlayingBody: FC<NowPlayingBodyProps> = ({
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
-        // Match the sidebar nav's top padding (var(--space-3)) so the top of
-        // the cover / lyrics panel lines up with the Home button. Left padding
-        // gives breathing room from the sidebar; right padding is asymmetric
-        // ONLY when lyrics is showing — that lets the lyrics column extend
-        // to the window edge. With lyrics closed the right padding mirrors
-        // the left so `justifyContent: center` actually centers the cover.
-        paddingTop: 'var(--space-3)',
+        // Cover top aligns with the sidebar's Home button:
+        //   sidebar.paddingTop (= title-bar-height) + nav.padding (= space-3)
+        // So the cover sits at exactly the same y as the first sidebar
+        // nav item's top edge, regardless of overlay inset.
+        paddingTop:
+          'calc(var(--title-bar-height) + var(--space-3))',
         paddingLeft: 'var(--space-6)',
         paddingRight: splitMode ? 0 : 'var(--space-6)',
         // No bottom padding — the overlay's bottom edge already aligns
@@ -257,24 +266,21 @@ const NowPlayingBody: FC<NowPlayingBodyProps> = ({
           <div
             aria-hidden={!showLyrics}
             style={{
-              // The right-slot column. Driven by `splitMode` so the cover
-              // shifts whenever EITHER lyrics OR queue is open — even
-              // queue-only renders an invisible spacer here so the cover
-              // sits in the same position. The lyric CONTENT visibility
-              // (opacity / translateX slide) is gated on `showLyrics`.
+              // The right-slot column reserves the lyrics width on the
+              // page when `splitMode` is true (queue OR lyrics) so the
+              // cover always shifts to the same side position. The
+              // lyrics card inside slides via translateX — same motion
+              // pattern as `<SafeOverlay slideFrom="right">` used by
+              // QueuePanel.
               flex: splitMode ? '1 1 0' : '0 0 0',
               width: splitMode ? 'auto' : '0',
               marginLeft: splitMode ? 'var(--space-5)' : '0',
               paddingRight: splitMode ? 'var(--space-6)' : '0',
               height: '100%',
               minWidth: 0,
-              overflow: 'hidden',
-              // AND with `isOpen` (read from SafeOverlay's context): the
-              // parent overlay sets pointer-events `none` when closed,
-              // but a child that sets `auto` overrides the parent.
-              // Without the AND, a closed-but-LRC-still-on overlay
-              // would leak click-stealing pointer-events over the new
-              // page after sidebar nav.
+              // No `overflow: hidden` here — would clip the LyricsPanel's
+              // box-shadow / rounded corners. The translateX slide
+              // off-screen-right is enough to hide the panel.
               pointerEvents: isOpen && showLyrics ? 'auto' : 'none',
               transition:
                 'flex-basis 420ms cubic-bezier(0.22, 1, 0.36, 1), margin-left 420ms cubic-bezier(0.22, 1, 0.36, 1), padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1)',
@@ -284,15 +290,18 @@ const NowPlayingBody: FC<NowPlayingBodyProps> = ({
               style={{
                 width: '100%',
                 height: '100%',
-                // No `transform` on this wrapper — translate-X creates a
-                // containing block that interfered with the auto-scroll
-                // math (`getBoundingClientRect` / `scrollBy`) inside the
-                // `LyricsPanel`'s scroll container. The column's
-                // flex-basis animation above (0 → 1) already produces a
-                // right-edge slide-in effect when LRC opens; opacity
-                // alone is enough for the fade.
+                // Slide-from-right entrance. Same translate-X transition
+                // QueuePanel uses (via SafeOverlay's `slideFrom="right"`)
+                // so both side panels animate identically. The closed
+                // distance is `100vw` (full viewport width) — a
+                // percentage `100%` would resolve against the inner
+                // div's own width which is 0 when the column has
+                // collapsed (`flex: 0 0 0`), leaving the panel
+                // technically visible.
+                transform: showLyrics ? 'translateX(0)' : 'translateX(100vw)',
                 opacity: showLyrics ? 1 : 0,
-                transition: 'opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
+                transition:
+                  'transform 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
               }}
             >
               <LyricsPanel

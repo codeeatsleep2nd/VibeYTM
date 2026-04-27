@@ -68,7 +68,11 @@ export const NowPlayingCard: FC<Props> = ({ onOpenNowPlaying, nowPlayingOpen }) 
         width: '100%',
         maxWidth: '520px',
         height: '56px',
-        background: 'var(--color-surface-2)',
+        // Semi-transparent so the LiquidGlass plate behind it reads
+        // as one continuous surface. White tint at 10 % so the card
+        // still has its own discrete frame within the chrome plate.
+        background: 'oklch(100% 0 0 / 0.10)',
+        border: '1px solid oklch(100% 0 0 / 0.14)',
         borderRadius: 'var(--radius-md)',
         padding: '6px var(--space-3) 6px 6px',
         overflow: 'hidden',
@@ -238,12 +242,19 @@ export const NowPlayingCard: FC<Props> = ({ onOpenNowPlaying, nowPlayingOpen }) 
             position: 'absolute',
             left: 0,
             right: 0,
-            bottom: 0,
+            // Input is 12 px tall with a 3 px visible band centered;
+            // shift it down by 4.5 px so the band's bottom edge is
+            // FLUSH with the card's bottom edge (= the band IS the
+            // card's bottom border). Parent's `overflow: hidden`
+            // clips the input's lower half + the bottom of the
+            // hover thumb — acceptable: the thumb stays half-
+            // visible and clickable.
+            bottom: '-4.5px',
             width: '100%',
-            // Track and thumb both centered in the 12px input, so the
-            // hover thumb sits ON the visible 3px band. Visible band is
-            // ~4-5px above the card's bottom edge — close enough to
-            // "embedded at bottom" without breaking thumb alignment.
+            // One layer above the card's text/cover/buttons so the
+            // hover thumb + extended hit area sit on top of any
+            // siblings instead of being occluded by them.
+            zIndex: 2,
             backgroundImage: `linear-gradient(to right, var(--color-text-secondary) ${
               progress * 100
             }%, var(--color-surface-3) ${progress * 100}%)`,

@@ -8,6 +8,7 @@ import { SongRow } from '../browse/SongRow';
 import { LoadingSpinner } from '../LoadingOverlay';
 import { DetailPageHero } from '../DetailPageHero';
 import { SkeletonDetailHero, SkeletonRow } from '../Skeleton';
+import { LiquidGlass } from '@liquidglass/react';
 
 interface PlaylistDetailPageProps {
   playlistId: string;
@@ -312,6 +313,58 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
         height: '100%',
       }}
     >
+      {/* 12 px seam — see HomePage. */}
+      <div style={{ height: 'var(--space-3)', flexShrink: 0 }} aria-hidden="true" />
+      <div
+        style={{
+          position: 'sticky',
+          top: 'var(--space-3)',
+          zIndex: 10,
+          margin: '0 var(--space-6) var(--space-4)',
+        }}
+      >
+        <LiquidGlass
+          borderRadius={150}
+          blur={8}
+          contrast={1.2}
+          brightness={1.05}
+          saturation={1.1}
+          shadowIntensity={0.25}
+          displacementScale={1}
+          elasticity={1}
+          zIndex={10}
+        >
+          <div
+            style={{
+              width: '100%',
+              padding:
+                'calc(var(--title-bar-height) - var(--space-3)) var(--space-10) var(--space-3)',
+              background: 'oklch(20% 0.005 270 / 0.30)',
+              borderRadius: 'inherit',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 'var(--space-3)',
+            }}
+          >
+            <h1
+              style={{
+                fontSize: 'var(--text-2xl)',
+                fontWeight: 700,
+                letterSpacing: '-0.02em',
+                color: 'var(--color-text-primary)',
+                margin: 0,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                minWidth: 0,
+              }}
+            >
+              {playlist.title}
+            </h1>
+          </div>
+        </LiquidGlass>
+      </div>
       <DetailPageHero
         title={playlist.title}
         kind={isShow ? 'Show' : isAlbum ? 'Album' : 'Playlist'}

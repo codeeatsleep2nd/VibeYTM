@@ -121,7 +121,13 @@ export const QueueRow: FC<QueueRowProps> = ({
     padding: 'var(--space-2) var(--space-3)',
     borderRadius: 'var(--radius-sm)',
     width: '100%',
-    background: highlighted ? 'var(--color-surface-2)' : 'transparent',
+    // Translucent highlight so the LiquidGlass plate behind the queue
+    // remains visible — matches the rest of the UI's glass treatment.
+    // (The previous opaque `var(--color-surface-2)` painted a flat
+    // dark stripe over the glass.)
+    background: highlighted
+      ? 'oklch(100% 0 0 / 0.10)'
+      : 'transparent',
     border: 'none',
     color: 'inherit',
     textAlign: 'left' as const,

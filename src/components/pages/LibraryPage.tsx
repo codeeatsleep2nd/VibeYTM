@@ -160,11 +160,12 @@ export const LibraryPage: FC<LibraryPageProps> = ({
   const content = (
     <section
       style={{
-        padding: '0 var(--space-6) var(--space-8)',
+        padding: '0 var(--space-6)',
         overflowY: 'auto',
         height: '100%',
       }}
     >
+      <div style={{ height: 'var(--space-3)', flexShrink: 0 }} aria-hidden="true" />
       <div
         style={{
           position: 'sticky',
@@ -175,15 +176,23 @@ export const LibraryPage: FC<LibraryPageProps> = ({
       >
         <LiquidGlass
           borderRadius={150}
-          blur={1}
+          blur={8}
           contrast={1.2}
           brightness={1.05}
           saturation={1.1}
           shadowIntensity={0.25}
           displacementScale={1}
-          elasticity={0.6}
+          elasticity={1}
           zIndex={10}
-        ><div style={{ width: '100%', padding: 'var(--space-6)' }}>
+        ><div
+          style={{
+            width: '100%',
+            padding:
+              'calc(var(--title-bar-height) - var(--space-3)) var(--space-10) var(--space-3)',
+            background: 'oklch(20% 0.005 270 / 0.30)',
+            borderRadius: 'inherit',
+          }}
+        >
           <h1
             style={{
               fontSize: 'var(--text-2xl)',
@@ -389,6 +398,13 @@ export const LibraryPage: FC<LibraryPageProps> = ({
           )}
         </>
       )}
+      <div
+        style={{
+          height: 'calc(var(--player-bar-height) + var(--space-6))',
+          flexShrink: 0,
+        }}
+        aria-hidden="true"
+      />
     </section>
   );
 

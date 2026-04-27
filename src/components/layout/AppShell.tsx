@@ -56,15 +56,28 @@ export const AppShell: FC<AppShellProps> = ({
     <main
       style={{
         overflow: 'auto',
-        // Reserve space for the title-bar drag region — page content
-        // renders below it so the sticky title plate floats as a
-        // rounded capsule with the body's ambient gradient visible
-        // above its top edge (instead of the plate's top edge being
-        // hidden under the drag region).
-        paddingTop: 'var(--title-bar-height)',
-        paddingBottom: 'var(--player-bar-height)',
+        // No paddingTop — the 12 px seam is now INSIDE each section
+        // (a spacer at the start of section's scroll content). The
+        // title plate sticks just below the spacer (sticky `top:
+        // var(--space-3)`), so as content scrolls, scrolled rows
+        // visibly pass through the seam window before being clipped
+        // at section's top edge.
       }}
     >
+      {/*
+        No paddingBottom on `<main>` and no extra wrapper div around
+        children — both broke things:
+          • paddingBottom on an `overflow:auto` container is excluded
+            from `scrollHeight` in WebKit / WKWebView, so content
+            scrolls UNDER the floating player chrome.
+          • a wrapper div with paddingBottom collapsed each page's
+            `<section style={{ height: '100% }}>` to 0 (its parent's
+            height became `auto`), which destroyed the sticky context
+            for each page's title plate (the plate scrolled away with
+            main instead of pinning).
+        Each page reserves the bottom space itself via a spacer div at
+        the end of its `<section>` (see HomePage / SearchPage / etc.).
+      */}
       {children}
     </main>
 

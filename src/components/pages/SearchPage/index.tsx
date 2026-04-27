@@ -236,11 +236,12 @@ export const SearchPage: FC<SearchPageProps> = ({
   return (
     <section
       style={{
-        padding: '0 var(--space-6) var(--space-8)',
+        padding: '0 var(--space-6)',
         overflowY: 'auto',
         height: '100%',
       }}
     >
+      <div style={{ height: 'var(--space-3)', flexShrink: 0 }} aria-hidden="true" />
       {/*
         Sticky wrapper keeps the search bar + category tabs pinned while the
         results scroll underneath (issue #58). Top padding matches the
@@ -257,15 +258,23 @@ export const SearchPage: FC<SearchPageProps> = ({
       >
       <LiquidGlass
         borderRadius={150}
-        blur={1}
+        blur={8}
         contrast={1.2}
         brightness={1.05}
         saturation={1.1}
         shadowIntensity={0.25}
         displacementScale={1}
-        elasticity={0.6}
+        elasticity={1}
         zIndex={20}
-      ><div style={{ width: '100%', padding: 'var(--space-6)' }}>
+      ><div
+        style={{
+          width: '100%',
+          padding:
+            'calc(var(--title-bar-height) - var(--space-3)) var(--space-10) var(--space-3)',
+          background: 'oklch(20% 0.005 270 / 0.30)',
+          borderRadius: 'inherit',
+        }}
+      >
       <div
         style={{
           position: 'relative',
@@ -328,7 +337,7 @@ export const SearchPage: FC<SearchPageProps> = ({
             setShowSuggestions(true);
           }}
           onBlur={(e) => {
-            e.currentTarget.style.borderColor = 'oklch(100% 0 0 / 0.08)';
+            e.currentTarget.style.borderColor = 'oklch(100% 0 0 / 0.14)';
             // Delay hiding so onMouseDown on a suggestion can fire first.
             window.setTimeout(() => setShowSuggestions(false), 150);
           }}
@@ -336,8 +345,11 @@ export const SearchPage: FC<SearchPageProps> = ({
             width: '100%',
             padding:
               'var(--space-3) var(--space-4) var(--space-3) var(--space-10)',
-            background: 'var(--color-surface-2)',
-            border: '1px solid oklch(100% 0 0 / 0.08)',
+            // Translucent so the LiquidGlass plate behind it remains
+            // visible — the previous opaque surface-2 fill broke the
+            // glass effect with a flat dark pill in the middle.
+            background: 'oklch(100% 0 0 / 0.06)',
+            border: '1px solid oklch(100% 0 0 / 0.14)',
             borderRadius: 'var(--radius-full)',
             fontSize: 'var(--text-base)',
             color: 'var(--color-text-primary)',
@@ -879,7 +891,13 @@ export const SearchPage: FC<SearchPageProps> = ({
         </div>
       )}
       </div>
-
+      <div
+        style={{
+          height: 'calc(var(--player-bar-height) + var(--space-6))',
+          flexShrink: 0,
+        }}
+        aria-hidden="true"
+      />
     </section>
   );
 };

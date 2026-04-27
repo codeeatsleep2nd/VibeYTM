@@ -278,9 +278,10 @@ export const SettingsPage: FC = () => {
           fontWeight: 700,
           letterSpacing: '-0.02em',
           color: 'var(--color-text-primary)',
-          // Match the sidebar Settings button's vertical position
-          // (issue #59).
-          paddingTop: 'var(--space-3)',
+          // Clear the drag region (AppShell main no longer pads at
+          // top). Title text appears below the drag region with the
+          // same `var(--space-3)` gap as before.
+          paddingTop: 'calc(var(--title-bar-height) + var(--space-3))',
           marginBottom: 'var(--space-2)',
         }}
       >

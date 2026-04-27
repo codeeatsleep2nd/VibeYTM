@@ -66,6 +66,11 @@ interface SafeOverlayProps {
    *  drawers that want a Liquid-Glass surface. Translucent backgrounds
    *  on `position:fixed` overlays look flat without it. */
   backdropFilter?: string;
+  /** Optional rounded corners. Used when the drawer should read as a
+   *  floating glass card rather than a slab pinned to a window edge. */
+  borderRadius?: CSSProperties['borderRadius'];
+  /** Optional border (e.g., `1px solid var(--glass-rim-mid)`). */
+  border?: CSSProperties['border'];
 }
 
 const DEFAULT_INSET: Required<SafeOverlayInset> = {
@@ -113,6 +118,8 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
     flexDirection,
     className,
     backdropFilter,
+    borderRadius,
+    border,
   },
   ref,
 ) {
@@ -130,8 +137,17 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
   let opacityWhenClosed: number;
   switch (effectiveSlide) {
     case 'right':
-      transform = isOpen ? 'translateX(0px)' : 'translateX(100%)';
-      opacityWhenClosed = 1; // slide-only motion; never fades
+      // Slide off-screen by 100% PLUS the right inset, otherwise a
+      // sliver of the panel's left edge equal to `inset.right` stays
+      // visible when closed (the translate moves the panel by its own
+      // width, but the panel sits offset by `right` from the window
+      // edge, so 100% only covers the gap between left/right edges of
+      // the panel itself, not the right margin). Opacity also drops to
+      // 0 as a belt-and-braces guard against any sub-pixel artifact.
+      transform = isOpen
+        ? 'translateX(0px)'
+        : `translateX(calc(100% + ${right}))`;
+      opacityWhenClosed = 0;
       break;
     case 'none':
       transform = 'none';
@@ -176,6 +192,8 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
     transition:
       'opacity var(--duration-normal) var(--ease-out), transform 420ms cubic-bezier(0.22, 1, 0.36, 1)',
     boxShadow,
+    borderRadius,
+    border,
     display,
     flexDirection,
     overflow: display === 'flex' ? 'hidden' : undefined,

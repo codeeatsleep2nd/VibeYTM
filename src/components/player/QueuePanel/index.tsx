@@ -547,17 +547,28 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       as="aside"
       slideFrom="right"
       zIndex={90}
-      background="var(--glass-bg-chrome)"
-      backdropFilter="blur(var(--glass-blur))"
+      // Same frame shape as the LyricsPanel (see
+      // src/components/player/NowPlaying/LyricsPanel.tsx CONTAINER_STYLE):
+      // floating glass card with rounded corners + bright top inset rim
+      // + outer drop shadow. Right inset is space-3 (was 0) so the
+      // rounded right corner has breathing room from the window edge.
+      background="linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.10) 100%), var(--glass-bg-card)"
+      backdropFilter="blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))"
+      border="1px solid var(--glass-rim-mid)"
+      borderRadius="var(--radius-lg)"
       boxShadow={
         isOpen
-          ? 'inset 1px 0 0 var(--glass-rim-mid), -12px 0 36px oklch(0% 0 0 / 0.35)'
+          ? 'inset 0 1px 0 var(--glass-rim-bright), 0 24px 60px oklch(0% 0 0 / 0.5)'
           : undefined
       }
       inset={{
         top: 'calc(var(--title-bar-height) + var(--space-3))',
-        right: '0',
-        bottom: 'var(--player-bar-height)',
+        // Right edge matches the LyricsPanel's right edge: the lyrics
+        // column inside NowPlaying has `paddingRight: var(--space-6)`,
+        // so the lyrics card itself sits `var(--space-6)` in from the
+        // window edge.
+        right: 'var(--space-6)',
+        bottom: 'calc(var(--player-bar-height) + var(--space-3))',
         left: 'calc(var(--sidebar-width) + var(--space-6) + min(800px, calc((2 / 3) * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px)) + var(--space-5))',
       }}
       padding={{ right: 'var(--space-6)' }}
@@ -569,38 +580,25 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          paddingTop: 'var(--space-3)',
           paddingBottom: 'var(--space-3)',
-          borderBottom: '1px solid oklch(100% 0 0 / 0.06)',
+          paddingLeft: 'var(--space-3)',
           flexShrink: 0,
         }}
       >
         <h2
           style={{
             margin: 0,
-            fontSize: 'var(--text-base)',
-            fontWeight: 600,
-            letterSpacing: '-0.01em',
+            // Same scale + weight as the page-level title plates'
+            // h1 so the queue's title reads as a peer page title.
+            fontSize: 'var(--text-2xl)',
+            fontWeight: 700,
+            letterSpacing: '-0.02em',
             color: 'var(--color-text-primary)',
           }}
         >
           Playing queue
         </h2>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close queue"
-          style={{
-            background: 'none',
-            border: 'none',
-            color: 'var(--color-text-tertiary)',
-            fontSize: 'var(--text-lg)',
-            cursor: 'pointer',
-            padding: 'var(--space-1) var(--space-2)',
-            borderRadius: 'var(--radius-sm)',
-          }}
-        >
-          {'×'}
-        </button>
       </header>
 
       <div

@@ -167,13 +167,15 @@ describe('PlayerChrome — contract after Liquid-Glass visual refactor', () => {
     expect(container.innerHTML).not.toMatch(/scale\(/);
   });
 
-  it('chrome footer carries an inline Liquid Glass backdrop-filter', () => {
+  it('chrome footer wraps its content in a `<LiquidGlass>` capsule', () => {
     render(<PlayerChrome {...baseProps} />);
-    // backdrop-filter is now declared inline (the per-surface
-    // utility classes were removed when the app moved to the
-    // `<LiquidGlass>` component for refraction). Pin presence so a
-    // future refactor doesn't silently drop the chrome's blur.
+    // The chrome is now a floating Liquid-Glass capsule (matches the
+    // top title plates' shape). The mock in test-setup renders the
+    // component as a div with `data-mock-liquidglass`; pin its
+    // presence so a future refactor doesn't silently revert to the
+    // flat opaque footer.
     const footer = document.querySelector('footer') as HTMLElement;
-    expect(footer.style.backdropFilter).toMatch(/blur\(/);
+    const lgChild = footer.querySelector('[data-mock-liquidglass]');
+    expect(lgChild).not.toBeNull();
   });
 });
