@@ -167,13 +167,13 @@ describe('PlayerChrome — contract after Liquid-Glass visual refactor', () => {
     expect(container.innerHTML).not.toMatch(/scale\(/);
   });
 
-  it('chrome footer carries the Liquid Glass utility class', () => {
+  it('chrome footer carries an inline Liquid Glass backdrop-filter', () => {
     render(<PlayerChrome {...baseProps} />);
-    // The backdrop-filter + tint live in `.liquid-glass-chrome`
-    // (src/styles/global.css) so a single token edit re-tunes every
-    // chrome surface in the app. Pin the class to fail loudly if a
-    // future refactor accidentally drops the Liquid Glass treatment.
+    // backdrop-filter is now declared inline (the per-surface
+    // utility classes were removed when the app moved to the
+    // `<LiquidGlass>` component for refraction). Pin presence so a
+    // future refactor doesn't silently drop the chrome's blur.
     const footer = document.querySelector('footer') as HTMLElement;
-    expect(footer.className).toContain('liquid-glass-chrome');
+    expect(footer.style.backdropFilter).toMatch(/blur\(/);
   });
 });

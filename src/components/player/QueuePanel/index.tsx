@@ -547,15 +547,11 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       as="aside"
       slideFrom="right"
       zIndex={90}
-      // Same Liquid Glass plate as the player chrome / sidebar / sticky
-      // titles. Recipe mirrors `.liquid-glass-chrome` from global.css
-      // (SafeOverlay sets these inline so we can't use the className —
-      // its inline `background` would win anyway).
-      background="linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 35%, oklch(0% 0 0 / 0.16) 100%), var(--glass-bg-chrome)"
-      backdropFilter="blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))"
+      background="var(--glass-bg-chrome)"
+      backdropFilter="blur(var(--glass-blur))"
       boxShadow={
         isOpen
-          ? 'inset 0 1px 0 var(--glass-rim-bright), inset 1px 0 0 var(--glass-rim-mid), inset 0 -1px 0 oklch(0% 0 0 / 0.20), -12px 0 36px oklch(0% 0 0 / 0.35)'
+          ? 'inset 1px 0 0 var(--glass-rim-mid), -12px 0 36px oklch(0% 0 0 / 0.35)'
           : undefined
       }
       inset={{
@@ -568,9 +564,6 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       display="flex"
       flexDirection="column"
     >
-      {/* liquidGL lens marker — picks up real WebGL refraction at this
-          drawer's bounding rect once liquidGL attaches. */}
-      <div className="liquidGL-pane" aria-hidden="true" />
       <header
         style={{
           display: 'flex',

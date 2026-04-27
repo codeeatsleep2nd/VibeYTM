@@ -14,7 +14,6 @@ import { UpdateBanner } from './components/UpdateBanner';
 import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
 import { useBootState } from './hooks/useBootState';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
-import { useLiquidGL } from './hooks/useLiquidGL';
 import { ytmApi, playerApi } from './lib/ipc';
 import { registerOpenArtist } from './lib/appNav';
 
@@ -126,43 +125,6 @@ const App: FC = () => {
     registerOpenArtist(searchForArtist);
     return () => registerOpenArtist(null);
   }, [searchForArtist]);
-
-  // liquidGL real-refraction WebGL pass over every Liquid Glass surface.
-  // Every surface renders an empty `<div className="liquidGL-pane">`
-  // child; the hook attaches a single WebGL renderer to all of them
-  // and adds `liquidGL-active` to <html> once the snapshot texture
-  // loads (a CSS rule then drops the fallback background on every
-  // `.liquid-glass-*` so the WebGL refraction is visible).
-  //
-  // Options match naughtyduk's own demo
-  // (https://liquidgl.naughtyduk.com) verbatim — that look is
-  // explicitly what the user asked us to replicate. Notable choices:
-  //   • frost = 0       — clear refraction, no frosted blur (frost
-  //                       would diffuse the refracted edge motion
-  //                       that's the entire point of the effect)
-  //   • bevelDepth/Width 0.119 / 0.057 — the bevel rim that
-  //                       picks up specular/shadow on the corners
-  //   • specular + shadow — physical-glass cues
-  //   • resolution 2    — sharper html2canvas snapshot for crisper
-  //                       refraction; especially noticeable as
-  //                       text/cards scroll past the lens edges
-  useLiquidGL(
-    {
-      target: '.liquidGL-pane',
-      snapshot: 'body',
-      resolution: 2,
-      refraction: 0.026,
-      bevelDepth: 0.119,
-      bevelWidth: 0.057,
-      frost: 0,
-      specular: true,
-      shadow: true,
-      reveal: 'fade',
-      tilt: false,
-      magnify: 1,
-    },
-    phase === 'app',
-  );
 
   // Global keyboard shortcuts. Active only in the app phase (no point
   // intercepting Cmd+L while the LoginPage is up). Bindings stay as a

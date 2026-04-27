@@ -14,6 +14,7 @@ import {
 
 import { TopAlbumCover } from './TopAlbumCover';
 import { EmptyCategory } from './EmptyCategory';
+import { LiquidGlass } from '@liquidglass/react';
 
 const SUGGEST_DEBOUNCE_MS = 200;
 const MIN_QUERY_LENGTH = 2;
@@ -247,24 +248,22 @@ export const SearchPage: FC<SearchPageProps> = ({
         (issue #59).
       */}
       <div
-        // Rounded floating Liquid Glass capsule — see HomePage.tsx for
-        // the architecture (margin from sidebar / right edge so all 4
-        // bevel corners are visible).
-        className="liquid-glass-chrome"
         style={{
           position: 'sticky',
           top: 'var(--space-3)',
           zIndex: 20,
-          // Plate edges align with content rows below — see HomePage.
           marginBottom: 'var(--space-4)',
-          borderRadius: 'var(--radius-xl)',
-          paddingTop: 'var(--space-8)',
-          paddingBottom: 'var(--space-8)',
-          paddingLeft: 'var(--space-6)',
-          paddingRight: 'var(--space-6)',
         }}
       >
-      <div className="liquidGL-pane" aria-hidden="true" />
+      <LiquidGlass
+        borderRadius={16}
+        blur={0.25}
+        contrast={1.2}
+        brightness={1.05}
+        saturation={1.1}
+        shadowIntensity={0.25}
+        zIndex={20}
+      ><div style={{ width: '100%', padding: 'var(--space-6)' }}>
       <div
         style={{
           position: 'relative',
@@ -438,6 +437,8 @@ export const SearchPage: FC<SearchPageProps> = ({
           );
         })}
       </div>
+      </div>
+      </LiquidGlass>
       </div>
 
       {/*

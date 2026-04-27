@@ -13,6 +13,7 @@ import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
 import { CachedImage } from '../CachedImage';
 import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
+import { LiquidGlass } from '@liquidglass/react';
 
 // Per-tab persistence keys for the 7-day localStorage cache. Library
 // summaries (playlistId / browseId / channelId / videoId) drive card
@@ -165,34 +166,34 @@ export const LibraryPage: FC<LibraryPageProps> = ({
       }}
     >
       <div
-        // Rounded floating Liquid Glass capsule — see HomePage.tsx for
-        // the architecture.
-        className="liquid-glass-chrome"
         style={{
           position: 'sticky',
           top: 'var(--space-3)',
           zIndex: 10,
-          // Plate edges align with content rows below — see HomePage.
           marginBottom: 'var(--space-4)',
-          borderRadius: 'var(--radius-xl)',
-          paddingTop: 'var(--space-8)',
-          paddingBottom: 'var(--space-8)',
-          paddingLeft: 'var(--space-6)',
-          paddingRight: 'var(--space-6)',
         }}
       >
-      <div className="liquidGL-pane" aria-hidden="true" />
-      <h1
-        style={{
-          fontSize: 'var(--text-2xl)',
-          fontWeight: 700,
-          letterSpacing: '-0.02em',
-          color: 'var(--color-text-primary)',
-          margin: 0,
-        }}
-      >
-        {TAB_TITLES[activeTab]}
-      </h1>
+        <LiquidGlass
+          borderRadius={16}
+          blur={0.25}
+          contrast={1.2}
+          brightness={1.05}
+          saturation={1.1}
+          shadowIntensity={0.25}
+          zIndex={10}
+        ><div style={{ width: '100%', padding: 'var(--space-6)' }}>
+          <h1
+            style={{
+              fontSize: 'var(--text-2xl)',
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
+              color: 'var(--color-text-primary)',
+              margin: 0,
+            }}
+          >
+            {TAB_TITLES[activeTab]}
+          </h1>
+        </div></LiquidGlass>
       </div>
 
       {activeTab === 'playlists' && (

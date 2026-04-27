@@ -8,6 +8,7 @@ import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
 import { CachedImage } from '../CachedImage';
 import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
+import { LiquidGlass } from '@liquidglass/react';
 
 interface HomePageProps {
   onOpenPlaylist?: (playlistId: string) => void;
@@ -188,32 +189,28 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
       }}
     >
       <div
-        // Rounded floating Liquid Glass capsule — naughtyduk.com nav
-        // pattern. AppShell main reserves --title-bar-height above
-        // this element so the body's ambient gradient shows in the
-        // gap above. liquidGL paints real refraction at this lens's
-        // bounding rect, with rounded bevel rim on all four corners.
-        className="liquid-glass-chrome"
+        // Sticky positioning wrapper. The actual glass surface is the
+        // `<LiquidGlass>` child — it can't carry sticky positioning
+        // itself (the component fills its parent and centers its
+        // children via flex), so we wrap it.
         style={{
           position: 'sticky',
-          // Sit with breathing room from the drag region above so the
-          // plate's top rounded corners + bevel rim are fully visible.
           top: 'var(--space-3)',
           zIndex: 10,
-          // Plate's left/right edges align exactly with the content
-          // rows below (the parent <section> already pads
-          // horizontally with var(--space-6); plate adds none of its
-          // own so its rim sits flush with those rows). Larger
-          // vertical padding gives the capsule visible presence.
           marginBottom: 'var(--space-4)',
-          borderRadius: 'var(--radius-xl)',
-          paddingTop: 'var(--space-8)',
-          paddingBottom: 'var(--space-8)',
-          paddingLeft: 'var(--space-6)',
-          paddingRight: 'var(--space-6)',
         }}
       >
-      <div className="liquidGL-pane" aria-hidden="true" />
+      <LiquidGlass
+        borderRadius={16}
+        blur={0.25}
+        contrast={1.2}
+        brightness={1.05}
+        saturation={1.1}
+        shadowIntensity={0.25}
+        displacementScale={1}
+        elasticity={0.6}
+        zIndex={10}
+      ><div style={{ width: '100%', padding: 'var(--space-6) 0' }}>
       <div
         style={{
           display: 'flex',
@@ -288,6 +285,8 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
           );
         })}
       </div>
+      </div>
+      </LiquidGlass>
       </div>
 
       {activeMood !== 'All' && (

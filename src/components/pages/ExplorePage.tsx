@@ -7,6 +7,7 @@ import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
 import { CachedImage } from '../CachedImage';
 import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
+import { LiquidGlass } from '@liquidglass/react';
 
 interface ExplorePageProps {
   onOpenPlaylist?: (playlistId: string) => void;
@@ -110,74 +111,77 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
       }}
     >
       <div
-        // Rounded floating Liquid Glass capsule — see HomePage.tsx for
-        // the architecture.
-        className="liquid-glass-chrome"
         style={{
           position: 'sticky',
           top: 'var(--space-3)',
           zIndex: 10,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          // Plate edges align with content rows below — see HomePage.
           marginBottom: 'var(--space-4)',
-          borderRadius: 'var(--radius-xl)',
-          paddingTop: 'var(--space-8)',
-          paddingBottom: 'var(--space-8)',
-          paddingLeft: 'var(--space-6)',
-          paddingRight: 'var(--space-6)',
         }}
       >
-        <div className="liquidGL-pane" aria-hidden="true" />
-        <h1
+        <LiquidGlass
+          borderRadius={16}
+          blur={0.25}
+          contrast={1.2}
+          brightness={1.05}
+          saturation={1.1}
+          shadowIntensity={0.25}
+          zIndex={10}
+        ><div
           style={{
-            fontSize: 'var(--text-2xl)',
-            fontWeight: 700,
-            letterSpacing: '-0.02em',
-            color: 'var(--color-text-primary)',
-            margin: 0,
-          }}
-        >
-          Explore
-        </h1>
-        <button
-          onClick={() => {
-            if (isRefreshing) return;
-            // Drop the cache so the fetch can't short-circuit against a
-            // stale payload, and force a fresh request.
-            exploreCache = null;
-            fetchExplore(true);
-          }}
-          disabled={isRefreshing}
-          aria-busy={isRefreshing}
-          style={{
-            background: 'none',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-1) var(--space-3)',
-            color: 'var(--color-text-tertiary)',
-            cursor: isRefreshing ? 'wait' : 'pointer',
-            fontSize: 'var(--text-sm)',
-            opacity: isRefreshing ? 0.6 : 1,
-            display: 'inline-flex',
+            width: '100%',
+            padding: 'var(--space-6)',
+            display: 'flex',
             alignItems: 'center',
-            gap: 'var(--space-1)',
+            justifyContent: 'space-between',
           }}
         >
-          <span
+          <h1
             style={{
-              display: 'inline-block',
-              transition: 'transform var(--duration-normal) var(--ease-out)',
-              animation: isRefreshing
-                ? 'vibeytm-spin 0.9s linear infinite'
-                : undefined,
+              fontSize: 'var(--text-2xl)',
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
+              color: 'var(--color-text-primary)',
+              margin: 0,
             }}
           >
-            ↻
-          </span>
-          {isRefreshing ? 'Refreshing…' : 'Refresh'}
-        </button>
+            Explore
+          </h1>
+          <button
+            onClick={() => {
+              if (isRefreshing) return;
+              exploreCache = null;
+              fetchExplore(true);
+            }}
+            disabled={isRefreshing}
+            aria-busy={isRefreshing}
+            style={{
+              background: 'none',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md)',
+              padding: 'var(--space-1) var(--space-3)',
+              color: 'var(--color-text-tertiary)',
+              cursor: isRefreshing ? 'wait' : 'pointer',
+              fontSize: 'var(--text-sm)',
+              opacity: isRefreshing ? 0.6 : 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 'var(--space-1)',
+            }}
+          >
+            <span
+              style={{
+                display: 'inline-block',
+                transition: 'transform var(--duration-normal) var(--ease-out)',
+                animation: isRefreshing
+                  ? 'vibeytm-spin 0.9s linear infinite'
+                  : undefined,
+              }}
+            >
+              ↻
+            </span>
+            {isRefreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div></LiquidGlass>
       </div>
 
       {shelves.map((shelf) => (

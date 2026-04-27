@@ -107,15 +107,10 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
       ariaLabel="Now playing"
       slideFrom="bottom"
       zIndex={80}
-      // Liquid Glass plate — same chrome recipe as the player bar /
-      // sidebar / queue / sticky titles. Mirrors `.liquid-glass-chrome`
-      // from global.css (SafeOverlay's inline `background` would
-      // override the class anyway).
-      background="linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 35%, oklch(0% 0 0 / 0.16) 100%), var(--glass-bg-chrome)"
-      backdropFilter="blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))"
-      boxShadow="inset 0 1px 0 var(--glass-rim-bright), inset 0 -1px 0 oklch(0% 0 0 / 0.20), var(--glass-shadow-strong)"
+      background="var(--glass-bg-chrome)"
+      backdropFilter="blur(var(--glass-blur))"
+      boxShadow="0 -8px 32px oklch(0% 0 0 / 0.35)"
     >
-      <div className="liquidGL-pane" aria-hidden="true" />
       <NowPlayingBody
         splitMode={splitMode}
         showLyrics={showLyrics}

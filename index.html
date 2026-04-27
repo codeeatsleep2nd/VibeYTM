@@ -7,31 +7,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <!--
-      liquidGL — real-refraction WebGL glass for every Liquid Glass
-      surface in the app. Vendored from naughtyduk/liquidGL (MIT) so we
-      don't depend on a CDN at runtime (Tauri can run offline).
-
-      The snapshot dependency is `html2canvas-pro`, NOT the original
-      `html2canvas`. The original (last released 2022) cannot parse
-      `oklch()` color functions and crashes on every snapshot in this
-      codebase — every CSS variable in the design system uses oklch.
-      `html2canvas-pro` is an actively-maintained fork with oklch
-      support. It exports a UMD that attaches a namespace at
-      `window.html2canvas` instead of the bare function liquidGL
-      expects, so the shim below collapses `.default` back onto the
-      global before liquidGL evaluates.
-    -->
-    <script src="/scripts/html2canvas.min.js" defer></script>
-    <script defer>
-      (function () {
-        var ns = window.html2canvas;
-        if (ns && typeof ns === 'object' && typeof ns.default === 'function') {
-          window.html2canvas = ns.default;
-        }
-      })();
-    </script>
-    <script src="/scripts/liquidGL.js" defer></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
