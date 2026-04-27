@@ -68,18 +68,15 @@ const App: FC = () => {
     });
   }, []);
 
-  // Lyrics button opens the Now Playing page if it isn't already, then flips
-  // the lyrics view on/off within it.
+  // Lyrics is its own top-level overlay (LyricsOverlay) — toggling it
+  // no longer mounts the Now Playing page. Each overlay (Now Playing,
+  // Lyrics, Queue) owns its own visibility independently.
   const toggleLyrics = useCallback(() => {
     // Clicking LRC always dismisses the queue drawer, whether lyrics is
     // being opened or closed — the two surfaces shouldn't coexist since
-    // the queue sits over the lyrics column.
+    // they share the same right-slot geometry.
     setIsQueueOpen(false);
-    setIsLyricsOpen((prev) => {
-      const next = !prev;
-      if (next) setIsNowPlayingOpen(true);
-      return next;
-    });
+    setIsLyricsOpen((prev) => !prev);
   }, []);
 
   // Independent surface: opening it does not open Now Playing, and closing

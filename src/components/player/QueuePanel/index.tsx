@@ -578,32 +578,6 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       display="flex"
       flexDirection="column"
     >
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingTop: 'var(--space-3)',
-          paddingBottom: 'var(--space-3)',
-          paddingLeft: 'var(--space-3)',
-          flexShrink: 0,
-        }}
-      >
-        <h2
-          style={{
-            margin: 0,
-            // Same scale + weight as the page-level title plates'
-            // h1 so the queue's title reads as a peer page title.
-            fontSize: 'var(--text-2xl)',
-            fontWeight: 700,
-            letterSpacing: '-0.02em',
-            color: 'var(--color-text-primary)',
-          }}
-        >
-          Playing queue
-        </h2>
-      </header>
-
       <div
         ref={scrollContainerRef}
         style={{

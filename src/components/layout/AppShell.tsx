@@ -3,6 +3,7 @@ import { Sidebar } from './Sidebar';
 import { PlayerChrome } from './PlayerChrome';
 import { NowPlaying } from '../player/NowPlaying';
 import { QueuePanel } from '../player/QueuePanel';
+import { LyricsOverlay } from '../player/LyricsOverlay';
 
 interface AppShellProps {
   currentPath: string;
@@ -96,6 +97,8 @@ export const AppShell: FC<AppShellProps> = ({
       showLyrics={lyricsOpen}
       queueOpen={queueOpen}
     />
+
+    <LyricsOverlay isOpen={lyricsOpen} />
 
     <QueuePanel isOpen={queueOpen} onClose={onToggleQueue} />
   </div>

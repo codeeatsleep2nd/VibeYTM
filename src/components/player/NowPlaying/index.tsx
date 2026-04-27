@@ -1,23 +1,14 @@
-import { type FC, useState } from 'react';
+import { type FC } from 'react';
 import { LiquidGlass } from '@liquidglass/react';
 import { usePlayerState } from '../../../hooks/usePlayerState';
-import { invalidateLyrics, useLyrics } from '../../../hooks/useLyrics';
-import { useLyricsOffset } from '../../../hooks/useLyricsOffset';
-import { useSmoothedPosition } from '../../../hooks/useSmoothedPosition';
 import { useAudioCounterpartArtwork } from '../../../hooks/useAudioCounterpartArtwork';
 import { useCoverColors } from '../../../hooks/useCoverColors';
 import { albumArtOrNothing } from '../../../lib/artwork';
 import { ArtworkPlaceholder } from '../../ArtworkPlaceholder';
 import { CachedImage } from '../../CachedImage';
 import { MarqueeText } from '../../MarqueeText';
-import { SafeOverlay, useOverlayOpen } from '../../overlay/SafeOverlay';
-import { LyricsPanel } from './LyricsPanel';
+import { SafeOverlay } from '../../overlay/SafeOverlay';
 import { CoverBackdrop } from './CoverBackdrop';
-
-/** Residual constant lag added on top of rAF interpolation. Covers the
- *  fixed-ish pipeline delay (bridge poll read cycle + IPC + audio output
- *  buffering). Tuned by ear against mainstream tracks with LRCLIB timings. */
-const LYRICS_CONSTANT_OFFSET_MS = 450;
 
 interface NowPlayingProps {
   isOpen: boolean;
@@ -51,56 +42,11 @@ interface NowPlayingProps {
 export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, queueOpen = false }) => {
   // The right-slot drawer (queue OR lyrics) shares one cover-shift layout.
   // The cover-column sits in the split position whenever EITHER drawer is
-  // open, even though only one renders content at a time.
+  // open, even though only one renders content at a time. The lyrics panel
+  // itself is now an independent overlay (LyricsOverlay) — NowPlaying just
+  // owns the cover positioning so the cover slides left to make room.
   const splitMode = showLyrics || queueOpen;
-  const { track, positionSecs, status } = usePlayerState();
-  const durationSecs = track?.durationSecs ?? 0;
-  // Auto-tuned position: the backend reports a fresh value every ~150 ms,
-  // but rAF interpolation fills the gap so lyric highlighting tracks the
-  // vocal at frame rate. A small constant offset on top covers residual
-  // audio-output buffering.
-  const smoothedPositionSecs = useSmoothedPosition(
-    positionSecs,
-    status === 'playing',
-    LYRICS_CONSTANT_OFFSET_MS,
-  );
-  // Bumped by `handleRefreshLyrics` to force `useLyrics` to re-run its
-  // fetch effect even though videoId/title/artist are unchanged. After a
-  // user-triggered cache invalidation the lookup metadata is identical;
-  // without this counter dep the effect is a no-op and the panel stays
-  // in `loading` forever waiting for a fetch that never fires.
-  const [lyricsRefetchEpoch, setLyricsRefetchEpoch] = useState(0);
-  const [isRefreshingLyrics, setIsRefreshingLyrics] = useState(false);
-  const { status: lyricsStatus, lyrics, error: lyricsError } = useLyrics(
-    track
-      ? {
-          videoId: track.videoId,
-          artist: track.artist,
-          title: track.title,
-          durationSecs: track.durationSecs,
-        }
-      : null,
-    showLyrics && isOpen,
-    true, // user-initiated — skip the track-change debounce
-    lyricsRefetchEpoch,
-  );
-
-  const [lyricsOffsetMs, setLyricsOffsetMs, resetLyricsOffsetMs] =
-    useLyricsOffset(track?.videoId);
-
-  const handleRefreshLyrics = async () => {
-    const videoId = track?.videoId;
-    if (!videoId || isRefreshingLyrics) return;
-    setIsRefreshingLyrics(true);
-    try {
-      await invalidateLyrics(videoId);
-      setLyricsRefetchEpoch((n) => n + 1);
-    } finally {
-      // Brief debounce so the spinner doesn't disappear before the new
-      // fetch's `loading` status takes over the panel.
-      setTimeout(() => setIsRefreshingLyrics(false), 250);
-    }
-  };
+  const { track } = usePlayerState();
 
   return (
     <SafeOverlay
@@ -124,69 +70,27 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
     >
       <NowPlayingBody
         splitMode={splitMode}
-        showLyrics={showLyrics}
         track={track}
         coverSide={coverSide}
-        durationSecs={durationSecs}
-        smoothedPositionSecs={smoothedPositionSecs}
-        lyricsStatus={lyricsStatus}
-        lyrics={lyrics}
-        lyricsError={lyricsError}
-        lyricsOffsetMs={lyricsOffsetMs}
-        setLyricsOffsetMs={setLyricsOffsetMs}
-        resetLyricsOffsetMs={resetLyricsOffsetMs}
-        isRefreshingLyrics={isRefreshingLyrics}
-        onRefreshLyrics={handleRefreshLyrics}
       />
     </SafeOverlay>
   );
 };
 
-// Body renders inside the SafeOverlay so it can use `useOverlayOpen()`
-// to gate any inner `pointer-events: auto` against the overlay's open
-// state. Without that, the lyrics column would leak click-stealing
-// pointer-events over the next page after sidebar nav.
+// Body renders the cover + title block. The lyrics surface lives in its
+// own top-level overlay (`LyricsOverlay`) so the playing page can stay
+// closed when the user only wants lyrics.
 interface NowPlayingBodyProps {
   splitMode: boolean;
-  showLyrics: boolean;
-  // The remaining props are passed through from the parent so we keep the
-  // huge inner JSX block unchanged. They're typed loosely to avoid pulling
-  // every internal type into the module surface; the parent owns shape.
   track: ReturnType<typeof usePlayerState>['track'];
   coverSide: string;
-  durationSecs: number;
-  smoothedPositionSecs: number;
-  lyricsStatus: ReturnType<typeof useLyrics>['status'];
-  lyrics: ReturnType<typeof useLyrics>['lyrics'];
-  lyricsError: ReturnType<typeof useLyrics>['error'];
-  lyricsOffsetMs: number;
-  setLyricsOffsetMs: (n: number) => void;
-  resetLyricsOffsetMs: () => void;
-  isRefreshingLyrics: boolean;
-  onRefreshLyrics: () => void;
 }
 
 const NowPlayingBody: FC<NowPlayingBodyProps> = ({
   splitMode,
-  showLyrics,
   track,
   coverSide,
-  durationSecs,
-  smoothedPositionSecs,
-  lyricsStatus,
-  lyrics,
-  lyricsError,
-  lyricsOffsetMs,
-  setLyricsOffsetMs,
-  resetLyricsOffsetMs,
-  isRefreshingLyrics,
-  onRefreshLyrics,
 }) => {
-  const isOpen = useOverlayOpen();
-  // Cover-tinted backdrop: extract dominant + secondary colors from the
-  // current track's album art and render a soft gradient behind the
-  // hero. Resolves to a deep neutral fallback while the extraction is
-  // in flight or when there's no track. Memoized per URL.
   const backdropUrl = albumArtOrNothing(track?.artworkUrl);
   const coverColors = useCoverColors(backdropUrl ?? undefined);
   return (
@@ -197,22 +101,17 @@ const NowPlayingBody: FC<NowPlayingBodyProps> = ({
         width: '100%',
         display: 'flex',
         alignItems: 'flex-start',
-        justifyContent: 'center',
-        // Cover top aligns with the sidebar's Home button:
-        //   sidebar.paddingTop (= title-bar-height) + nav.padding (= space-3)
-        // So the cover sits at exactly the same y as the first sidebar
-        // nav item's top edge, regardless of overlay inset.
+        // When a side drawer is open, anchor the cover on the LEFT (instead
+        // of centered) so it sits in the same place the old in-overlay
+        // split layout put it — leaving the right portion clear for the
+        // independently-rendered LyricsOverlay / QueuePanel.
+        justifyContent: splitMode ? 'flex-start' : 'center',
         paddingTop:
           'calc(var(--title-bar-height) + var(--space-3))',
         paddingLeft: 'var(--space-6)',
-        paddingRight: splitMode ? 0 : 'var(--space-6)',
-        // No bottom padding — the overlay's bottom edge already aligns
-        // with the chrome's top (`bottom: var(--player-bar-height)`),
-        // so children (cover column, lyrics panel) extend directly to
-        // the chrome's top edge.
+        paddingRight: 'var(--space-6)',
         paddingBottom: 0,
-        transition:
-          'padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1)',
+        transition: 'justify-content 420ms cubic-bezier(0.22, 1, 0.36, 1)',
         overflow: 'hidden',
       }}
     >
@@ -229,97 +128,24 @@ const NowPlayingBody: FC<NowPlayingBodyProps> = ({
           No track playing
         </p>
       ) : (
-        // Single layout in both modes — cover/title column on the left,
-        // lyrics column on the right. Toggling LRC animates the lyrics
-        // column's width and opacity (plus the left-margin gap) so the
-        // cover slides smoothly into place instead of remounting. The
-        // `position: relative; z-index: 1` lifts this layer above the
-        // CoverBackdrop's absolute fill (which has z-index: 0).
         <div
           style={{
             position: 'relative',
             zIndex: 1,
             display: 'flex',
-            flexDirection: 'row',
-            alignItems: 'flex-start',
-            justifyContent: 'center',
-            width: '100%',
-            height: '100%',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 'var(--space-4)',
+            flex: '0 0 auto',
+            minWidth: 0,
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 'var(--space-4)',
-              flex: '0 0 auto',
-              minWidth: 0,
-            }}
-          >
-            <Cover track={track} size="split" />
-            <TitleBlock
-              track={track}
-              width={coverSide}
-              align="center"
-            />
-          </div>
-          <div
-            aria-hidden={!showLyrics}
-            style={{
-              // The right-slot column reserves the lyrics width on the
-              // page when `splitMode` is true (queue OR lyrics) so the
-              // cover always shifts to the same side position. The
-              // lyrics card inside slides via translateX — same motion
-              // pattern as `<SafeOverlay slideFrom="right">` used by
-              // QueuePanel.
-              flex: splitMode ? '1 1 0' : '0 0 0',
-              width: splitMode ? 'auto' : '0',
-              marginLeft: splitMode ? 'var(--space-5)' : '0',
-              paddingRight: splitMode ? 'var(--space-6)' : '0',
-              height: '100%',
-              minWidth: 0,
-              // No `overflow: hidden` here — would clip the LyricsPanel's
-              // box-shadow / rounded corners. The translateX slide
-              // off-screen-right is enough to hide the panel.
-              pointerEvents: isOpen && showLyrics ? 'auto' : 'none',
-              transition:
-                'flex-basis 420ms cubic-bezier(0.22, 1, 0.36, 1), margin-left 420ms cubic-bezier(0.22, 1, 0.36, 1), padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1)',
-            }}
-          >
-            <div
-              style={{
-                width: '100%',
-                height: '100%',
-                // Slide-from-right entrance. Same translate-X transition
-                // QueuePanel uses (via SafeOverlay's `slideFrom="right"`)
-                // so both side panels animate identically. The closed
-                // distance is `100vw` (full viewport width) — a
-                // percentage `100%` would resolve against the inner
-                // div's own width which is 0 when the column has
-                // collapsed (`flex: 0 0 0`), leaving the panel
-                // technically visible.
-                transform: showLyrics ? 'translateX(0)' : 'translateX(100vw)',
-                opacity: showLyrics ? 1 : 0,
-                transition:
-                  'transform 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)',
-              }}
-            >
-              <LyricsPanel
-                status={lyricsStatus}
-                lyrics={lyrics}
-                error={lyricsError}
-                positionSecs={smoothedPositionSecs}
-                durationSecs={durationSecs}
-                visible={showLyrics}
-                offsetMs={lyricsOffsetMs}
-                onAdjustOffsetMs={setLyricsOffsetMs}
-                onResetOffsetMs={resetLyricsOffsetMs}
-                onRefresh={onRefreshLyrics}
-                isRefreshing={isRefreshingLyrics}
-              />
-            </div>
-          </div>
+          <Cover track={track} size="split" />
+          <TitleBlock
+            track={track}
+            width={coverSide}
+            align="center"
+          />
         </div>
       )}
     </div>
