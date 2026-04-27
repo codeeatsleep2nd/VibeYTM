@@ -223,6 +223,29 @@ pub async fn get_library_podcasts(
 }
 
 #[tauri::command]
+pub async fn get_podcast_last_episode(
+    browse_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<Option<PodcastLastEpisode>, String> {
+    tracing::info!(%browse_id, "browse::get_podcast_last_episode called");
+    let result = api.get_podcast_last_episode(&app, &browse_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %browse_id, "browse::get_podcast_last_episode failed");
+            e.to_string()
+        })?;
+    tracing::info!(
+        %browse_id,
+        found = result.is_some(),
+        display = result.as_ref().map(|r| r.display.as_str()).unwrap_or(""),
+        secs_ago = ?result.as_ref().and_then(|r| r.secs_ago),
+        "browse::get_podcast_last_episode done"
+    );
+    Ok(result)
+}
+
+#[tauri::command]
 pub async fn save_playlist_to_library(
     playlist_id: String,
     app: AppHandle,

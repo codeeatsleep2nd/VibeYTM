@@ -8,6 +8,9 @@ export interface DetailPageHeroSaveProps {
   /** True when the saving target is an album (drives the label between
    *  "Save to Albums" vs "Save to Playlists"). */
   isAlbum: boolean;
+  /** True when the saving target is a podcast/show — flips the label
+   *  to "Subscribe" / "Unsubscribe" instead of "Save". */
+  isShow?: boolean;
   isSaving: boolean;
   onToggle: () => void;
   /** Optional error string surfaced under the action row when the most
@@ -295,7 +298,15 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
                 onClick={save.onToggle}
                 disabled={save.isSaving}
                 aria-pressed={save.isSaved}
-                aria-label={save.isSaved ? 'Remove from library' : 'Save to library'}
+                aria-label={
+                  save.isShow
+                    ? save.isSaved
+                      ? 'Unsubscribe from show'
+                      : 'Subscribe to show'
+                    : save.isSaved
+                      ? 'Remove from library'
+                      : 'Save to library'
+                }
                 style={{
                   background: 'transparent',
                   border: '1px solid oklch(100% 0 0 / 0.16)',
@@ -313,9 +324,13 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
                   opacity: save.isSaving ? 0.7 : 1,
                 }}
               >
-                {save.isSaved
-                  ? '✓ Remove from Library'
-                  : `+ Save to ${save.isAlbum ? 'Albums' : 'Playlists'}`}
+                {save.isShow
+                  ? save.isSaved
+                    ? '✓ Unsubscribe'
+                    : '+ Subscribe'
+                  : save.isSaved
+                    ? '✓ Remove from Library'
+                    : `+ Save to ${save.isAlbum ? 'Albums' : 'Playlists'}`}
               </button>
             )}
           </div>

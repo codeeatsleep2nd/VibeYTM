@@ -58,6 +58,19 @@ pub struct PodcastSummary {
     pub artwork_url: String,
 }
 
+/// Result of `get_podcast_last_episode` — the most recent episode's
+/// publish-age text + a numeric seconds-since-now used purely for
+/// client-side sorting. Returned as a thin envelope so the frontend
+/// can fetch a flock of these in parallel without parsing each show's
+/// full episode list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PodcastLastEpisode {
+    pub display: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secs_ago: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Shelf {
@@ -89,6 +102,12 @@ pub struct PlaylistDetail {
     /// can pick the correct "saved to Albums / Playlists" label (issue #55).
     #[serde(default)]
     pub is_album: bool,
+    /// Release year — extracted from the responsive-header subtitle runs
+    /// (e.g., `Album • Artist • 2023`). Only the trailing 4-digit token is
+    /// kept; absent for entries where YTM didn't include a year (most
+    /// playlists, charts, mood mixes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

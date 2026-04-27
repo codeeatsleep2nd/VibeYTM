@@ -67,10 +67,9 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     } catch (e: unknown) {
       // Roll back and surface the error so the user knows it didn't stick.
       setIsSaved(!next);
+      const surface = isShow ? 'Subscriptions' : isAlbum ? 'Albums' : 'Playlists';
       setSaveError(
-        next
-          ? `Could not save to ${isAlbum ? 'Albums' : 'Playlists'}`
-          : `Could not remove from ${isAlbum ? 'Albums' : 'Playlists'}`,
+        next ? `Could not save to ${surface}` : `Could not remove from ${surface}`,
       );
       console.error('[PlaylistDetailPage] save toggle failed:', e);
     } finally {
@@ -303,6 +302,42 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     playerApi.playTrack(firstId, watchListId).catch(() => {});
   };
 
+  // Derived hero metadata: primary artist (album case → tracks share
+  // an artist; playlist case → "Various artists" once we see > 1
+  // distinct name) and total runtime summed across track durations.
+  // Both are pure-frontend computations from the existing tracks
+  // payload — no Rust parser change needed.
+  const primaryArtist = (() => {
+    if (isShow || playlist.tracks.length === 0) return undefined;
+    const distinct = new Set<string>();
+    for (const t of playlist.tracks) {
+      if (t.artist) distinct.add(t.artist);
+      if (distinct.size > 1) break;
+    }
+    if (distinct.size === 0) return undefined;
+    if (distinct.size === 1) return playlist.tracks.find((t) => t.artist)?.artist;
+    return 'Various artists';
+  })();
+  const totalRuntimeSecs = playlist.tracks.reduce(
+    (acc, t) => acc + (t.durationSecs > 0 ? t.durationSecs : 0),
+    0,
+  );
+  const formatRuntime = (secs: number): string => {
+    const total = Math.round(secs);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    if (hours > 0) return `${hours} hr ${minutes} min`;
+    return `${minutes} min`;
+  };
+  const metaParts: string[] = [];
+  if (primaryArtist) metaParts.push(primaryArtist);
+  if (playlist.year) metaParts.push(playlist.year);
+  if (playlist.trackCount !== undefined) {
+    metaParts.push(`${playlist.trackCount} ${isShow ? 'episodes' : 'songs'}`);
+  }
+  if (totalRuntimeSecs > 0) metaParts.push(formatRuntime(totalRuntimeSecs));
+  const heroMeta = metaParts.length > 0 ? metaParts.join(' · ') : undefined;
+
   return (
     <section
       style={{
@@ -324,28 +359,18 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
           kind={isShow ? 'Show' : isAlbum ? 'Album' : 'Playlist'}
           coverUrl={playlist.artworkUrl ?? ''}
           colors={heroColors}
-          meta={
-            playlist.trackCount !== undefined
-              ? `${playlist.trackCount} ${isShow ? 'episodes' : 'songs'}`
-              : undefined
-          }
+          meta={heroMeta}
           description={playlist.description ?? undefined}
           onBack={onBack}
           onPlay={handlePlayAll}
-          save={
-            // Save block hidden for shows — the YTM save target for a
-            // podcast lives on a different library surface we don't
-            // round-trip yet.
-            isShow
-              ? undefined
-              : {
-                  isSaved,
-                  isAlbum,
-                  isSaving,
-                  onToggle: toggleSaved,
-                  error: saveError,
-                }
-          }
+          save={{
+            isSaved,
+            isAlbum,
+            isShow,
+            isSaving,
+            onToggle: toggleSaved,
+            error: saveError,
+          }}
         />
       </div>
 

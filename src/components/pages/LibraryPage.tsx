@@ -5,6 +5,7 @@ import type {
   AlbumSummary,
   ArtistSummary,
   PodcastSummary,
+  PodcastLastEpisode,
 } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
 import { readCache, writeCache } from '../../lib/persistentCache';
@@ -81,6 +82,19 @@ export const LibraryPage: FC<LibraryPageProps> = ({
   const [podcasts, setPodcasts] = useState<PodcastSummary[]>(
     () => readCache<PodcastSummary[]>(PERSIST_KEYS.podcasts) ?? [],
   );
+  // Per-browseId recency map populated AFTER the podcast list lands.
+  // Each entry comes from the dedicated `get_podcast_last_episode`
+  // IPC, which fetches the show and returns just the first episode's
+  // `publishedTimeText` + a server-parsed secsAgo. Persisted to
+  // localStorage with a 1-hour TTL so reopening the Podcasts tab
+  // doesn't re-fan-out the per-show fetches.
+  const [podcastRecency, setPodcastRecency] = useState<Record<string, PodcastLastEpisode>>(
+    () =>
+      readCache<Record<string, PodcastLastEpisode>>(
+        'library:podcasts:recency',
+        60 * 60 * 1000, // 1h TTL — newer than that and we trust the cached map
+      ) ?? {},
+  );
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -145,6 +159,70 @@ export const LibraryPage: FC<LibraryPageProps> = ({
       cancelled = true;
     };
   }, [activeTab, refreshKey]);
+
+  // After the podcast list lands, fan out per-show "last updated"
+  // probes in parallel with a small concurrency cap. Skip shows
+  // whose recency we already have (cache hit). Cancellation flag
+  // makes the loop a no-op once the user navigates off the tab.
+  useEffect(() => {
+    if (activeTab !== 'podcasts' || podcasts.length === 0) return;
+    const missing = podcasts.filter((p) => !podcastRecency[p.browseId]);
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    const CONCURRENCY = 4;
+    let cursor = 0;
+    const next: Record<string, PodcastLastEpisode> = {};
+
+    const worker = async () => {
+      while (!cancelled) {
+        const i = cursor;
+        cursor += 1;
+        if (i >= missing.length) return;
+        const p = missing[i];
+        try {
+          const result = await browseApi.getPodcastLastEpisode(p.browseId);
+          if (cancelled || !result) continue;
+          next[p.browseId] = result;
+        } catch {
+          // Best-effort — a single show failure shouldn't poison the
+          // batch. The card just stays without a recency line.
+        }
+      }
+    };
+
+    Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, missing.length) }, () => worker()),
+    ).then(() => {
+      if (cancelled) return;
+      if (Object.keys(next).length === 0) return;
+      setPodcastRecency((prev) => {
+        const merged = { ...prev, ...next };
+        writeCache('library:podcasts:recency', merged);
+        return merged;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, podcasts, podcastRecency]);
+
+  // Sort podcasts most-recent-first using the recency map. Shows
+  // without a parsed secsAgo (cache miss or unparseable date) sink to
+  // the bottom in their original API order.
+  const sortedPodcasts = (() => {
+    if (Object.keys(podcastRecency).length === 0) return podcasts;
+    const indexOf = new Map(podcasts.map((p, i) => [p.browseId, i] as const));
+    return [...podcasts].sort((a, b) => {
+      const aSecs = podcastRecency[a.browseId]?.secsAgo;
+      const bSecs = podcastRecency[b.browseId]?.secsAgo;
+      if (aSecs !== undefined && bSecs !== undefined) return aSecs - bSecs;
+      if (aSecs !== undefined) return -1;
+      if (bSecs !== undefined) return 1;
+      return (indexOf.get(a.browseId) ?? 0) - (indexOf.get(b.browseId) ?? 0);
+    });
+  })();
 
   const currentTabHasData =
     (activeTab === 'playlists' && playlists.length > 0) ||
@@ -376,22 +454,32 @@ export const LibraryPage: FC<LibraryPageProps> = ({
                 gap: '20px',
               }}
             >
-              {podcasts.map((p) => (
-                <AlbumCard
-                  key={p.browseId}
-                  artworkUrl={p.artworkUrl}
-                  title={p.title}
-                  subtitle={p.author}
-                  onClick={() => onOpenPlaylist?.(p.browseId)}
-                  // Click on the play icon opens the show; the first
-                  // episode plays automatically once it's loaded
-                  // through the existing autoPlayPlaylist branch.
-                  onPlay={() => {
-                    playFirstFromPlaylist(p.browseId);
-                    onOpenPlaylist?.(p.browseId);
-                  }}
-                />
-              ))}
+              {sortedPodcasts.map((p) => {
+                const recency = podcastRecency[p.browseId];
+                return (
+                  <AlbumCard
+                    key={p.browseId}
+                    artworkUrl={p.artworkUrl}
+                    title={p.title}
+                    // Subtitle: author + (once the per-show recency
+                    // probe lands) the latest episode's age, joined
+                    // by a middle-dot. Empty until the probe returns.
+                    subtitle={
+                      recency
+                        ? `${p.author} · ${recency.display}`
+                        : p.author
+                    }
+                    onClick={() => onOpenPlaylist?.(p.browseId)}
+                    // Click on the play icon opens the show; the first
+                    // episode plays automatically once it's loaded
+                    // through the existing autoPlayPlaylist branch.
+                    onPlay={() => {
+                      playFirstFromPlaylist(p.browseId);
+                      onOpenPlaylist?.(p.browseId);
+                    }}
+                  />
+                );
+              })}
             </div>
           ) : (
             <EmptyState label="podcasts" />

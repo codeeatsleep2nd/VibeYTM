@@ -385,6 +385,7 @@ pub fn run() {
             commands::browse::get_library_albums,
             commands::browse::get_library_artists,
             commands::browse::get_library_podcasts,
+            commands::browse::get_podcast_last_episode,
             commands::browse::save_playlist_to_library,
             commands::browse::remove_playlist_from_library,
             commands::browse::get_lyrics,
