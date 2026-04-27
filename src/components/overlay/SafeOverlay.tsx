@@ -37,7 +37,9 @@ interface SafeOverlayProps {
   background?: string;
   /**
    * Entrance direction:
-   *   - `bottom` (default): rise 24 px with opacity fade — for full-page panels.
+   *   - `bottom` (default): slide up from below the window with opacity
+   *     fade — for full-page panels. Closing reverses the motion so the
+   *     panel slides back down off the bottom edge.
    *   - `right`: slide in from off-screen right at full opacity — for drawers.
    *
    * Both motions are translate-only. Scale is forbidden in either branch
@@ -155,7 +157,11 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
       break;
     case 'bottom':
     default:
-      transform = isOpen ? 'translateY(0px)' : 'translateY(24px)';
+      // Translate by the panel's full height so it slides clear off the
+      // bottom edge of its inset rect — both opening (rising up) and
+      // closing (sliding back down) read as a smooth full-distance
+      // motion, not a 24 px lift.
+      transform = isOpen ? 'translateY(0px)' : 'translateY(100%)';
       opacityWhenClosed = 0;
       break;
   }
@@ -189,8 +195,13 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
     transform,
     pointerEvents: isOpen ? 'auto' : 'none',
     willChange: 'opacity, transform',
+    // Opacity and transform share the same 420 ms cubic-bezier so the
+    // closing motion plays at exactly the same speed as the opening
+    // motion. Previously opacity used the shorter `--duration-normal`
+    // (200 ms), which made the close fade out before the slide-down
+    // could finish — felt twice as fast as the open.
     transition:
-      'opacity var(--duration-normal) var(--ease-out), transform 420ms cubic-bezier(0.22, 1, 0.36, 1)',
+      'opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1)',
     boxShadow,
     borderRadius,
     border,

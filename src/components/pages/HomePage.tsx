@@ -296,12 +296,17 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
                 flexShrink: 0,
                 padding: 'var(--space-2) var(--space-4)',
                 fontSize: 'var(--text-sm)',
-                fontWeight: 500,
+                // Selection style unified with QueuePanel highlighted
+                // row + Sidebar active item: white-wash glass tint,
+                // accent-colored text, 600 weight. Replaces the prior
+                // solid-accent pill so every "selected" surface in the
+                // UI reads the same visual weight.
+                fontWeight: isActive ? 600 : 500,
                 borderRadius: 'var(--radius-full)',
                 border: isActive ? 'none' : '1px solid var(--color-border)',
-                background: isActive ? 'var(--color-accent)' : 'transparent',
+                background: isActive ? 'oklch(100% 0 0 / 0.10)' : 'transparent',
                 color: isActive
-                  ? 'oklch(100% 0 0)'
+                  ? 'var(--color-accent)'
                   : 'var(--color-text-secondary)',
                 cursor: 'pointer',
                 transition: `background var(--duration-fast) var(--ease-out),

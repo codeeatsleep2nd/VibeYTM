@@ -61,7 +61,7 @@ describe('SafeOverlay', () => {
     expect(wrapper.style.transform).toMatch(/translateY\(0/);
   });
 
-  it('closed: opacity is 0 and translateY is positive (default rise-from-bottom)', () => {
+  it('closed: opacity is 0 and translateY pushes the panel below its inset rect', () => {
     render(
       <SafeOverlay isOpen={false} ariaLabel="test">
         <div>content</div>
@@ -69,7 +69,10 @@ describe('SafeOverlay', () => {
     );
     const wrapper = screen.getByLabelText('test');
     expect(wrapper.style.opacity).toBe('0');
-    expect(wrapper.style.transform).toMatch(/translateY\(\d+(\.\d+)?px\)/);
+    // Full-height translate (100%) so the panel slides cleanly off the
+    // bottom edge — both opening and closing read as a smooth motion,
+    // not a 24 px lift + fade.
+    expect(wrapper.style.transform).toMatch(/translateY\(100%\)/);
   });
 
   it('slideFrom=right: open=translateX(0), closed=translateX past the right inset', () => {

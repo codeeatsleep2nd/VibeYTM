@@ -7,8 +7,8 @@
 
   /* Text */
   --color-text-primary: oklch(95% 0 0);
-  --color-text-secondary: oklch(65% 0 0);
-  --color-text-tertiary: oklch(45% 0 0);
+  --color-text-secondary: oklch(82% 0 0);
+  --color-text-tertiary: oklch(75% 0 0);
 
   /* Accent — warm red, YouTube Music-inspired */
   --color-accent: oklch(62% 0.24 25);

@@ -44,7 +44,12 @@ const NavItem: FC<NavItemProps> = ({ label, icon, isActive, onClick }) => (
       padding: 'var(--space-2) var(--space-3)',
       border: 'none',
       borderRadius: 'var(--radius-md)',
-      background: isActive ? 'oklch(62% 0.24 25 / 0.12)' : 'transparent',
+      // Selection style unified across the app: same white-wash glass
+      // tint used by the QueuePanel highlighted row
+      // (`QueueRow.tsx` baseStyle.background). Replaces the previous
+      // accent-tinted red so every "selected" surface in the UI reads
+      // the same visual weight against the liquid-glass plates.
+      background: isActive ? 'oklch(100% 0 0 / 0.10)' : 'transparent',
       color: isActive
         ? 'var(--color-accent)'
         : 'var(--color-text-secondary)',

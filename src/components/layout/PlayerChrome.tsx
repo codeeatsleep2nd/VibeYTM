@@ -316,10 +316,16 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
     >
       <LiquidGlass
         borderRadius={150}
-        blur={8}
+        // blur=40 matches the NowPlaying overlay's
+        // `backdrop-filter: blur(40px) saturate(180%)`. The
+        // LiquidGlass component applies blur via its OWN
+        // backdrop-filter on the capsule div (the inner-content
+        // div's own backdrop-filter only filters the LiquidGlass
+        // output, not the page underneath — filters don't chain).
+        blur={40}
         contrast={1.2}
         brightness={1.05}
-        saturation={1.1}
+        saturation={1.8}
         shadowIntensity={0.25}
         displacementScale={1}
         elasticity={1}
@@ -332,12 +338,16 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
           alignItems: 'center',
           padding: '0 var(--space-10)',
           gap: 'var(--space-3)',
-          // Semi-transparent dark wash inside the LiquidGlass capsule
-          // so the chrome reads as a discrete plate even in WebKit
-          // (where LiquidGlass's SVG displacement filter is dropped
-          // and only the backdrop-filter blur applies). Translucent
-          // enough that the page still bleeds through.
+          // Semi-transparent dark wash + heavy backdrop-filter (same
+          // recipe SafeOverlay uses for the NowPlaying / queue
+          // surfaces) so the chrome's blur character matches the
+          // other glass plates instead of relying only on
+          // LiquidGlass's own filter (which WebKit drops the SVG
+          // displacement portion of).
           background: 'oklch(20% 0.005 270 / 0.30)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          borderRadius: 'inherit',
         }}
       >
       {/* LEFT — transports (Apple Music: flat white glyphs, prev/play/next

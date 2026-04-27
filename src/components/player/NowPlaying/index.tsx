@@ -1,4 +1,5 @@
 import { type FC, useState } from 'react';
+import { LiquidGlass } from '@liquidglass/react';
 import { usePlayerState } from '../../../hooks/usePlayerState';
 import { invalidateLyrics, useLyrics } from '../../../hooks/useLyrics';
 import { useLyricsOffset } from '../../../hooks/useLyricsOffset';
@@ -400,37 +401,59 @@ const Cover: FC<CoverProps> = ({ track, size }) => {
       style={{
         width: sideLength,
         aspectRatio: '1',
-        borderRadius: 'var(--radius-lg)',
-        overflow: 'hidden',
-        background: 'var(--color-surface-2)',
-        boxShadow: '0 24px 60px oklch(0% 0 0 / 0.5)',
         flexShrink: 0,
         // Smooth resize when the split mode toggles.
         transition: 'width var(--duration-slow) var(--ease-out)',
       }}
     >
-      {(() => {
-        // NEVER show a video thumbnail here. Use the audio counterpart's
-        // album cover when the hook has resolved one; otherwise the
-        // bridge's captured artworkUrl IF AND ONLY IF it's actually
-        // album art; otherwise a placeholder. Issue #48's "letterbox
-        // the music video" workaround is no longer needed because the
-        // music-video frame is gone from this surface entirely.
-        const url = albumArtOrNothing(counterpartArtwork ?? track.artworkUrl);
-        if (!url) return <ArtworkPlaceholder size={500} />;
-        return (
-          <CachedImage
-            src={url}
-            alt={`${track.title} artwork`}
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              display: 'block',
-            }}
-          />
-        );
-      })()}
+      {/* Liquid-glass rim around the cover — matches the edge treatment
+          used on the player chrome and title plates. The cover image
+          sits inside the LiquidGlass capsule so the same generator
+          preset (radius/contrast/brightness/saturation/displacement)
+          decorates its border. */}
+      <LiquidGlass
+        borderRadius={24}
+        blur={0}
+        contrast={1.2}
+        brightness={1.05}
+        saturation={1.8}
+        shadowIntensity={0.5}
+        displacementScale={1}
+        elasticity={1}
+      >
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            borderRadius: 'inherit',
+            overflow: 'hidden',
+            background: 'var(--color-surface-2)',
+          }}
+        >
+          {(() => {
+            // NEVER show a video thumbnail here. Use the audio counterpart's
+            // album cover when the hook has resolved one; otherwise the
+            // bridge's captured artworkUrl IF AND ONLY IF it's actually
+            // album art; otherwise a placeholder. Issue #48's "letterbox
+            // the music video" workaround is no longer needed because the
+            // music-video frame is gone from this surface entirely.
+            const url = albumArtOrNothing(counterpartArtwork ?? track.artworkUrl);
+            if (!url) return <ArtworkPlaceholder size={500} />;
+            return (
+              <CachedImage
+                src={url}
+                alt={`${track.title} artwork`}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  display: 'block',
+                }}
+              />
+            );
+          })()}
+        </div>
+      </LiquidGlass>
     </div>
   );
 };

@@ -571,7 +571,10 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
         bottom: 'calc(var(--player-bar-height) + var(--space-3))',
         left: 'calc(var(--sidebar-width) + var(--space-6) + min(800px, calc((2 / 3) * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px)) + var(--space-5))',
       }}
-      padding={{ right: 'var(--space-6)' }}
+      // No internal right padding — rows fill the panel edge-to-edge
+      // so the highlighted "now playing" row's right edge sits flush
+      // with the panel's right border (clipped to the rounded corner
+      // by the SafeOverlay's `overflow: hidden`).
       display="flex"
       flexDirection="column"
     >
