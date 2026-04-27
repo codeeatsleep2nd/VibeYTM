@@ -19,7 +19,25 @@ body {
   font-family: var(--font-sans);
   font-size: var(--text-base);
   color: var(--color-text-primary);
-  background: var(--color-bg);
+  /* Ambient page background — two soft colour washes layered on top of
+     the base dark surface. Without these, every `backdrop-filter` in
+     the app sees a uniform dark page and refracts to dark, defeating
+     the Liquid Glass system. The washes are deliberately broad and
+     low-saturation: they only need to give the glass surfaces SOME
+     colour to refract; they should never read as a foreground gradient. */
+  background:
+    radial-gradient(
+      ellipse 1200px 800px at 15% 10%,
+      var(--ambient-tint-1) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 1100px 900px at 85% 95%,
+      var(--ambient-tint-2) 0%,
+      transparent 50%
+    ),
+    var(--color-bg);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /*
@@ -32,6 +50,36 @@ body {
   cursor: default;
 }
 
+/* Liquid Glass surfaces are now driven by the `<LiquidGlass>` React
+   component (`@liquidglass/react`). It uses an SVG `feDisplacementMap`
+   filter + a CSS `backdrop-filter` to refract whatever's behind it.
+   No global CSS classes needed — each surface that wants the glass
+   effect imports the component and wraps its visible content in it. */
+
+/* `@liquidglass/react` renders each instance's filter SVG with
+   `position: fixed; top: 0; left: 0` and HTML `width="0" height="0"`.
+   In WKWebView, the SVG can fall back to its default 300×150 box,
+   painting a transparent-but-layout-occupying rectangle at the
+   top-left of the viewport for EVERY instance. That rectangle covers
+   page content under the drag region as soon as something is scrolled
+   into that area. Force them to 1×1 (0×0 has been observed to
+   trip over Webkit's "treat-as-default" path) and clip them so they
+   take no visible space. The `<defs><filter>` inside is still
+   referenced by ID via `backdrop-filter: url(#…)`, which keeps
+   working even when the host SVG is visually clipped to 0. */
+svg[width='0'][height='0'] {
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  /* Belt-and-braces: also explicitly pin to top-left and behind
+     everything visible. */
+  top: 0 !important;
+  left: 0 !important;
+  z-index: -9999 !important;
+  pointer-events: none !important;
+}
+
 input,
 textarea,
 [contenteditable='true'] {
@@ -41,7 +89,7 @@ textarea,
 }
 
 ::selection {
-  background: oklch(62% 0.24 25 / 0.4);
+  background: oklch(63% 0.258 29 / 0.4);
   color: var(--color-text-primary);
 }
 

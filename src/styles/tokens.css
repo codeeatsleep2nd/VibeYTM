@@ -7,16 +7,58 @@
 
   /* Text */
   --color-text-primary: oklch(95% 0 0);
-  --color-text-secondary: oklch(65% 0 0);
-  --color-text-tertiary: oklch(45% 0 0);
+  --color-text-secondary: oklch(82% 0 0);
+  --color-text-tertiary: oklch(75% 0 0);
 
-  /* Accent — warm red, YouTube Music-inspired */
-  --color-accent: oklch(62% 0.24 25);
-  --color-accent-hover: oklch(68% 0.24 25);
+  /* Accent — YouTube logo red (#FF0000) converted to oklch.
+     Pure RGB red lands at ~oklch(63% 0.258 29). The hover variant
+     lifts lightness without shifting hue or chroma so the relationship
+     between rest and hover stays neutral. */
+  --color-accent: oklch(63% 0.258 29);
+  --color-accent-hover: oklch(69% 0.258 29);
 
-  /* Glass */
-  --glass-bg: oklch(14% 0.005 270 / 0.72);
-  --glass-blur: 20px;
+  /* Glass — Liquid Glass system. Three opacity tiers cover every
+     surface in the UI:
+       chrome  — fixed plates (player chrome, queue drawer): heaviest
+                 white wash + brightest rim, reads as a discrete plate
+       card    — content cards (albums, playlists, song rows): mid
+                 opacity so page content tints them
+       subtle  — backgrounds and section headers: faint tint, mostly
+                 transparent
+     `backdrop-filter: blur(...) saturate(220%) brightness(1.05)` is
+     the recipe applied to all three. The saturate boost is what makes
+     the glass look ALIVE on dark UIs — without it the bleed-through
+     desaturates to gray. The brightness lifts shadow areas so the
+     ambient page gradient reads through. */
+  /* Tier opacities tuned for visible-glass-but-readable. Lower opacity
+     than before so the ambient page colour passes through every glass
+     surface, matching the uniform liquidGL look. */
+  --glass-bg-chrome: oklch(30% 0.005 270 / 0.40);
+  --glass-bg-card: oklch(28% 0.005 270 / 0.30);
+  --glass-bg-subtle: oklch(24% 0.005 270 / 0.18);
+  --glass-bg-hover: oklch(80% 0.02 270 / 0.14);
+  --glass-blur: 48px;
+  --glass-blur-strong: 64px;
+  --glass-saturate: 220%;
+  --glass-brightness: 1.05;
+  --glass-rim-bright: oklch(100% 0 0 / 0.28);
+  --glass-rim-mid: oklch(100% 0 0 / 0.18);
+  --glass-rim-dim: oklch(100% 0 0 / 0.10);
+  --glass-shadow: 0 8px 24px oklch(0% 0 0 / 0.28);
+  --glass-shadow-strong: 0 12px 36px oklch(0% 0 0 / 0.35);
+  /* Legacy alias — still consumed by older components; points at the
+     new token so a single source of truth governs the chrome look. */
+  --glass-bg: var(--glass-bg-chrome);
+
+  /* Ambient page colour. Without this every backdrop-filter just
+     sees the uniform --color-bg and refracts to dark — making the
+     glass invisible. Two soft radial colour washes on the body give
+     the glass surfaces something visible to refract, even on pages
+     that are otherwise mostly dark. Lightness reduced again
+     (24→14, 26→16) so the gradient reads properly dark while still
+     leaving a hint of chroma for the glass plates to refract. */
+  --ambient-tint-1: oklch(14% 0.10 280);
+  --ambient-tint-2: oklch(16% 0.12 25);
 
   /* Typography */
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',

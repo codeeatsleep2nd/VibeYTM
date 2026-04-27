@@ -86,6 +86,10 @@ mod tests {
 
 #[tauri::command]
 pub async fn cache_clear(cache: State<'_, Cache>) -> Result<u64, String> {
+    // Drop the in-process YTM API response cache too so a user-
+    // triggered "Clear cache" actually re-fetches from YTM on the
+    // next navigation, not just the on-disk image bytes.
+    crate::webview_bridge::api_cache::clear_all().await;
     cache.clear().await.map_err(|e| e.to_string())
 }
 

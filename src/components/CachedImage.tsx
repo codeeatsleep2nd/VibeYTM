@@ -34,104 +34,25 @@ interface CachedImageProps {
 // this only kicks in for genuinely rectangular sources.
 const SQUARE_TOLERANCE = 0.05;
 
-// In-memory map: remote URL -> local asset URL (survives re-renders)
-const inflight = new Map<string, Promise<string | null>>();
-const resolved = new Map<string, string>();
-
-// ------------- Concurrency limiter for cacheApi.fetchImage IPCs ---------
-//
-// On a cache-cleared cold start, the home page mounts ~150-200
-// `<CachedImage>`s simultaneously. Without a limiter, each fires its
-// own `cacheApi.fetchImage(url)` Tauri IPC immediately, the IPC bus
-// serializes on the main thread, reqwest's connection pool gets
-// saturated, and a chunk of the requests time out and resolve to
-// null — leaving those images blank.
-//
-// Cap concurrent in-flight IPCs to a small number. Off-screen images
-// also wait their turn behind on-screen ones thanks to the
-// IntersectionObserver gate below, so visible content loads first
-// even when 200 images compete for 6 slots.
-const MAX_CONCURRENT_FETCHES = 6;
-let activeFetches = 0;
-const fetchQueue: Array<() => void> = [];
-
-function acquireFetchSlot(): Promise<void> {
-  return new Promise((resolve) => {
-    if (activeFetches < MAX_CONCURRENT_FETCHES) {
-      activeFetches++;
-      resolve();
-    } else {
-      fetchQueue.push(() => {
-        activeFetches++;
-        resolve();
-      });
-    }
-  });
-}
-
-function releaseFetchSlot(): void {
-  activeFetches--;
-  const next = fetchQueue.shift();
-  if (next) next();
-}
-
-async function resolveCached(url: string): Promise<string | null> {
-  if (resolved.has(url)) {
-    return resolved.get(url)!;
-  }
-  const existing = inflight.get(url);
-  if (existing) {
-    return existing;
-  }
-  const p = (async () => {
-    await acquireFetchSlot();
-    try {
-      const path = await cacheApi.fetchImage(url);
-      const asset = cacheApi.convertToAssetUrl(path);
-      resolved.set(url, asset);
-      return asset;
-    } catch {
-      return null;
-    } finally {
-      inflight.delete(url);
-      releaseFetchSlot();
-    }
-  })();
-  inflight.set(url, p);
-  return p;
-}
-
-// Reset the limiter on hot reload so a stuck slot from a previous
-// module instance can't leak into the new one.
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    activeFetches = 0;
-    fetchQueue.length = 0;
-  });
-}
-
 /**
- * Image that fetches via the Rust disk cache, with a concurrency
- * limit to keep cache-cleared cold starts smooth: at most 6
- * `cacheApi.fetchImage` IPCs are in flight at any time. Excess calls
- * queue. This stops the Tauri main-thread bridge and reqwest
- * connection pool from saturating when ~150-200 images mount at once
- * on Home/Explore/Library after a cache wipe.
+ * Image routed through the `vibeytm-cache://` custom URI scheme. The
+ * webview fetches it natively from the protocol handler in
+ * `src-tauri/src/protocols/cache_image.rs`, which serves bytes from the
+ * same on-disk cache the older `cache_fetch_image` IPC fed. Eliminates
+ * the JS↔Rust IPC + `convertFileSrc` round trip on every image, plus
+ * the hand-rolled 6-slot concurrency limiter — the webview's own
+ * `<img>` loader handles concurrency.
  *
- * The component pre-decodes the image off-DOM so it appears in one
- * shot — never half-painted, never with a progressive flicker. Falls
- * back to the remote URL directly if the cache layer fails so the UI
- * never shows a broken image.
+ * Pre-decode kept: we still call `img.decode()` off-DOM before mounting
+ * the visible `<img>` so the image appears in one shot rather than
+ * progressively.
  *
- * Why no IntersectionObserver gate: an earlier version added a
- * `<span>` placeholder for IO to observe so off-screen images would
- * defer fetching until scrolled toward. In this WKWebView build, that
- * inline-block placeholder span inside `<button>` AlbumCards
- * interfered with click hit-testing — cards regressed to unclickable
- * for a third time today. The concurrency limit alone is enough back-
- * pressure for cache-cleared cold starts; the bridge drains a batch
- * of 6 at a time and the visual effect is "images appear in waves"
- * rather than "many fail to load."
+ * Safety regression notes (kept verbatim from prior implementation):
+ *   - DO NOT add an IntersectionObserver gate in front of the `<img>`.
+ *     Earlier attempt used a `<span>` placeholder which interfered with
+ *     `<button>` AlbumCard click hit-testing in this Tauri WKWebView
+ *     build (cards regressed unclickable). Native lazy-loading via
+ *     `loading="lazy"` is enough back-pressure.
  */
 export const CachedImage: FC<CachedImageProps> = ({
   src,
@@ -154,39 +75,30 @@ export const CachedImage: FC<CachedImageProps> = ({
     }
 
     let cancelled = false;
+    const cacheUrl = cacheApi.buildCacheUrl(src);
 
-    // Step 1: resolve the asset URL (cache hit or fetch from remote into the
-    // disk cache, then convert to an asset:// URL).
-    const tryReveal = async (url: string) => {
-      // Step 2: pre-decode the image off-DOM so the browser fully prepares
-      // the bitmap. Only after decode() resolves do we mount the <img>.
-      const probe = new Image();
-      probe.src = url;
-      let aspect: number | null = null;
-      try {
-        await probe.decode();
+    // Pre-decode off-DOM so the visible `<img>` mounts only after the
+    // bitmap is ready — no progressive flicker. decode() may reject
+    // for cross-origin images even when they're loadable; reveal in
+    // that case anyway.
+    const probe = new Image();
+    probe.src = cacheUrl;
+    let aspect: number | null = null;
+    probe
+      .decode()
+      .then(() => {
+        if (cancelled) return;
         if (probe.naturalWidth > 0 && probe.naturalHeight > 0) {
           aspect = probe.naturalWidth / probe.naturalHeight;
         }
-      } catch {
-        // decode() can reject for cross-origin images even when they're
-        // perfectly loadable; ignore and fall through to mount anyway.
-      }
-      if (cancelled) return;
-      setNaturalAspect(aspect);
-      setDisplayUrl(url);
-    };
-
-    const cached = resolved.get(src);
-    if (cached) {
-      void tryReveal(cached);
-      return;
-    }
-
-    resolveCached(src).then((asset) => {
-      if (cancelled) return;
-      void tryReveal(asset ?? src);
-    });
+        setNaturalAspect(aspect);
+        setDisplayUrl(cacheUrl);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setNaturalAspect(null);
+        setDisplayUrl(cacheUrl);
+      });
 
     return () => {
       cancelled = true;

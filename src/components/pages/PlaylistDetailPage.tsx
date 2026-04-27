@@ -2,9 +2,12 @@ import { type FC, useEffect, useState } from 'react';
 import type { PlaylistDetail } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
 import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
+import { useCoverColors } from '../../hooks/useCoverColors';
+import { albumArtOrNothing } from '../../lib/artwork';
 import { SongRow } from '../browse/SongRow';
-import { CachedImage } from '../CachedImage';
 import { LoadingSpinner } from '../LoadingOverlay';
+import { DetailPageHero } from '../DetailPageHero';
+import { SkeletonDetailHero, SkeletonRow } from '../Skeleton';
 
 interface PlaylistDetailPageProps {
   playlistId: string;
@@ -35,6 +38,13 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const isAlbum = playlist?.isAlbum ?? playlistId.startsWith('MPRE');
+  // Show / podcast browseId — drives the "Show" kind label on the
+  // hero and the "X episodes" meta line. Kaset's reference uses
+  // MPSPP (5 chars) for podcast shows; matching that exactly so the
+  // gate doesn't accidentally fire on any unrelated MPSP* prefix.
+  // Save block stays hidden — YTM's podcast subscribe endpoint is a
+  // different library surface we don't round-trip yet.
+  const isShow = playlistId.startsWith('MPSPP');
   // Albums save via their underlying audioPlaylistId (OLAK*), not the MPRE
   // browseId. Fall back to playlistId when the backend didn't surface one.
   const saveTargetId = playlist?.audioPlaylistId || playlistId;
@@ -57,10 +67,9 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     } catch (e: unknown) {
       // Roll back and surface the error so the user knows it didn't stick.
       setIsSaved(!next);
+      const surface = isShow ? 'Subscriptions' : isAlbum ? 'Albums' : 'Playlists';
       setSaveError(
-        next
-          ? `Could not save to ${isAlbum ? 'Albums' : 'Playlists'}`
-          : `Could not remove from ${isAlbum ? 'Albums' : 'Playlists'}`,
+        next ? `Could not save to ${surface}` : `Could not remove from ${surface}`,
       );
       console.error('[PlaylistDetailPage] save toggle failed:', e);
     } finally {
@@ -127,11 +136,50 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     };
   }, [playlistId, autoPlay]);
 
+  // Drives the cover-tinted gradient behind the hero. MUST be called
+  // before any early returns so React's hook-call order stays
+  // identical across all render branches (loading / error / empty /
+  // loaded). Was previously declared after the early returns and
+  // tripped React's "rendered more hooks than the previous render"
+  // invariant when `playlist` flipped from null → loaded.
+  const heroColors = useCoverColors(
+    albumArtOrNothing(playlist?.artworkUrl) ?? undefined,
+  );
+
   // PlaylistDetailPage resets `playlist` to null before each fetch, so there
   // is no stale content to blur mid-load — keep the plain spinner here.
   if (isLoading) {
-    return <LoadingSpinner />;
+    // Skeleton scaffold matching the eventual hero + track-list layout
+    // so the swap on data arrival doesn't shift the page. Falls back
+    // to a plain spinner if the user has prefers-reduced-motion via
+    // the Skeleton primitive's own check.
+    return (
+      <section
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          overflowY: 'auto',
+          height: '100%',
+        }}
+      >
+        <SkeletonDetailHero />
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            padding: '0 var(--space-6) var(--space-8)',
+          }}
+        >
+          {Array.from({ length: 8 }).map((_, i) => (
+            <SkeletonRow key={i} />
+          ))}
+        </div>
+      </section>
+    );
   }
+  // LoadingSpinner kept available for indeterminate cases that don't
+  // benefit from a layout-mirroring skeleton.
+  void LoadingSpinner;
 
   if (error) {
     return (
@@ -238,242 +286,118 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     );
   }
 
+  // Same playlist-context resolution the action handlers need. Album
+  // browseIds (MPRE) save through their underlying audioPlaylistId
+  // (OLAK*) — see the toggleSaved invariants at the top of the file.
+  const isAlbumBrowseId = playlistId.startsWith('MPRE');
+  const watchListId =
+    isAlbumBrowseId && playlist.audioPlaylistId
+      ? playlist.audioPlaylistId
+      : playlistId;
+
+  const handlePlayAll = () => {
+    if (playlist.tracks.length === 0) return;
+    const firstId = playlist.tracks[0].videoId;
+    if (!firstId) return;
+    playerApi.playTrack(firstId, watchListId).catch(() => {});
+  };
+
+  // Derived hero metadata: primary artist (album case → tracks share
+  // an artist; playlist case → "Various artists" once we see > 1
+  // distinct name) and total runtime summed across track durations.
+  // Both are pure-frontend computations from the existing tracks
+  // payload — no Rust parser change needed.
+  const primaryArtist = (() => {
+    if (isShow || playlist.tracks.length === 0) return undefined;
+    const distinct = new Set<string>();
+    for (const t of playlist.tracks) {
+      if (t.artist) distinct.add(t.artist);
+      if (distinct.size > 1) break;
+    }
+    if (distinct.size === 0) return undefined;
+    if (distinct.size === 1) return playlist.tracks.find((t) => t.artist)?.artist;
+    return 'Various artists';
+  })();
+  const totalRuntimeSecs = playlist.tracks.reduce(
+    (acc, t) => acc + (t.durationSecs > 0 ? t.durationSecs : 0),
+    0,
+  );
+  const formatRuntime = (secs: number): string => {
+    const total = Math.round(secs);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    if (hours > 0) return `${hours} hr ${minutes} min`;
+    return `${minutes} min`;
+  };
+  const metaParts: string[] = [];
+  if (primaryArtist) metaParts.push(primaryArtist);
+  if (playlist.year) metaParts.push(playlist.year);
+  if (playlist.trackCount !== undefined) {
+    metaParts.push(`${playlist.trackCount} ${isShow ? 'episodes' : 'songs'}`);
+  }
+  if (totalRuntimeSecs > 0) metaParts.push(formatRuntime(totalRuntimeSecs));
+  const heroMeta = metaParts.length > 0 ? metaParts.join(' · ') : undefined;
+
   return (
     <section
       style={{
-        padding: '0 var(--space-6) var(--space-8)',
-        overflowY: 'auto',
-        height: '100%',
+        // Cover the entire right column of the AppShell grid — top to
+        // bottom, edge to edge of the right side. The hero (cover, title,
+        // play-all, save) is pinned to the top of the page; only the
+        // track list inside the lower flex child scrolls.
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        overflow: 'hidden',
       }}
     >
-      {/* Sticky header: back button + cover + title */}
+      {/* Fixed hero block — flexShrink: 0 keeps it at its natural
+          height while the sibling track list owns the scroll. */}
+      <div style={{ flexShrink: 0 }}>
+        <DetailPageHero
+          title={playlist.title}
+          kind={isShow ? 'Show' : isAlbum ? 'Album' : 'Playlist'}
+          coverUrl={playlist.artworkUrl ?? ''}
+          colors={heroColors}
+          meta={heroMeta}
+          description={playlist.description ?? undefined}
+          onBack={onBack}
+          onPlay={handlePlayAll}
+          save={{
+            isSaved,
+            isAlbum,
+            isShow,
+            isSaving,
+            onToggle: toggleSaved,
+            error: saveError,
+          }}
+        />
+      </div>
+
+      {/* Track list — only scrolling region on the page. The wrapper
+          shares the hero's left margin (space-6) so the row's outer
+          edge — and the hover/selection background that paints to
+          that edge — aligns with the hero cover image's left. The
+          row's own internal padding stays inside that edge as
+          breathing room for the row's content. */}
       <div
         style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 10,
-          background: 'var(--color-surface-1)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          // Match the sidebar nav's top padding so the back button lines
-          // up with the sidebar navigation (issue #59).
-          paddingTop: 'var(--space-3)',
-          paddingBottom: 'var(--space-4)',
-          marginBottom: 'var(--space-4)',
-        }}
-      >
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        style={{
-          background: 'none',
-          border: 'none',
-          color: 'var(--color-text-secondary)',
-          cursor: 'pointer',
-          fontSize: 'var(--text-sm)',
-          padding: 'var(--space-1) 0',
-          marginBottom: 'var(--space-4)',
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
           display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-1)',
+          flexDirection: 'column',
+          padding: '0 var(--space-6) 0 var(--space-6)',
         }}
       >
-        &larr; Back
-      </button>
-
-      {/* Header: artwork + info side-by-side, top-aligned */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '160px 1fr',
-          gap: 'var(--space-5)',
-          alignItems: 'start',
-        }}
-      >
-        {/* Compact artwork */}
-        <div
-          style={{
-            width: '160px',
-            height: '160px',
-            borderRadius: 'var(--radius-lg)',
-            overflow: 'hidden',
-            background: 'var(--color-surface-2)',
-          }}
-        >
-          {playlist.artworkUrl && (
-            <CachedImage
-              src={playlist.artworkUrl}
-              alt={playlist.title}
-              width={160}
-              height={160}
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-              }}
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-              }}
-            />
-          )}
-        </div>
-
-        {/* Info column — top-aligned with the cover */}
-        <div
-          style={{
-            minWidth: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'flex-start',
-            gap: 'var(--space-2)',
-          }}
-        >
-          <div
-            style={{
-              fontSize: 'var(--text-xs)',
-              fontWeight: 500,
-              color: 'var(--color-text-tertiary)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-            }}
-          >
-            {playlistId.startsWith('MPRE') ? 'Album' : 'Playlist'}
-          </div>
-          <h1
-            style={{
-              fontSize: 'var(--text-2xl)',
-              fontWeight: 700,
-              color: 'var(--color-text-primary)',
-              letterSpacing: '-0.02em',
-              margin: 0,
-              lineHeight: 1.2,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {playlist.title}
-          </h1>
-          {playlist.trackCount !== undefined && (
-            <div
-              style={{
-                fontSize: 'var(--text-sm)',
-                color: 'var(--color-text-secondary)',
-              }}
-            >
-              {playlist.trackCount} songs
-            </div>
-          )}
-          {playlist.description && (
-            <p
-              style={{
-                fontSize: 'var(--text-sm)',
-                color: 'var(--color-text-tertiary)',
-                margin: 0,
-                lineHeight: 1.5,
-                maxWidth: '500px',
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }}
-            >
-              {playlist.description}
-            </p>
-          )}
-          {/* Action row: Play all + Save to library */}
-          <div
-            style={{
-              display: 'flex',
-              gap: 'var(--space-2)',
-              alignItems: 'center',
-              marginTop: 'var(--space-2)',
-            }}
-          >
-            <button
-              onClick={() => {
-                if (playlist.tracks.length > 0 && playlist.tracks[0].videoId) {
-                  const isAlbumBrowseId = playlistId.startsWith('MPRE');
-                  const watchList =
-                    isAlbumBrowseId && playlist.audioPlaylistId
-                      ? playlist.audioPlaylistId
-                      : playlistId;
-                  playerApi.playTrack(playlist.tracks[0].videoId, watchList).catch(() => {});
-                }
-              }}
-              style={{
-                background: 'var(--color-accent)',
-                border: 'none',
-                borderRadius: 'var(--radius-full)',
-                padding: 'var(--space-2) var(--space-5)',
-                color: 'oklch(100% 0 0)',
-                fontSize: 'var(--text-sm)',
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 'var(--space-2)',
-              }}
-            >
-              &#x25B6; Play all
-            </button>
-            <button
-              onClick={toggleSaved}
-              disabled={isSaving}
-              aria-pressed={isSaved}
-              aria-label={isSaved ? 'Remove from library' : 'Save to library'}
-              style={{
-                background: 'transparent',
-                border: '1px solid oklch(100% 0 0 / 0.16)',
-                borderRadius: 'var(--radius-full)',
-                padding: 'var(--space-2) var(--space-4)',
-                color: isSaved ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                fontSize: 'var(--text-sm)',
-                fontWeight: 500,
-                cursor: isSaving ? 'progress' : 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 'var(--space-2)',
-                opacity: isSaving ? 0.7 : 1,
-              }}
-            >
-              {isSaved
-                ? '✓ Remove from Library'
-                : `+ Save to ${isAlbum ? 'Albums' : 'Playlists'}`}
-            </button>
-          </div>
-          {saveError && (
-            <div
-              style={{
-                fontSize: 'var(--text-xs)',
-                color: '#f44',
-                marginTop: 'var(--space-1)',
-              }}
-            >
-              {saveError}
-            </div>
-          )}
-        </div>
-      </div>
-      </div>
-
-      {/* Track list */}
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {playlist.tracks.map((track, i) => {
-          const isAlbumBrowseId = playlistId.startsWith('MPRE');
-          const rowPlaylistId =
-            isAlbumBrowseId && playlist.audioPlaylistId
-              ? playlist.audioPlaylistId
-              : playlistId;
-          return (
-            <SongRow
-              key={track.videoId || `track-${i}`}
-              track={track}
-              index={i + 1}
-              playlistId={rowPlaylistId}
-            />
-          );
-        })}
+        {playlist.tracks.map((track, i) => (
+          <SongRow
+            key={track.videoId || `track-${i}`}
+            track={track}
+            index={i + 1}
+            playlistId={watchListId}
+          />
+        ))}
         {playlist.tracks.length === 0 && (
           <div
             style={{
@@ -486,6 +410,21 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
             No tracks found
           </div>
         )}
+        {/* Invisible spacer so the last song row clears the floating
+            player chrome. Height = player-bar-height (chrome itself) +
+            space-3 (chrome's bottom margin from the window) + space-3
+            (breathing room above the chrome). WebKit's
+            `overflow: auto` excludes paddingBottom from `scrollHeight`,
+            so the spacer must be a real DOM child to extend the
+            scrollable area. */}
+        <div
+          aria-hidden="true"
+          style={{
+            flexShrink: 0,
+            height:
+              'calc(var(--player-bar-height) + var(--space-3) * 2)',
+          }}
+        />
       </div>
     </section>
   );

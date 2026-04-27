@@ -1,7 +1,12 @@
 import { type FC, type ReactNode, useEffect, useRef } from 'react';
+import { LiquidGlass } from '@liquidglass/react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { preloadLyrics } from '../../hooks/useLyrics';
 import { preloadAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import {
+  BRIDGE_SETTLE_MS,
+  useDeferredEffect,
+} from '../../hooks/useBridgeSafeFetch';
 import { isAlbumArtUrl } from '../../lib/artwork';
 import { lookupTrackArtwork } from '../../lib/trackArtworkRegistry';
 import {
@@ -128,32 +133,24 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   const { track, status, volume, isShuffled, repeatMode, applyOptimistic } = state;
   const isPlaying = status === 'playing';
 
-  // 2-second-deferred preload of CURRENT track's lyrics + the next
-  // track's lyrics + cover. Copied verbatim from the old PlayerBar —
-  // the deferral is the bridge saturation fix from CLAUDE.md
-  // ("Background fetches need a settle delay after track change").
-  // Cache-first via three tiers:
+  // Background preload of the CURRENT track's lyrics + the next track's
+  // lyrics + cover. Routed through `useDeferredEffect` so the bridge
+  // settles after a track change before any of these IPCs fire (see
+  // CLAUDE.md "Background fetches need a settle delay after track
+  // change"). Cache-first via three tiers:
   //   1. trackArtworkRegistry (populated by playlist visits)
   //   2. track.artworkUrl when it's already album art
   //   3. preloadAudioCounterpartArtwork (Rust /next lookup)
-  // The CURRENT track preload (added here) makes the LRC panel render
-  // instantly when the user opens it later — without it, opening the
-  // panel triggers a fresh fetch on every previously-uncached song.
+  // The CURRENT track preload makes the LRC panel render instantly the
+  // next time the user opens it.
   const currentVideoId = track?.videoId;
   const currentArtist = track?.artist;
   const currentTitle = track?.title;
   const currentDuration = track?.durationSecs;
-  useEffect(() => {
-    if (!currentVideoId) return;
+  useDeferredEffect(
+    () => {
+      if (!currentVideoId) return;
 
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      if (cancelled) return;
-
-      // Background-load lyrics for the CURRENT track so the LRC panel
-      // is warm whenever the user clicks it later. preloadLyrics is a
-      // no-op when the track is already in the hits/misses cache, so
-      // this is free for repeat plays.
       preloadLyrics({
         videoId: currentVideoId,
         artist: currentArtist ?? null,
@@ -191,6 +188,7 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         return;
       }
 
+      let cancelled = false;
       browseApi
         .getUpcomingTracks(currentVideoId, 2)
         .then((tracks) => {
@@ -214,13 +212,13 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         .catch(() => {
           // Best-effort preload; the on-demand fetch path covers misses.
         });
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [currentVideoId, currentArtist, currentTitle, currentDuration]);
+      return () => {
+        cancelled = true;
+      };
+    },
+    [currentVideoId, currentArtist, currentTitle, currentDuration],
+    BRIDGE_SETTLE_MS,
+  );
 
   const handleTogglePlay = () => {
     applyOptimistic({ status: isPlaying ? 'paused' : 'playing' });
@@ -297,21 +295,61 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
 
   return (
     <footer
+      // Positioning wrapper — a fixed strip at the bottom of the
+      // window. The visible glass capsule is the `<LiquidGlass>` child;
+      // matches the floating-pill shape used by every page's top
+      // title plate.
       style={{
         position: 'fixed',
-        bottom: 0,
-        left: 'var(--sidebar-width)',
-        right: 0,
+        bottom: 'var(--space-3)',
+        left: 'calc(var(--sidebar-width) + var(--space-4))',
+        right: 'var(--space-4)',
+        // Explicit height — `<LiquidGlass>` inside takes 100 % of its
+        // parent. Without this the footer auto-fits and the WebGL/SVG
+        // wrapper collapses, clipping the controls' top edge.
         height: 'var(--player-bar-height)',
-        background: 'var(--color-surface-1)',
-        borderTop: '1px solid oklch(100% 0 0 / 0.06)',
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 var(--space-4)',
-        gap: 'var(--space-3)',
-        zIndex: 100,
+        // Above every overlay surface so the floating capsule is
+        // never occluded — sits below only the title-bar drag region
+        // (z 200, top of window only).
+        zIndex: 150,
       }}
     >
+      <LiquidGlass
+        borderRadius={150}
+        // blur=40 matches the NowPlaying overlay's
+        // `backdrop-filter: blur(40px) saturate(180%)`. The
+        // LiquidGlass component applies blur via its OWN
+        // backdrop-filter on the capsule div (the inner-content
+        // div's own backdrop-filter only filters the LiquidGlass
+        // output, not the page underneath — filters don't chain).
+        blur={40}
+        contrast={1.2}
+        brightness={1.05}
+        saturation={1.8}
+        shadowIntensity={0.25}
+        displacementScale={1}
+        elasticity={1}
+        zIndex={150}
+      ><div
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 var(--space-10)',
+          gap: 'var(--space-3)',
+          // Semi-transparent dark wash + heavy backdrop-filter (same
+          // recipe SafeOverlay uses for the NowPlaying / queue
+          // surfaces) so the chrome's blur character matches the
+          // other glass plates instead of relying only on
+          // LiquidGlass's own filter (which WebKit drops the SVG
+          // displacement portion of).
+          background: 'oklch(20% 0.005 270 / 0.30)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          borderRadius: 'inherit',
+        }}
+      >
       {/* LEFT — transports (Apple Music: flat white glyphs, prev/play/next
           rendered as filled SF-Symbol shapes; shuffle/repeat are smaller
           stroke icons that bracket the row at lower visual weight) */}
@@ -467,6 +505,8 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
           <QueueIcon size={20} />
         </ChromeButton>
       </div>
+      </div>
+      </LiquidGlass>
     </footer>
   );
 };

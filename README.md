@@ -14,17 +14,23 @@ A YouTube Music desktop app built with Tauri, React, and Rust.
 
 ## Features
 
-- Custom UI with sidebar navigation, album grids, and player bar
+- Liquid-glass UI: floating capsules for the player chrome, page title plates, and overlays — backdrop-filter + SVG displacement rims via `@liquidglass/react`
+- YouTube-red accent (`#FF0000`) tuned in oklch, with a unified white-wash selection style across sidebar, mood pills, and search tabs
 - Apple Music-style player chrome with foldable sidebar
-- Background playback — music continues when the window is closed
+- Now Playing page slides up smoothly from the bottom; lyrics is its own slide-from-right overlay (independent of the playing page) that frosts only its own card area
+- Synced lyrics with karaoke-style highlighting (YTM timed lyrics → LRCLIB → NetEase fallback) and CJK pinyin romanization
+- Per-track lyrics offset adjustment, manual lyrics refresh, lyrics pre-fetch for current and next tracks
+- Playing queue with row alignment that mirrors the cover image's left edge, plus an artist context menu
+- Album / playlist detail pages: pinned hero (cover + title + play-all + save), scrolling track list, edge-flush rows, invisible spacer so the last track clears the floating chrome
+- Album hero meta line: `artist · year · N songs · runtime`; description joins all runs (no more lopped descriptions); back button portaled above the title-bar drag region for click reliability
+- **Library Podcasts**: dedicated `FEmusic_library_non_music_audio_list` endpoint (full subscription list, not just the landing subset), per-show "last episode X ago" recency probe (parallel, capped concurrency, 1h localStorage cache), and grid sorted most-recent-first
+- **Subscribe / Unsubscribe button** on podcast detail pages with the same like-endpoint round-trip as playlist/album save
+- Show-cover override: episodes from a podcast use the show's channel art on every now-playing surface
 - System tray with playback controls
 - Media key support (Play/Pause, Next, Previous)
 - Now Playing Control Center integration (macOS)
 - Desktop notifications on track change
-- Global keyboard shortcuts (configurable)
-- Playing queue with drag-to-reorder and album artwork
-- Synced lyrics with karaoke-style highlighting (YTM timed lyrics → LRCLIB → NetEase fallback)
-- Lyrics pre-fetch for current and next tracks in queue
+- Global keyboard shortcuts (configurable, with `⌘/` cheatsheet)
 - Audio counterpart detection — always shows album art, never video thumbnails
 - Session persistence — resumes last track and position on restart
 - Search history — last 5 queries as quick-tap chips

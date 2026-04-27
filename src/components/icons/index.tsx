@@ -47,6 +47,7 @@ export {
   Music2 as SongsIcon,
   Disc3 as AlbumsIcon,
   Mic2 as ArtistsIcon,
+  Mic as PodcastsIcon,
   Settings as SettingsIcon,
 } from 'lucide-react';
 

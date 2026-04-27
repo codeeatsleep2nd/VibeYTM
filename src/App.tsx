@@ -8,10 +8,14 @@ import { ExplorePage } from './components/pages/ExplorePage';
 import { SettingsPage } from './components/pages/SettingsPage';
 import { LoginPage } from './components/pages/LoginPage';
 import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
+import { ArtistPage } from './components/pages/ArtistPage';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { UpdateBanner } from './components/UpdateBanner';
-import { useLoginState } from './hooks/useLoginState';
-import { ytmApi } from './lib/ipc';
+import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
+import { useBootState } from './hooks/useBootState';
+import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
+import { ytmApi, playerApi } from './lib/ipc';
+import { registerOpenArtist } from './lib/appNav';
 
 interface ViewingPlaylist {
   id: string;
@@ -19,23 +23,21 @@ interface ViewingPlaylist {
 }
 
 const App: FC = () => {
-  const loginState = useLoginState();
-  // Local override so the user can dismiss the login page manually (e.g. via
-  // "Skip for now") even if the bridge hasn't confirmed sign-in yet.
-  const [loginOverride, setLoginOverride] = useState(false);
-  const isLoggedIn = loginState === true || loginOverride;
+  // Boot orchestrator: tri-state phase (loading|login|app) plus the
+  // splash-fade gate. Replaces the three intertwined flags App used to
+  // juggle (loginState / loginOverride / isHomeReady). See
+  // useBootState.ts for the state-machine contract; useBootState.test.ts
+  // pins down each transition.
+  const { phase, isSplashDone, markHomeReady, markManualLogin } =
+    useBootState();
   const [currentPath, setCurrentPath] = useState('home');
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
+  const [viewingArtist, setViewingArtist] = useState<string | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
-  // Flips true once the Home page has finished its first real render (or we
-  // settle into the LoginPage for signed-out users). While false, the
-  // WelcomeScreen stays overlaid so cold launch never shows the "Loading…"
-  // placeholder or a half-painted Home (issue #56).
-  const [isHomeReady, setIsHomeReady] = useState(false);
-  const handleHomeReady = useCallback(() => setIsHomeReady(true), []);
+  const [isCheatsheetOpen, setIsCheatsheetOpen] = useState(false);
   // Bumped whenever the user saves or removes a playlist/album so the
   // LibraryPage knows to refetch even when it stays mounted under the
   // playlist-detail overlay.
@@ -66,18 +68,15 @@ const App: FC = () => {
     });
   }, []);
 
-  // Lyrics button opens the Now Playing page if it isn't already, then flips
-  // the lyrics view on/off within it.
+  // Lyrics is its own top-level overlay (LyricsOverlay) — toggling it
+  // no longer mounts the Now Playing page. Each overlay (Now Playing,
+  // Lyrics, Queue) owns its own visibility independently.
   const toggleLyrics = useCallback(() => {
     // Clicking LRC always dismisses the queue drawer, whether lyrics is
     // being opened or closed — the two surfaces shouldn't coexist since
-    // the queue sits over the lyrics column.
+    // they share the same right-slot geometry.
     setIsQueueOpen(false);
-    setIsLyricsOpen((prev) => {
-      const next = !prev;
-      if (next) setIsNowPlayingOpen(true);
-      return next;
-    });
+    setIsLyricsOpen((prev) => !prev);
   }, []);
 
   // Independent surface: opening it does not open Now Playing, and closing
@@ -95,35 +94,142 @@ const App: FC = () => {
   }, []);
 
   const searchForArtist = useCallback((name: string) => {
+    // Promoted from a search redirect to a real overlay page (P3.1).
+    // Closes other overlays so the artist hero is the focus.
     setViewingPlaylist(null);
     setIsNowPlayingOpen(false);
-    setPendingSearchQuery(name);
-    setCurrentPath('search');
+    setIsLyricsOpen(false);
+    setIsQueueOpen(false);
+    setViewingArtist(name);
   }, []);
 
-  // Hide the YTM window as soon as we confirm the user is signed in. Without
-  // this the window lingers from its .visible(true) startup state (issue #51).
+  // Hide the YTM window as soon as the boot orchestrator transitions to the
+  // app phase (signed in OR manual override). Without this the window
+  // lingers from its `.visible(true)` startup state (issue #51).
   useEffect(() => {
-    if (loginState === true) {
+    if (phase === 'app') {
       ytmApi.hideYtm().catch(() => {
         // If hiding fails, the YTM window stays — non-fatal.
       });
     }
-  }, [loginState]);
+  }, [phase]);
 
-  // While we don't know the login state, the WelcomeScreen is the only thing
-  // on screen — no neutral "Loading…" flash.
-  if (loginState === null && !loginOverride) {
+  // Register the app-level "open artist" navigation hook so the track
+  // context menu can drive it without prop-drilling. Re-registers on
+  // every mount of the App-level callback identity; deregisters on
+  // unmount so a stale closure can't fire after a HMR replacement.
+  useEffect(() => {
+    registerOpenArtist(searchForArtist);
+    return () => registerOpenArtist(null);
+  }, [searchForArtist]);
+
+  // Global keyboard shortcuts. Active only in the app phase (no point
+  // intercepting Cmd+L while the LoginPage is up). Bindings stay as a
+  // const-array — `useGlobalShortcuts` re-attaches the listener when
+  // it changes, so any state captured by the callbacks is current.
+  const goSidebar = useCallback((path: string) => {
+    setViewingPlaylist(null);
+    setIsNowPlayingOpen(false);
+    setIsQueueOpen(false);
+    setIsLyricsOpen(false);
+    setCurrentPath(path);
+  }, []);
+  const shortcutBindings: ShortcutBinding[] = phase === 'app'
+    ? [
+        {
+          key: ' ',
+          label: 'Toggle play / pause',
+          hint: 'Space',
+          onActivate: () => playerApi.togglePlay().catch(() => {}),
+        },
+        {
+          key: 'l',
+          meta: true,
+          label: 'Toggle lyrics',
+          hint: '⌘L',
+          onActivate: toggleLyrics,
+        },
+        {
+          key: 'q',
+          meta: true,
+          label: 'Toggle queue',
+          hint: '⌘Q',
+          onActivate: toggleQueue,
+        },
+        {
+          key: 'f',
+          meta: true,
+          label: 'Search',
+          hint: '⌘F',
+          onActivate: () => goSidebar('search'),
+        },
+        {
+          key: '1',
+          meta: true,
+          label: 'Home',
+          hint: '⌘1',
+          onActivate: () => goSidebar('home'),
+        },
+        {
+          key: '2',
+          meta: true,
+          label: 'Search',
+          hint: '⌘2',
+          onActivate: () => goSidebar('search'),
+        },
+        {
+          key: '3',
+          meta: true,
+          label: 'Explore',
+          hint: '⌘3',
+          onActivate: () => goSidebar('explore'),
+        },
+        {
+          key: '4',
+          meta: true,
+          label: 'Library',
+          hint: '⌘4',
+          onActivate: () => goSidebar('library'),
+        },
+        {
+          key: ',',
+          meta: true,
+          label: 'Settings',
+          hint: '⌘,',
+          onActivate: () => goSidebar('settings'),
+        },
+        {
+          key: '/',
+          meta: true,
+          label: 'Show keyboard shortcuts',
+          hint: '⌘/',
+          onActivate: () => setIsCheatsheetOpen((v) => !v),
+        },
+        {
+          key: '?',
+          shift: true,
+          label: 'Show keyboard shortcuts',
+          hint: '?',
+          onActivate: () => setIsCheatsheetOpen((v) => !v),
+        },
+      ]
+    : [];
+  useGlobalShortcuts(shortcutBindings);
+
+  if (phase === 'loading') {
+    // Sign-in state hasn't reported yet — splash is the ONLY surface so
+    // we never flash either the LoginPage or the AppShell at a user
+    // whose state we don't know.
     return <WelcomeScreen isDone={false} />;
   }
 
-  if (!isLoggedIn) {
-    // Once we know the user is signed out, the LoginPage is ready to render
-    // behind the fading WelcomeScreen.
+  if (phase === 'login') {
+    // Bridge confirmed signed-out: LoginPage is ready behind the
+    // splash, which fades over it.
     return (
       <>
-        <LoginPage onLoggedIn={() => setLoginOverride(true)} />
-        <WelcomeScreen isDone />
+        <LoginPage onLoggedIn={markManualLogin} />
+        <WelcomeScreen isDone={isSplashDone} />
       </>
     );
   }
@@ -149,12 +255,14 @@ const App: FC = () => {
     }
     if (currentPath === 'settings') return <SettingsPage />;
     if (currentPath.startsWith('library')) {
-      // library, library/playlists, library/songs, library/albums, library/artists
+      // library, library/playlists, library/songs, library/albums,
+      // library/artists, library/podcasts
       const sub = currentPath.split('/')[1] as
         | 'playlists'
         | 'songs'
         | 'albums'
         | 'artists'
+        | 'podcasts'
         | undefined;
       return (
         <LibraryPage
@@ -170,7 +278,7 @@ const App: FC = () => {
       <HomePage
         onOpenPlaylist={openPlaylistDetail}
         onAutoPlayPlaylist={openPlaylistAutoPlay}
-        onReady={handleHomeReady}
+        onReady={markHomeReady}
       />
     );
   };
@@ -181,6 +289,7 @@ const App: FC = () => {
       currentPath={currentPath}
       onNavigate={(path) => {
         setViewingPlaylist(null);
+        setViewingArtist(null);
         setIsNowPlayingOpen(false);
         setIsQueueOpen(false);
         // Also close LRC explicitly. Inside NowPlaying, the lyrics
@@ -237,10 +346,34 @@ const App: FC = () => {
             />
           </div>
         )}
+        {viewingArtist && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'var(--color-bg)',
+              zIndex: 21,
+            }}
+          >
+            <ArtistPage
+              artistName={viewingArtist}
+              onBack={() => setViewingArtist(null)}
+              onOpenAlbum={(browseId) => {
+                setViewingArtist(null);
+                openPlaylistDetail(browseId);
+              }}
+            />
+          </div>
+        )}
       </div>
     </AppShell>
-    <WelcomeScreen isDone={isHomeReady} />
+    <WelcomeScreen isDone={isSplashDone} />
     <UpdateBanner />
+    <ShortcutCheatsheet
+      isOpen={isCheatsheetOpen}
+      onClose={() => setIsCheatsheetOpen(false)}
+      bindings={shortcutBindings}
+    />
     </>
   );
 };

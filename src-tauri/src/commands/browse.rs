@@ -209,16 +209,61 @@ pub async fn get_library_artists(
 }
 
 #[tauri::command]
+pub async fn get_library_podcasts(
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<Vec<PodcastSummary>, String> {
+    tracing::info!("browse::get_library_podcasts called");
+    let result = api.get_library_podcasts(&app).await.map_err(|e| {
+        tracing::error!(error = %e, "browse::get_library_podcasts failed");
+        e.to_string()
+    })?;
+    tracing::info!(podcasts = result.len(), "browse::get_library_podcasts done");
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn get_podcast_last_episode(
+    browse_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<Option<PodcastLastEpisode>, String> {
+    tracing::info!(%browse_id, "browse::get_podcast_last_episode called");
+    let result = api.get_podcast_last_episode(&app, &browse_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %browse_id, "browse::get_podcast_last_episode failed");
+            e.to_string()
+        })?;
+    tracing::info!(
+        %browse_id,
+        found = result.is_some(),
+        display = result.as_ref().map(|r| r.display.as_str()).unwrap_or(""),
+        secs_ago = ?result.as_ref().and_then(|r| r.secs_ago),
+        "browse::get_podcast_last_episode done"
+    );
+    Ok(result)
+}
+
+#[tauri::command]
 pub async fn save_playlist_to_library(
     playlist_id: String,
     app: AppHandle,
     api: State<'_, YtmApi>,
 ) -> Result<(), String> {
     tracing::info!(playlist_id = %playlist_id, "browse::save_playlist_to_library called");
-    api.save_playlist_to_library(&app, &playlist_id).await.map_err(|e| {
+    let result = api.save_playlist_to_library(&app, &playlist_id).await.map_err(|e| {
         tracing::error!(error = %e, "browse::save_playlist_to_library failed");
         e.to_string()
-    })
+    });
+    // Mutation: drop the entire YTM API cache so the next library /
+    // playlist fetch reflects the new "saved" state instead of the
+    // pre-mutation snapshot. Coarse but correct — the cache is small
+    // (50 entries) so a full rebuild is cheap.
+    if result.is_ok() {
+        crate::webview_bridge::api_cache::clear_all().await;
+    }
+    result
 }
 
 #[tauri::command]
@@ -228,10 +273,14 @@ pub async fn remove_playlist_from_library(
     api: State<'_, YtmApi>,
 ) -> Result<(), String> {
     tracing::info!(playlist_id = %playlist_id, "browse::remove_playlist_from_library called");
-    api.remove_playlist_from_library(&app, &playlist_id).await.map_err(|e| {
+    let result = api.remove_playlist_from_library(&app, &playlist_id).await.map_err(|e| {
         tracing::error!(error = %e, "browse::remove_playlist_from_library failed");
         e.to_string()
-    })
+    });
+    if result.is_ok() {
+        crate::webview_bridge::api_cache::clear_all().await;
+    }
+    result
 }
 
 #[tauri::command]

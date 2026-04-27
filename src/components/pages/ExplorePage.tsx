@@ -7,6 +7,7 @@ import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
 import { CachedImage } from '../CachedImage';
 import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
+import { LiquidGlass } from '@liquidglass/react';
 
 interface ExplorePageProps {
   onOpenPlaylist?: (playlistId: string) => void;
@@ -104,77 +105,89 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
   const content = (
     <section
       style={{
-        padding: '0 var(--space-6) var(--space-8)',
+        padding: '0 var(--space-6)',
         overflowY: 'auto',
         height: '100%',
       }}
     >
+      <div style={{ height: 'var(--space-3)', flexShrink: 0 }} aria-hidden="true" />
       <div
         style={{
           position: 'sticky',
-          top: 0,
+          top: 'var(--space-3)',
           zIndex: 10,
-          background: 'var(--color-surface-1)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          // Align the Explore title with the sidebar's Explore button
-          // (issue #59).
-          paddingTop: 'var(--space-3)',
-          paddingBottom: 'var(--space-4)',
           marginBottom: 'var(--space-4)',
         }}
       >
-        <h1
+        <LiquidGlass
+          borderRadius={150}
+          blur={8}
+          contrast={1.2}
+          brightness={1.05}
+          saturation={1.1}
+          shadowIntensity={0.25}
+          displacementScale={1}
+          elasticity={1}
+          zIndex={10}
+        ><div
           style={{
-            fontSize: 'var(--text-2xl)',
-            fontWeight: 700,
-            letterSpacing: '-0.02em',
-            color: 'var(--color-text-primary)',
-            margin: 0,
-          }}
-        >
-          Explore
-        </h1>
-        <button
-          onClick={() => {
-            if (isRefreshing) return;
-            // Drop the cache so the fetch can't short-circuit against a
-            // stale payload, and force a fresh request.
-            exploreCache = null;
-            fetchExplore(true);
-          }}
-          disabled={isRefreshing}
-          aria-busy={isRefreshing}
-          style={{
-            background: 'none',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-1) var(--space-3)',
-            color: 'var(--color-text-tertiary)',
-            cursor: isRefreshing ? 'wait' : 'pointer',
-            fontSize: 'var(--text-sm)',
-            opacity: isRefreshing ? 0.6 : 1,
-            display: 'inline-flex',
+            width: '100%',
+            padding:
+              'calc(var(--title-bar-height) - var(--space-3)) var(--space-10) var(--space-3)',
+            background: 'oklch(20% 0.005 270 / 0.30)',
+            borderRadius: 'inherit',
+            display: 'flex',
             alignItems: 'center',
-            gap: 'var(--space-1)',
+            justifyContent: 'space-between',
           }}
         >
-          <span
+          <h1
             style={{
-              display: 'inline-block',
-              transition: 'transform var(--duration-normal) var(--ease-out)',
-              animation: isRefreshing
-                ? 'vibeytm-spin 0.9s linear infinite'
-                : undefined,
+              fontSize: 'var(--text-2xl)',
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
+              color: 'var(--color-text-primary)',
+              margin: 0,
             }}
           >
-            ↻
-          </span>
-          {isRefreshing ? 'Refreshing…' : 'Refresh'}
-        </button>
+            Explore
+          </h1>
+          <button
+            onClick={() => {
+              if (isRefreshing) return;
+              exploreCache = null;
+              fetchExplore(true);
+            }}
+            disabled={isRefreshing}
+            aria-busy={isRefreshing}
+            style={{
+              background: 'none',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md)',
+              padding: 'var(--space-1) var(--space-3)',
+              color: 'var(--color-text-tertiary)',
+              cursor: isRefreshing ? 'wait' : 'pointer',
+              fontSize: 'var(--text-sm)',
+              opacity: isRefreshing ? 0.6 : 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 'var(--space-1)',
+            }}
+          >
+            <span
+              style={{
+                display: 'inline-block',
+                transition: 'transform var(--duration-normal) var(--ease-out)',
+                animation: isRefreshing
+                  ? 'vibeytm-spin 0.9s linear infinite'
+                  : undefined,
+              }}
+            >
+              ↻
+            </span>
+            {isRefreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div></LiquidGlass>
       </div>
 
       {shelves.map((shelf) => (
@@ -202,6 +215,13 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
           </p>
         </div>
       )}
+      <div
+        style={{
+          height: 'calc(var(--player-bar-height) + var(--space-6))',
+          flexShrink: 0,
+        }}
+        aria-hidden="true"
+      />
     </section>
   );
 

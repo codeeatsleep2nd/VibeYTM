@@ -1,4 +1,5 @@
 pub mod api;
+pub mod api_cache;
 pub mod poller;
 
 use tauri::{AppHandle, Manager, WebviewWindow};

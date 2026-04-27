@@ -78,7 +78,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ isDone }) => {
             background:
               'linear-gradient(140deg, var(--color-accent-hover) 0%, var(--color-accent) 100%)',
             boxShadow:
-              '0 20px 48px oklch(62% 0.24 25 / 0.35), 0 2px 12px oklch(0% 0 0 / 0.4)',
+              '0 20px 48px oklch(63% 0.258 29 / 0.35), 0 2px 12px oklch(0% 0 0 / 0.4)',
             fontSize: 56,
             lineHeight: 1,
             color: 'oklch(100% 0 0)',

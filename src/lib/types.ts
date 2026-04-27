@@ -59,6 +59,29 @@ export interface PlaylistSummary {
   trackCount?: number;
 }
 
+/** A row in the user's "Subscribed podcasts" library section. */
+export interface PodcastSummary {
+  /** MPSP* identifier — opens via the existing PlaylistDetailPage chain. */
+  browseId: string;
+  title: string;
+  author: string;
+  artworkUrl: string;
+}
+
+/** Lightweight per-show recency probe — what the dedicated
+ *  `get_podcast_last_episode` IPC returns. The Library Podcasts tab
+ *  fans these out in parallel after the subscription list lands so
+ *  each card can show "last episode 3 days ago" and the grid can sort
+ *  most-recent-first. */
+export interface PodcastLastEpisode {
+  /** Display string of the most recent episode's `publishedTimeText`
+   *  ("3 days ago", "Yesterday", "Mar 28, 2024"). */
+  display: string;
+  /** Approximate seconds-since-now derived server-side; used purely
+   *  for sort order. */
+  secsAgo?: number;
+}
+
 export interface PlaylistDetail {
   playlistId: string;
   title: string;
@@ -72,6 +95,9 @@ export interface PlaylistDetail {
   audioPlaylistId?: string | null;
   /** True when this detail represents an album (MPRE browseId). */
   isAlbum?: boolean;
+  /** Release year — present for albums / EPs / singles, absent for
+   *  most playlists, charts, and mood mixes. */
+  year?: string;
 }
 
 export interface SearchResults {

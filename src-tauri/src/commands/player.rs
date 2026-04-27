@@ -1,12 +1,17 @@
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::time::{sleep, Duration};
 
 use crate::cache::Cache;
 use crate::events::bus::EventBus;
 use crate::events::types::AppEvent;
+use crate::state::episode_progress::{self, SharedEpisodeProgress};
 use crate::state::player::{AccountInfo, PlaybackStatus, PlayerState, RepeatMode, SharedPlayerState, TrackInfo};
 use crate::state::settings::{self, SharedSettings};
+
+const EPISODE_PROGRESS_SAVE_INTERVAL: Duration = Duration::from_secs(10);
 
 #[tauri::command]
 pub async fn on_track_changed(
@@ -275,9 +280,30 @@ pub async fn play_track(
     if video_id.is_empty() {
         return Err("video_id is empty".into());
     }
+
+    // Per-episode resume: if this videoId has saved progress AND we're
+    // playing it from a podcast / show context (MPSP*), seek to the
+    // saved position via navigate_to_track_at_position. Songs are
+    // intentionally skipped — only long-form audio resumes (matches
+    // the kaset reference's behavior).
+    let resume_position = if let Some(progress_state) = app.try_state::<SharedEpisodeProgress>() {
+        let store = progress_state.read().await;
+        lookup_episode_resume(&store, &video_id, playlist_id.as_deref())
+    } else {
+        None
+    };
+
     // Navigate the YTM window to the track using the fast (no-reload) path
     if let Some(window) = crate::webview_bridge::get_ytm_window(&app) {
-        if let Some(ref list_id) = playlist_id {
+        if let Some(secs) = resume_position {
+            tracing::info!(video_id = %video_id, position = secs, "resuming episode");
+            crate::webview_bridge::navigate_to_track_at_position(
+                &window,
+                &video_id,
+                secs as u64,
+                playlist_id.as_deref(),
+            )?;
+        } else if let Some(ref list_id) = playlist_id {
             crate::webview_bridge::navigate_to_track_with_playlist(&window, &video_id, list_id)?;
         } else {
             crate::webview_bridge::navigate_to_track(&window, &video_id)?;
@@ -302,7 +328,10 @@ pub async fn play_track(
         let mut player = state.write().await;
         player.track = Some(track.clone());
         player.status = PlaybackStatus::Playing;
-        player.position_secs = 0.0;
+        // Seed the local position with the resume offset so the
+        // chrome's progress bar shows the right starting point
+        // immediately, before the bridge poller catches up.
+        player.position_secs = resume_position.unwrap_or(0.0);
         // Stash the watch-list context so the periodic session saver can
         // persist it; on next launch the queue can be rebuilt by routing
         // YTM through the same `&list=` parameter.
@@ -460,4 +489,175 @@ pub async fn inject_ytm_bridge(app: AppHandle) -> Result<(), String> {
     let window = crate::webview_bridge::get_ytm_window(&app)
         .ok_or("YTM window not found")?;
     crate::webview_bridge::inject_bridge(&window)
+}
+
+/// Background task that periodically writes the currently-playing
+/// episode's position into the per-videoId resume map. Gated on the
+/// active playlist context starting with `MPSP*` (a podcast / show
+/// browseId) — songs intentionally NOT tracked, since YTM users
+/// expect songs to start from 0 on click.
+///
+/// Runs for the life of the app. Writes happen at most every
+/// `EPISODE_PROGRESS_SAVE_INTERVAL` and only when the position
+/// actually changed since the last save (avoids touching the file
+/// while paused).
+pub fn spawn_episode_progress_saver(
+    app: AppHandle,
+    state: SharedPlayerState,
+    progress: SharedEpisodeProgress,
+) {
+    tauri::async_runtime::spawn(async move {
+        let mut last_saved_position: f64 = -1.0;
+        let mut last_saved_video_id: String = String::new();
+        loop {
+            sleep(EPISODE_PROGRESS_SAVE_INTERVAL).await;
+
+            let snapshot = {
+                let player = state.read().await;
+                let track = player.track.clone();
+                let position = player.position_secs;
+                let context = player.active_playlist_id.clone();
+                (track, position, context, player.status)
+            };
+            let (Some(track), position, Some(context), status) = snapshot else {
+                continue;
+            };
+            // Only persist while actually playing — paused / idle saves
+            // would otherwise hammer the file every interval with the
+            // same value.
+            if !matches!(status, PlaybackStatus::Playing) {
+                continue;
+            }
+            // Episode-only gate. Kaset's PodcastParser pins the
+            // show browseId prefix at MPSPP (5 chars). Match
+            // exactly so we don't accidentally start saving for
+            // unrelated MPSP* contexts.
+            if !context.starts_with("MPSPP") {
+                continue;
+            }
+            // Suppress duplicate writes (same track + same position).
+            if track.video_id == last_saved_video_id
+                && (position - last_saved_position).abs() < 0.5
+            {
+                continue;
+            }
+
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+
+            {
+                let mut store = progress.write().await;
+                episode_progress::upsert(
+                    &mut store,
+                    &track.video_id,
+                    position,
+                    track.duration_secs,
+                    now_ms,
+                );
+                episode_progress::save(&app, &store);
+            }
+            last_saved_position = position;
+            last_saved_video_id = track.video_id.clone();
+        }
+    });
+}
+
+/// On a fresh `play_track` call, look up any saved progress for the
+/// videoId in the per-episode map AND only when the playback context
+/// is a show (MPSP*). Returns the position to seek to (None when
+/// none / not an episode / saved value is suspicious — e.g. >
+/// duration).
+pub(crate) fn lookup_episode_resume(
+    progress_store: &episode_progress::EpisodeProgressStore,
+    video_id: &str,
+    playlist_id: Option<&str>,
+) -> Option<f64> {
+    let context = playlist_id?;
+    // Kaset's PodcastParser uses MPSPP (5 chars) as the show
+    // browseId prefix — match exactly so we don't accidentally
+    // resume a non-podcast that happens to share an MPSP* prefix.
+    if !context.starts_with("MPSPP") {
+        return None;
+    }
+    let entry = episode_progress::get(progress_store, video_id)?;
+    // Be defensive: a corrupt or stale entry (negative, or beyond
+    // duration) should not seek the bridge to nonsense.
+    if entry.position_secs < 1.0 {
+        return None;
+    }
+    if entry.duration_secs > 0.0 && entry.position_secs >= entry.duration_secs {
+        return None;
+    }
+    Some(entry.position_secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::episode_progress::{upsert, EpisodeProgressStore};
+
+    #[test]
+    fn lookup_episode_resume_returns_saved_position_for_mpsp_context() {
+        let mut s = EpisodeProgressStore::default();
+        upsert(&mut s, "ep1", 60.0, 600.0, 100);
+        let pos = lookup_episode_resume(&s, "ep1", Some("MPSPPshowabc"));
+        assert_eq!(pos, Some(60.0));
+    }
+
+    #[test]
+    fn lookup_episode_resume_returns_none_for_non_mpsp_context() {
+        // Same saved position, but the playlist context is a regular
+        // playlist — we don't auto-resume songs.
+        let mut s = EpisodeProgressStore::default();
+        upsert(&mut s, "ep1", 60.0, 600.0, 100);
+        assert!(lookup_episode_resume(&s, "ep1", Some("OLAK5demo")).is_none());
+    }
+
+    #[test]
+    fn lookup_episode_resume_returns_none_when_no_context() {
+        let mut s = EpisodeProgressStore::default();
+        upsert(&mut s, "ep1", 60.0, 600.0, 100);
+        assert!(lookup_episode_resume(&s, "ep1", None).is_none());
+    }
+
+    #[test]
+    fn lookup_episode_resume_returns_none_when_no_entry() {
+        let s = EpisodeProgressStore::default();
+        assert!(lookup_episode_resume(&s, "missing", Some("MPSPPshow")).is_none());
+    }
+
+    #[test]
+    fn lookup_episode_resume_rejects_zero_or_negative_saved_position() {
+        let mut s = EpisodeProgressStore::default();
+        // upsert refuses sub-5s positions, so we mutate the store
+        // manually to force a 0.5s entry — this verifies the lookup
+        // guard is independent of the upsert guard.
+        s.entries.insert(
+            "ep1".to_string(),
+            crate::state::episode_progress::EpisodeProgress {
+                video_id: "ep1".to_string(),
+                position_secs: 0.5,
+                duration_secs: 600.0,
+                updated_at_ms: 100,
+            },
+        );
+        assert!(lookup_episode_resume(&s, "ep1", Some("MPSPPshow")).is_none());
+    }
+
+    #[test]
+    fn lookup_episode_resume_rejects_position_past_duration() {
+        let mut s = EpisodeProgressStore::default();
+        s.entries.insert(
+            "ep1".to_string(),
+            crate::state::episode_progress::EpisodeProgress {
+                video_id: "ep1".to_string(),
+                position_secs: 700.0,
+                duration_secs: 600.0,
+                updated_at_ms: 100,
+            },
+        );
+        assert!(lookup_episode_resume(&s, "ep1", Some("MPSPPshow")).is_none());
+    }
 }
