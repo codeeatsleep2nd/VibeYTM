@@ -56,11 +56,12 @@ export const AppShell: FC<AppShellProps> = ({
     <main
       style={{
         overflow: 'auto',
-        // No paddingTop — pages render up to y=0 of the window so their
-        // sticky `.liquid-glass-chrome` title bar's bright top border
-        // touches the very top of the app. Pages absorb the
-        // `--title-bar-height` offset themselves (in their first
-        // element's paddingTop).
+        // Reserve space for the title-bar drag region — page content
+        // renders below it so the sticky title plate floats as a
+        // rounded capsule with the body's ambient gradient visible
+        // above its top edge (instead of the plate's top edge being
+        // hidden under the drag region).
+        paddingTop: 'var(--title-bar-height)',
         paddingBottom: 'var(--player-bar-height)',
       }}
     >

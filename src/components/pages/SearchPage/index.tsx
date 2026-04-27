@@ -247,19 +247,21 @@ export const SearchPage: FC<SearchPageProps> = ({
         (issue #59).
       */}
       <div
-        // Full Liquid Glass plate — same chrome tier as the player bar /
-        // sidebar / queue. Bright rim + gradient + drop shadow turn the
-        // search strip into a discrete glass plate matching naughtyduk.com.
+        // Rounded floating Liquid Glass capsule — see HomePage.tsx for
+        // the architecture (margin from sidebar / right edge so all 4
+        // bevel corners are visible).
         className="liquid-glass-chrome"
         style={{
           position: 'sticky',
-          top: 0,
+          top: 'var(--space-3)',
           zIndex: 20,
-          // Title plate extends to y=0 of the window — see HomePage.tsx
-          // for the rationale. Inner padding clears the drag region.
-          paddingTop: 'calc(var(--title-bar-height) + var(--space-3))',
-          paddingBottom: 'var(--space-3)',
-          marginBottom: 'var(--space-3)',
+          // Plate edges align with content rows below — see HomePage.
+          marginBottom: 'var(--space-4)',
+          borderRadius: 'var(--radius-xl)',
+          paddingTop: 'var(--space-8)',
+          paddingBottom: 'var(--space-8)',
+          paddingLeft: 'var(--space-6)',
+          paddingRight: 'var(--space-6)',
         }}
       >
       <div className="liquidGL-pane" aria-hidden="true" />

@@ -188,25 +188,29 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
       }}
     >
       <div
-        // Full Liquid Glass plate — matches the chrome surfaces (player
-        // bar / sidebar / queue) and the naughtyduk.com / liquidgl.js
-        // nav. Translucent gradient + heavy backdrop blur + bright
-        // inset rim + outer drop shadow turn the title strip into a
-        // discrete glass plate, not just a frosted band.
+        // Rounded floating Liquid Glass capsule — naughtyduk.com nav
+        // pattern. AppShell main reserves --title-bar-height above
+        // this element so the body's ambient gradient shows in the
+        // gap above. liquidGL paints real refraction at this lens's
+        // bounding rect, with rounded bevel rim on all four corners.
         className="liquid-glass-chrome"
         style={{
           position: 'sticky',
-          top: 0,
+          // Sit with breathing room from the drag region above so the
+          // plate's top rounded corners + bevel rim are fully visible.
+          top: 'var(--space-3)',
           zIndex: 10,
-          // Title plate extends to y=0 of the window (AppShell main has
-          // no paddingTop). The drag region (zIndex 200) sits over the
-          // top --title-bar-height; its clicks still work, but visually
-          // the bright top border of this plate touches the very top
-          // of the app. Inner padding pushes the title TEXT down past
-          // the drag region.
-          paddingTop: 'calc(var(--title-bar-height) + var(--space-3))',
-          paddingBottom: 'var(--space-3)',
-          marginBottom: 'var(--space-3)',
+          // Plate's left/right edges align exactly with the content
+          // rows below (the parent <section> already pads
+          // horizontally with var(--space-6); plate adds none of its
+          // own so its rim sits flush with those rows). Larger
+          // vertical padding gives the capsule visible presence.
+          marginBottom: 'var(--space-4)',
+          borderRadius: 'var(--radius-xl)',
+          paddingTop: 'var(--space-8)',
+          paddingBottom: 'var(--space-8)',
+          paddingLeft: 'var(--space-6)',
+          paddingRight: 'var(--space-6)',
         }}
       >
       <div className="liquidGL-pane" aria-hidden="true" />

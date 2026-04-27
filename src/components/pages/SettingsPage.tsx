@@ -278,11 +278,9 @@ export const SettingsPage: FC = () => {
           fontWeight: 700,
           letterSpacing: '-0.02em',
           color: 'var(--color-text-primary)',
-          // Settings has no sticky title plate — page content sits
-          // directly on the body's ambient gradient. Padding clears
-          // the drag region (AppShell main no longer reserves
-          // --title-bar-height).
-          paddingTop: 'calc(var(--title-bar-height) + var(--space-3))',
+          // Match the sidebar Settings button's vertical position
+          // (issue #59).
+          paddingTop: 'var(--space-3)',
           marginBottom: 'var(--space-2)',
         }}
       >

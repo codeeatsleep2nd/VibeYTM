@@ -175,6 +175,11 @@ body {
   inset: 0;
   pointer-events: none;
   z-index: 0;
+  /* Inherit the parent's border-radius so liquidGL's WebGL bevel
+     follows the rounded plate's edges instead of clipping at a
+     rectangular boundary. liquidGL reads `border-top-left-radius`
+     from the lens's computed style for `u_radius`. */
+  border-radius: inherit;
 }
 
 input,

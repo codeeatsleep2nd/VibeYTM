@@ -128,26 +128,38 @@ const App: FC = () => {
   }, [searchForArtist]);
 
   // liquidGL real-refraction WebGL pass over every Liquid Glass surface.
-  // Every surface that wants the refraction renders an empty
-  // `<div className="liquidGL-pane">` inside it; liquidGL queries that
-  // selector, attaches the WebGL canvas, and paints a refracted
-  // version of the page behind each lens. Once the snapshot texture
-  // loads, the hook adds `liquidGL-active` to <html>, which flips a
-  // CSS rule that drops the static glass-fallback background on
-  // every `.liquid-glass-*` surface — so the WebGL refraction is
-  // visible instead of being occluded by the fallback.
-  // Tuned parameters: refraction 0.025 + frost 0.18 + bevel 0.18 so
-  // the glass character reads against YTM's mostly-dark backdrops.
+  // Every surface renders an empty `<div className="liquidGL-pane">`
+  // child; the hook attaches a single WebGL renderer to all of them
+  // and adds `liquidGL-active` to <html> once the snapshot texture
+  // loads (a CSS rule then drops the fallback background on every
+  // `.liquid-glass-*` so the WebGL refraction is visible).
+  //
+  // Options match naughtyduk's own demo
+  // (https://liquidgl.naughtyduk.com) verbatim — that look is
+  // explicitly what the user asked us to replicate. Notable choices:
+  //   • frost = 0       — clear refraction, no frosted blur (frost
+  //                       would diffuse the refracted edge motion
+  //                       that's the entire point of the effect)
+  //   • bevelDepth/Width 0.119 / 0.057 — the bevel rim that
+  //                       picks up specular/shadow on the corners
+  //   • specular + shadow — physical-glass cues
+  //   • resolution 2    — sharper html2canvas snapshot for crisper
+  //                       refraction; especially noticeable as
+  //                       text/cards scroll past the lens edges
   useLiquidGL(
     {
       target: '.liquidGL-pane',
-      refraction: 0.025,
-      bevelDepth: 0.18,
-      bevelWidth: 0.22,
-      frost: 0.18,
-      shadow: false,
+      snapshot: 'body',
+      resolution: 2,
+      refraction: 0.026,
+      bevelDepth: 0.119,
+      bevelWidth: 0.057,
+      frost: 0,
       specular: true,
+      shadow: true,
       reveal: 'fade',
+      tilt: false,
+      magnify: 1,
     },
     phase === 'app',
   );
