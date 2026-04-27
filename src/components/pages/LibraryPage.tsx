@@ -174,12 +174,14 @@ export const LibraryPage: FC<LibraryPageProps> = ({
         }}
       >
         <LiquidGlass
-          borderRadius={16}
-          blur={0.25}
+          borderRadius={150}
+          blur={1}
           contrast={1.2}
           brightness={1.05}
           saturation={1.1}
           shadowIntensity={0.25}
+          displacementScale={1}
+          elasticity={0.6}
           zIndex={10}
         ><div style={{ width: '100%', padding: 'var(--space-6)' }}>
           <h1

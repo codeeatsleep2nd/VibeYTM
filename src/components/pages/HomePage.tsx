@@ -201,8 +201,8 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
         }}
       >
       <LiquidGlass
-        borderRadius={16}
-        blur={0.25}
+        borderRadius={150}
+        blur={1}
         contrast={1.2}
         brightness={1.05}
         saturation={1.1}
