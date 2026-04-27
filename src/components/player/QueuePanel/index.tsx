@@ -568,6 +568,9 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       display="flex"
       flexDirection="column"
     >
+      {/* liquidGL lens marker — picks up real WebGL refraction at this
+          drawer's bounding rect once liquidGL attaches. */}
+      <div className="liquidGL-pane" aria-hidden="true" />
       <header
         style={{
           display: 'flex',

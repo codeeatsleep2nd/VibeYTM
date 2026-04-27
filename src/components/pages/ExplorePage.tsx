@@ -128,6 +128,7 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
           marginBottom: 'var(--space-4)',
         }}
       >
+        <div className="liquidGL-pane" aria-hidden="true" />
         <h1
           style={{
             fontSize: 'var(--text-2xl)',

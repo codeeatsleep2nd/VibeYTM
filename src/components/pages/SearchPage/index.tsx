@@ -262,6 +262,7 @@ export const SearchPage: FC<SearchPageProps> = ({
           marginBottom: 'var(--space-3)',
         }}
       >
+      <div className="liquidGL-pane" aria-hidden="true" />
       <div
         style={{
           position: 'relative',

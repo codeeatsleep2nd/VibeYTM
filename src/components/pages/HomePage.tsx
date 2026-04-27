@@ -209,6 +209,7 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
           marginBottom: 'var(--space-3)',
         }}
       >
+      <div className="liquidGL-pane" aria-hidden="true" />
       <div
         style={{
           display: 'flex',

@@ -151,8 +151,12 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
       // queue drawer / sticky page titles. The class supplies the
       // uniform rim treatment on all four sides; the sidebar drops its
       // off-screen left border for crispness only.
+      // The `<div className="liquidGL-pane">` child is the lens marker
+      // that liquidGL targets — once the WebGL texture loads, the
+      // canvas paints a real refraction at this lens's bounding rect.
       className="liquid-glass-chrome"
       style={{
+        position: 'relative',
         width: 'var(--sidebar-width)',
         height: '100%',
         paddingTop: 'var(--title-bar-height)',
@@ -162,6 +166,7 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
         overflow: 'hidden',
       }}
     >
+      <div className="liquidGL-pane" aria-hidden="true" />
       <nav
         style={{
           padding: 'var(--space-3)',

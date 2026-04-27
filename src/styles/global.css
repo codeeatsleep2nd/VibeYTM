@@ -148,6 +148,35 @@ body {
   border-radius: var(--radius-md);
 }
 
+/* liquidGL active mode — set on <html> by useLiquidGL once the WebGL
+   snapshot texture has loaded. Disables the CSS-only fallback
+   backgrounds + backdrop-filter on every glass surface so the WebGL
+   canvas (painted behind each surface at z = lensZ - 1) is no longer
+   occluded. The bright rim border + box-shadow stay (they're not
+   refracted by liquidGL — they're decorative glass character that
+   reads on top of the WebGL refraction). */
+:root.liquidGL-active .liquid-glass-chrome,
+:root.liquidGL-active .liquid-glass-card,
+:root.liquidGL-active .liquid-glass-subtle {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* The lens marker — an invisible empty element that liquidGL targets.
+   `position:absolute; inset:0; pointer-events:none` so the lens
+   coincides with its parent's bounding rect (the WebGL canvas paints
+   refraction at this rect) and clicks pass through to the parent's
+   real content above. liquidGL sets `opacity:0` on this element when
+   it activates — the parent surface's content (sibling to this
+   element, or above via z-index) stays visible. */
+.liquidGL-pane {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
 input,
 textarea,
 [contenteditable='true'] {

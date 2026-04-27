@@ -115,6 +115,7 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
       backdropFilter="blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))"
       boxShadow="inset 0 1px 0 var(--glass-rim-bright), inset 0 -1px 0 oklch(0% 0 0 / 0.20), var(--glass-shadow-strong)"
     >
+      <div className="liquidGL-pane" aria-hidden="true" />
       <NowPlayingBody
         splitMode={splitMode}
         showLyrics={showLyrics}

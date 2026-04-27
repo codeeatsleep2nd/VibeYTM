@@ -14,6 +14,7 @@ import { UpdateBanner } from './components/UpdateBanner';
 import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
 import { useBootState } from './hooks/useBootState';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
+import { useLiquidGL } from './hooks/useLiquidGL';
 import { ytmApi, playerApi } from './lib/ipc';
 import { registerOpenArtist } from './lib/appNav';
 
@@ -125,6 +126,31 @@ const App: FC = () => {
     registerOpenArtist(searchForArtist);
     return () => registerOpenArtist(null);
   }, [searchForArtist]);
+
+  // liquidGL real-refraction WebGL pass over every Liquid Glass surface.
+  // Every surface that wants the refraction renders an empty
+  // `<div className="liquidGL-pane">` inside it; liquidGL queries that
+  // selector, attaches the WebGL canvas, and paints a refracted
+  // version of the page behind each lens. Once the snapshot texture
+  // loads, the hook adds `liquidGL-active` to <html>, which flips a
+  // CSS rule that drops the static glass-fallback background on
+  // every `.liquid-glass-*` surface — so the WebGL refraction is
+  // visible instead of being occluded by the fallback.
+  // Tuned parameters: refraction 0.025 + frost 0.18 + bevel 0.18 so
+  // the glass character reads against YTM's mostly-dark backdrops.
+  useLiquidGL(
+    {
+      target: '.liquidGL-pane',
+      refraction: 0.025,
+      bevelDepth: 0.18,
+      bevelWidth: 0.22,
+      frost: 0.18,
+      shadow: false,
+      specular: true,
+      reveal: 'fade',
+    },
+    phase === 'app',
+  );
 
   // Global keyboard shortcuts. Active only in the app phase (no point
   // intercepting Cmd+L while the LoginPage is up). Bindings stay as a

@@ -295,8 +295,9 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   return (
     <footer
       // Liquid Glass plate via the system-wide token + utility class.
-      // See `src/styles/global.css` `.liquid-glass-chrome` for the
-      // recipe (gradient + backdrop-filter + bright inset rim).
+      // The `<div className="liquidGL-pane">` child is the lens marker
+      // that liquidGL targets — once the WebGL texture loads, the
+      // canvas paints a real refraction at this lens's bounding rect.
       className="liquid-glass-chrome"
       style={{
         position: 'fixed',
@@ -311,6 +312,7 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         zIndex: 100,
       }}
     >
+      <div className="liquidGL-pane" aria-hidden="true" />
       {/* LEFT — transports (Apple Music: flat white glyphs, prev/play/next
           rendered as filled SF-Symbol shapes; shuffle/repeat are smaller
           stroke icons that bracket the row at lower visual weight) */}
