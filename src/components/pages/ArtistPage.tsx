@@ -8,7 +8,6 @@ import { SongRow } from '../browse/SongRow';
 import { AlbumCard } from '../browse/AlbumCard';
 import { LoadingSpinner } from '../LoadingOverlay';
 import { DetailPageHero } from '../DetailPageHero';
-import { LiquidGlass } from '@liquidglass/react';
 import { SkeletonRow, SkeletonCard } from '../Skeleton';
 
 interface ArtistPageProps {
@@ -117,66 +116,36 @@ export const ArtistPage: FC<ArtistPageProps> = ({
         overflow: 'auto',
       }}
     >
-      {/* Sticky LiquidGlass title plate — same shape as HomePage. */}
-      <div style={{ height: 'var(--space-3)', flexShrink: 0 }} aria-hidden="true" />
+      {/* Sticky hero — the cover/title block stays pinned at the top
+          of the page while the songs/albums content scrolls underneath.
+          Transparent background + backdrop-filter blur so scrolled
+          rows show through with a frosted-glass effect. */}
       <div
         style={{
           position: 'sticky',
-          top: 'var(--space-3)',
+          top: 0,
           zIndex: 10,
-          margin: '0 var(--space-6) var(--space-4)',
+          flexShrink: 0,
+          background: 'transparent',
+          backdropFilter: `blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))`,
+          WebkitBackdropFilter: `blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))`,
         }}
       >
-        <LiquidGlass
-          borderRadius={150}
-          blur={8}
-          contrast={1.2}
-          brightness={1.05}
-          saturation={1.1}
-          shadowIntensity={0.25}
-          displacementScale={1}
-          elasticity={1}
-          zIndex={10}
-        >
-          <div
-            style={{
-              width: '100%',
-              padding:
-                'calc(var(--title-bar-height) - var(--space-3)) var(--space-10) var(--space-3)',
-              background: 'oklch(20% 0.005 270 / 0.30)',
-              borderRadius: 'inherit',
-            }}
-          >
-            <h1
-              style={{
-                fontSize: 'var(--text-2xl)',
-                fontWeight: 700,
-                letterSpacing: '-0.02em',
-                color: 'var(--color-text-primary)',
-                margin: 0,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {artistName}
-            </h1>
-          </div>
-        </LiquidGlass>
+        <DetailPageHero
+          title={artistName}
+          kind="Artist"
+          coverUrl={heroCover ?? ''}
+          colors={heroColors}
+          meta={
+            songs.length > 0 || albums.length > 0
+              ? `${songs.length} songs · ${albums.length} albums`
+              : undefined
+          }
+          onBack={onBack}
+          onPlay={handlePlayAll}
+          transparent
+        />
       </div>
-      <DetailPageHero
-        title={artistName}
-        kind="Artist"
-        coverUrl={heroCover ?? ''}
-        colors={heroColors}
-        meta={
-          songs.length > 0 || albums.length > 0
-            ? `${songs.length} songs · ${albums.length} albums`
-            : undefined
-        }
-        onBack={onBack}
-        onPlay={handlePlayAll}
-      />
 
       <div
         style={{
@@ -198,8 +167,15 @@ export const ArtistPage: FC<ArtistPageProps> = ({
             >
               Top songs
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {Array.from({ length: 5 }).map((_, i) => (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                columnGap: 'var(--space-4)',
+                rowGap: 'var(--space-1)',
+              }}
+            >
+              {Array.from({ length: 6 }).map((_, i) => (
                 <SkeletonRow key={i} />
               ))}
             </div>
@@ -264,7 +240,14 @@ export const ArtistPage: FC<ArtistPageProps> = ({
           >
             Top songs
           </h2>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+              columnGap: 'var(--space-4)',
+              rowGap: 'var(--space-1)',
+            }}
+          >
             {songs.map((track, idx) => (
               <SongRow
                 key={`${track.videoId || 'track'}-${idx}`}
@@ -313,12 +296,29 @@ export const ArtistPage: FC<ArtistPageProps> = ({
 };
 
 /**
- * Loose case-insensitive substring match between a track/album's artist
- * field and the page's artist name. Covers "Fleetwood Mac" matching
- * "Fleetwood Mac & Stevie Nicks" while filtering out unrelated results
- * that the YTM search blends in (covers, similar artists, etc.).
+ * Loose case-insensitive match between a track/album's artist field and
+ * the page's artist name. Tolerant of two real-world quirks:
+ *
+ *   - YTM library artist names often combine native + romanized forms
+ *     ("周杰倫 - Jay Chou"), but per-song artist fields only carry one
+ *     ("周杰倫"). Plain `field.includes(target)` returned false because
+ *     the target was *longer* than the field.
+ *   - Multi-artist credits ("Fleetwood Mac & Stevie Nicks") should still
+ *     match a "Fleetwood Mac" page.
+ *
+ * Strategy: split the target on common separators and accept the row
+ * when ANY non-trivial token of the target is contained in the field
+ * — and also keep the original substring check so collaborator pages
+ * keep working.
  */
 function matchesArtist(field: string, target: string): boolean {
   if (!field || !target) return false;
-  return field.toLowerCase().includes(target.toLowerCase());
+  const f = field.toLowerCase();
+  const t = target.toLowerCase();
+  if (f.includes(t) || t.includes(f)) return true;
+  const tokens = t
+    .split(/\s*[-–—&,/、|]\s*|\s+(?:feat\.?|featuring|with|x|vs\.?)\s+/i)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2);
+  return tokens.some((tok) => f.includes(tok));
 }

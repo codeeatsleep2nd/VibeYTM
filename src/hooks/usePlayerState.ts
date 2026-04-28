@@ -140,6 +140,35 @@ export function usePlayerState(): UsePlayerState {
     });
   });
 
+  // Re-pull `activePlaylistId` from Rust whenever the videoId actually
+  // changes (NOT on metadata-refinement re-emits — the poller fires
+  // TRACK_CHANGED multiple times per real track swap as the title /
+  // duration / artwork land). Rust's `play_track` writes the new
+  // context (e.g. `MPSP…` for a podcast episode) but doesn't emit a
+  // dedicated state-change event, so without this the frontend's copy
+  // is whatever the initial getState() returned — and surfaces gated
+  // on it (e.g. the lyrics button's podcast disable in PlayerChrome)
+  // wouldn't flip when the user switched between songs and episodes.
+  const trackVideoId = state.track?.videoId;
+  useEffect(() => {
+    if (!trackVideoId) return;
+    let cancelled = false;
+    playerApi
+      .getState()
+      .then((s) => {
+        if (cancelled) return;
+        setState((prev) =>
+          prev.activePlaylistId === s.activePlaylistId
+            ? prev
+            : { ...prev, activePlaylistId: s.activePlaylistId },
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [trackVideoId]);
+
   useTauriEvent<PlaybackStatus>(EVENTS.STATUS_CHANGED, (status) => {
     // Suppress stale "paused" echoes right after a seek: YTM briefly
     // reports paused while the video element reseats the buffer, and the

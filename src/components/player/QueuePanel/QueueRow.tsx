@@ -3,6 +3,7 @@ import type { TrackInfo } from '../../../lib/types';
 import { QueueArtwork } from './QueueArtwork';
 import { ContextMenuTarget } from '../../contextMenu/ContextMenu';
 import { buildTrackContextMenu } from '../../contextMenu/trackActions';
+import { lookupTrackMeta } from '../../../lib/trackMetaRegistry';
 
 /**
  * Three vertical bars that bounce in sequence — the universal "audio is
@@ -68,6 +69,18 @@ export const QueueRow: FC<QueueRowProps> = ({
 }) => {
   const interactive = Boolean(onPlay) && !highlighted;
 
+  // Bridge JS scrapes podcast / show episode rows via selectors
+  // (`.song-title`, `.byline`) that don't match the multi-row episode
+  // shape, so episode queue rows arrive with empty title + artist. Fall
+  // back to the per-track metadata registry that
+  // `PlaylistDetailPage` populates from the Rust parser, which has
+  // proper episode title + show-name artist.
+  const meta = (!track.title || !track.artist)
+    ? lookupTrackMeta(track.videoId)
+    : undefined;
+  const displayTitle = track.title || meta?.title || 'Unknown title';
+  const displayArtist = track.artist || meta?.artist || '';
+
   const content = (
     <>
       <div
@@ -97,7 +110,7 @@ export const QueueRow: FC<QueueRowProps> = ({
             textOverflow: 'ellipsis',
           }}
         >
-          {track.title || 'Unknown title'}
+          {displayTitle}
         </div>
         <div
           style={{
@@ -108,7 +121,7 @@ export const QueueRow: FC<QueueRowProps> = ({
             textOverflow: 'ellipsis',
           }}
         >
-          {track.artist || ''}
+          {displayArtist}
         </div>
       </div>
     </>

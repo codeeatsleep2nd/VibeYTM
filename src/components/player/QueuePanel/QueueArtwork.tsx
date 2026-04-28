@@ -2,6 +2,8 @@ import { type FC, useEffect, useState } from 'react';
 import { ArtworkPlaceholder } from '../../ArtworkPlaceholder';
 import { CachedImage } from '../../CachedImage';
 import type { TrackInfo } from '../../../lib/types';
+import { usePlayerState } from '../../../hooks/usePlayerState';
+import { lookupShowCover } from '../../../lib/showCoverRegistry';
 import { artworkChain } from './artwork';
 
 interface QueueArtworkProps {
@@ -34,11 +36,24 @@ export const QueueArtwork: FC<QueueArtworkProps> = ({ track, liveTrack }) => {
   // row's own track if not provided or mismatched.
   const sourceTrack =
     liveTrack && liveTrack.videoId === track.videoId ? liveTrack : track;
-  const chain = artworkChain(sourceTrack);
+  // Show / podcast context: every queue row is an episode of the same
+  // show, so the show's channel cover (registered by
+  // `PlaylistDetailPage`) is the right thumbnail for every row. Prepend
+  // it to the chain so it wins over the (typically empty for podcasts)
+  // strict album-art chain. Bypasses the album-art-only host filter
+  // because the channel page renders the same URL via `<CachedImage>`
+  // with no host check, so we trust it here too.
+  const { activePlaylistId } = usePlayerState();
+  const isPodcastContext = (activePlaylistId ?? '').startsWith('MPSP');
+  const showCoverUrl = isPodcastContext
+    ? lookupShowCover(activePlaylistId)
+    : undefined;
+  const baseChain = artworkChain(sourceTrack);
+  const chain = showCoverUrl ? [showCoverUrl, ...baseChain] : baseChain;
   const [chainIdx, setChainIdx] = useState(0);
   useEffect(() => {
     setChainIdx(0);
-  }, [sourceTrack.videoId, sourceTrack.artworkUrl]);
+  }, [sourceTrack.videoId, sourceTrack.artworkUrl, showCoverUrl]);
   const src = chain[chainIdx];
   if (!src) return <ArtworkPlaceholder size={40} />;
   return (

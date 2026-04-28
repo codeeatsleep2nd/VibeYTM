@@ -213,7 +213,22 @@ impl Cache {
             }
         }
 
-        let bytes = reqwest::get(url)
+        // YouTube's CDN — particularly the
+        // `lh3.googleusercontent.com/youtube-podcasts-ingestion-proxy/…`
+        // URLs used for show covers — rejects requests with an empty
+        // User-Agent (`bad status`). Use a standard Safari UA so all
+        // image hosts (album art, channel art, podcast covers) accept
+        // the fetch.
+        const SAFARI_UA: &str =
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 \
+             (KHTML, like Gecko) Version/16.6 Safari/605.1.15";
+        let client = reqwest::Client::builder()
+            .user_agent(SAFARI_UA)
+            .build()
+            .context("building image fetch client")?;
+        let bytes = client
+            .get(url)
+            .send()
             .await
             .with_context(|| format!("fetching {url}"))?
             .error_for_status()

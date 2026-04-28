@@ -15,6 +15,7 @@ import {
 import { TopAlbumCover } from './TopAlbumCover';
 import { EmptyCategory } from './EmptyCategory';
 import { LiquidGlass } from '@liquidglass/react';
+import { openArtist } from '../../../lib/appNav';
 
 const SUGGEST_DEBOUNCE_MS = 200;
 const MIN_QUERY_LENGTH = 2;
@@ -22,7 +23,7 @@ const MIN_SUGGEST_LENGTH = 3;
 const MAX_SUGGESTIONS = 5;
 const PREVIEW_TRACK_COUNT = 3;
 
-const CATEGORY_TABS = ['Songs', 'Albums', 'Artists', 'Playlists'] as const;
+const CATEGORY_TABS = ['Songs', 'Albums', 'Artists', 'Playlists', 'Podcasts'] as const;
 type CategoryTab = (typeof CATEGORY_TABS)[number];
 
 const CATEGORY_PARAMS: Record<CategoryTab, string | undefined> = {
@@ -30,6 +31,7 @@ const CATEGORY_PARAMS: Record<CategoryTab, string | undefined> = {
   Albums: 'EgWKAQIYAWoSEA4QCRAKEAUQBBADEBUQEBAR',
   Artists: 'EgWKAQIgAWoSEA4QCRAKEAUQBBADEBUQEBAR',
   Playlists: 'EgWKAQIoAWoSEA4QCRAKEAUQBBADEBUQEBAR',
+  Podcasts: 'EgWKAQJQAWoSEA4QCRAKEAUQBBADEBUQEBAR',
 };
 
 interface SearchPageProps {
@@ -679,7 +681,14 @@ export const SearchPage: FC<SearchPageProps> = ({
 
           {results.songs.length > 0 && (
             <ShelfRow title="Songs">
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  columnGap: 'var(--space-4)',
+                  rowGap: 'var(--space-1)',
+                }}
+              >
                 {results.songs.map((track, i) => (
                   <SongRow key={track.videoId || `song-${i}`} track={track} />
                 ))}
@@ -698,7 +707,14 @@ export const SearchPage: FC<SearchPageProps> = ({
         <>
           {results.songs.length > 0 ? (
             <ShelfRow title="Songs">
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  columnGap: 'var(--space-4)',
+                  rowGap: 'var(--space-1)',
+                }}
+              >
                 {results.songs.map((track, i) => (
                   <SongRow key={track.videoId || `song-${i}`} track={track} />
                 ))}
@@ -784,6 +800,34 @@ export const SearchPage: FC<SearchPageProps> = ({
         </>
       )}
 
+      {results && activeCategory === 'Podcasts' && (
+        <>
+          {results.podcasts && results.podcasts.length > 0 ? (
+            <ShelfRow title="Podcasts">
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                  gap: '20px',
+                }}
+              >
+                {results.podcasts.map((show) => (
+                  <AlbumCard
+                    key={show.browseId}
+                    artworkUrl={show.artworkUrl}
+                    title={show.title}
+                    subtitle={show.author}
+                    onClick={() => onOpenPlaylist?.(show.browseId)}
+                  />
+                ))}
+              </div>
+            </ShelfRow>
+          ) : (
+            <EmptyCategory label="podcasts" />
+          )}
+        </>
+      )}
+
       {results && activeCategory === 'Artists' && (
         <>
           {results.artists.length > 0 ? (
@@ -801,12 +845,11 @@ export const SearchPage: FC<SearchPageProps> = ({
                   <button
                     key={artist.channelId}
                     onClick={() => {
-                      // Switch back to the unified view, then submit a fresh
-                      // search for this artist's name. submitQuery sets both
-                      // `query` and `submittedQuery`, which fires the search
-                      // effect with the new (artist, null) cache key.
-                      setActiveCategory(null);
-                      submitQuery(artist.name);
+                      // Open the dedicated ArtistPage instead of just
+                      // re-running the search. `openArtist` flows
+                      // through App's `searchForArtist` registry handler,
+                      // which closes overlays and sets viewingArtist.
+                      openArtist(artist.name);
                     }}
                     style={{
                       display: 'flex',

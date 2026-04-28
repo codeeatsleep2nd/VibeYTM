@@ -1201,6 +1201,7 @@ const FILTER_ARTISTS: &str = "EgWKAQIgAWoSEA4QCRAKEAUQBBADEBUQEBAR";
 #[allow(dead_code)]
 const FILTER_VIDEOS: &str = "EgWKAQIQAWoSEA4QCRAKEAUQBBADEBUQEBAR";
 const FILTER_PLAYLISTS: &str = "EgWKAQIoAWoSEA4QCRAKEAUQBBADEBUQEBAR";
+const FILTER_PODCASTS: &str = "EgWKAQJQAWoSEA4QCRAKEAUQBBADEBUQEBAR";
 
 /// Extract autocomplete suggestion strings from a `music/get_search_suggestions`
 /// response. The response wraps each suggestion in a `searchSuggestionRenderer`
@@ -1234,6 +1235,7 @@ fn parse_search_results(data: &Value, filter: Option<&str>) -> SearchResults {
     let mut albums = Vec::new();
     let mut artists = Vec::new();
     let mut playlists = Vec::new();
+    let mut podcasts: Vec<PodcastSummary> = Vec::new();
     let mut top_album: Option<AlbumSummary> = None;
 
     let tabs = &data["contents"]["tabbedSearchResultsRenderer"]["tabs"];
@@ -1242,7 +1244,14 @@ fn parse_search_results(data: &Value, filter: Option<&str>) -> SearchResults {
         .and_then(|t| t["tabRenderer"]["content"]["sectionListRenderer"]["contents"].as_array());
 
     let Some(sections) = sections else {
-        return SearchResults { songs, albums, artists, playlists, top_album };
+        return SearchResults {
+            songs,
+            albums,
+            artists,
+            playlists,
+            podcasts,
+            top_album,
+        };
     };
 
     for section in sections {
@@ -1300,6 +1309,11 @@ fn parse_search_results(data: &Value, filter: Option<&str>) -> SearchResults {
                                 playlists.push(pl);
                             }
                         }
+                        Some(FILTER_PODCASTS) => {
+                            if let Some(p) = parse_podcast_from_list_item(renderer) {
+                                podcasts.push(p);
+                            }
+                        }
                         _ => {
                             // Songs, Videos, or no filter — parse as tracks
                             if let Some(track) = parse_track_from_list_item(renderer) {
@@ -1312,7 +1326,14 @@ fn parse_search_results(data: &Value, filter: Option<&str>) -> SearchResults {
         }
     }
 
-    SearchResults { songs, albums, artists, playlists, top_album }
+    SearchResults {
+        songs,
+        albums,
+        artists,
+        playlists,
+        podcasts,
+        top_album,
+    }
 }
 
 fn extract_continuation(data: &Value) -> Option<String> {
@@ -2165,6 +2186,53 @@ fn parse_playlist_detail(data: &Value, playlist_id: &str) -> PlaylistDetail {
                 })
         });
 
+    // Artist credit from the responsive header. Albums ship the artist
+    // in `straplineTextOne.runs` (a dedicated artist line under the
+    // album title) — NOT in `subtitle.runs`, which is just
+    // `Album • 2026`. Skipped for shows / podcasts since their
+    // strapline carries the channel name and we don't want to
+    // mis-credit a channel as an artist.
+    let is_show_browse = playlist_id.starts_with("MPSP");
+    let artist: Option<String> = if is_show_browse {
+        None
+    } else {
+        // Primary path: musicResponsiveHeaderRenderer.straplineTextOne.runs
+        responsive_header
+            .and_then(|h| h["straplineTextOne"]["runs"].as_array())
+            .and_then(|arr| {
+                let joined = arr
+                    .iter()
+                    .filter_map(|r| r["text"].as_str())
+                    .collect::<String>();
+                let trimmed = joined.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+            // Legacy fallbacks: musicDetailHeaderRenderer.subtitle.runs
+            // (older responses) — pattern is `Album • Artist • 2023`.
+            // Pick a run that has a browseEndpoint (the artist link).
+            .or_else(|| {
+                let detail_subtitle = data["header"]["musicDetailHeaderRenderer"]["subtitle"]
+                    ["runs"]
+                    .as_array()
+                    .or_else(|| {
+                        editable_inner["musicDetailHeaderRenderer"]["subtitle"]["runs"].as_array()
+                    })?;
+                detail_subtitle.iter().find_map(|r| {
+                    let text = r["text"].as_str()?.trim();
+                    if text.is_empty() {
+                        return None;
+                    }
+                    r["navigationEndpoint"]["browseEndpoint"]["browseId"]
+                        .as_str()
+                        .map(|_| text.to_string())
+                })
+            })
+    };
+
     // For shows / podcasts, override every episode's per-row artwork
     // with the show's own cover. YTM stamps each episode card with a
     // different thumbnail (a graphic from inside the episode), but
@@ -2190,6 +2258,7 @@ fn parse_playlist_detail(data: &Value, playlist_id: &str) -> PlaylistDetail {
         audio_playlist_id,
         is_album,
         year,
+        artist,
     }
 }
 
