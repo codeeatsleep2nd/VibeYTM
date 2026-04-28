@@ -545,17 +545,22 @@ impl YtmApi {
                 let clean_title = clean_query_field(title);
                 // Issue #64 — for UGC fan uploads YTM hands us a noisy
                 // title that packs Artist+Title together with the channel
-                // name in the artist slot. After standard cleaning the
-                // title may still be of the form "Song-Artist" or
-                // "Artist - Song". Submit the original pair AND both
-                // orientations of the split so LRCLIB/NetEase can match
-                // either reading. The race short-circuits on the first
-                // non-empty hit, so adding more candidates only costs
-                // network when the original pair has nothing.
+                // name in the artist slot. The standard `clean_query_field`
+                // already chops at " - " / " | " / ｜ before we get here,
+                // so by this point the title looks single-field. Run the
+                // UGC split on the SEPARATOR-PRESERVING clean to recover
+                // both halves for English-pattern uploads like
+                // `"Stayin' Alive - Bee Gees"` (caught in code review).
+                // Submit the original pair AND both orientations of the
+                // split so LRCLIB/NetEase can match either reading. The
+                // race short-circuits on the first non-empty hit, so
+                // adding more candidates only costs network when the
+                // original pair has nothing.
                 let mut candidates: Vec<(String, String)> = vec![
                     (clean_artist.clone(), clean_title.clone()),
                 ];
-                if let Some((left, right)) = ugc_split_title_artist(&clean_title) {
+                let title_with_seps = clean_query_preserve_separators(title);
+                if let Some((left, right)) = ugc_split_title_artist(&title_with_seps) {
                     // We don't know which side is the artist vs title in a
                     // raw "X-Y" upload, so emit both orientations.
                     candidates.push((left.clone(), right.clone()));
@@ -739,6 +744,36 @@ fn apply_synced_lrc(lyrics: &mut Lyrics, lrc: &str, source_name: &str) -> bool {
     true
 }
 
+/// Public for the lyrics flow's pre-split-cleaning pass — same as
+/// `clean_query_field` but stops BEFORE the `" - "` / `" | "` /
+/// fullwidth-pipe cuts. Used so `ugc_split_title_artist` sees a title
+/// that still carries those separators (issue #64). The full
+/// `clean_query_field` is what we send to LRCLIB / NetEase as the
+/// "single field" candidate.
+fn clean_query_preserve_separators(s: &str) -> String {
+    const NOISE_TOKENS: &[&str] = &[
+        "official", "mv", "music video", "audio", "lyric", "visualizer",
+        "hd", "hq", "remix", "cover", "live", "版", "版本",
+        "ost", "drama", "theme", "soundtrack",
+        "動態歌詞", "动态歌词", "歌詞", "歌词",
+        "高音質", "高音质", "無損", "无损", "lossless",
+        "4k", "hdr",
+    ];
+    let noise_pairs: &[(char, char)] = &[
+        ('(', ')'),
+        ('[', ']'),
+        ('【', '】'),
+        ('〈', '〉'),
+        ('「', '」'),
+        ('（', '）'),
+    ];
+    let mut out = s.to_string();
+    for (open, close) in noise_pairs {
+        out = strip_noise_brackets(&out, *open, *close, NOISE_TOKENS);
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Strip common YouTube-title noise that kills exact-match lookups on
 /// LRCLIB / NetEase: parenthesized "Official MV" markers, bracketed tags,
 /// full-width Chinese brackets, trailing `- My Secret` translation, and
@@ -837,19 +872,27 @@ fn ugc_split_title_artist(cleaned: &str) -> Option<(String, String)> {
     // half contain whitespace AND at least one half contain a non-ASCII
     // character — a hyphen between two ASCII English words is far more
     // likely a real word-internal hyphen than a delimiter.
-    if let Some(idx) = cleaned.find('-') {
-        let left = cleaned[..idx].trim();
-        let right = cleaned[idx + 1..].trim();
-        let no_internal_space =
-            !left.contains(char::is_whitespace) && !right.contains(char::is_whitespace);
-        let has_non_ascii =
-            left.chars().any(|c| !c.is_ascii()) || right.chars().any(|c| !c.is_ascii());
-        if no_internal_space
-            && has_non_ascii
-            && left.chars().count() >= 2
-            && right.chars().count() >= 2
-        {
-            return Some((left.to_string(), right.to_string()));
+    //
+    // Skip when MULTIPLE bare dashes are present — "人世间-雷佳-2024" is
+    // ambiguous (which dash is the artist/title delimiter?), and any
+    // single-dash split produces a junk half. Better to surface "no
+    // candidates" than to ship swapped-with-a-trailing-tag pairs.
+    let dash_count = cleaned.matches('-').count();
+    if dash_count == 1 {
+        if let Some(idx) = cleaned.find('-') {
+            let left = cleaned[..idx].trim();
+            let right = cleaned[idx + 1..].trim();
+            let no_internal_space =
+                !left.contains(char::is_whitespace) && !right.contains(char::is_whitespace);
+            let has_non_ascii =
+                left.chars().any(|c| !c.is_ascii()) || right.chars().any(|c| !c.is_ascii());
+            if no_internal_space
+                && has_non_ascii
+                && left.chars().count() >= 2
+                && right.chars().count() >= 2
+            {
+                return Some((left.to_string(), right.to_string()));
+            }
         }
     }
     None
@@ -5362,6 +5405,46 @@ mod tests {
     #[test]
     fn ugc_split_title_artist_returns_none_for_no_separator() {
         assert_eq!(super::ugc_split_title_artist("Stayin' Alive"), None);
+    }
+
+    #[test]
+    fn ugc_split_title_artist_skips_ambiguous_multi_bare_dash() {
+        // Two bare dashes — first-match-wins would produce
+        // ("人世间", "雷佳-2024"), and the trailing year tag would
+        // poison every LRCLIB query. Rather than ship junk, return None.
+        assert_eq!(super::ugc_split_title_artist("人世间-雷佳-2024"), None);
+    }
+
+    #[test]
+    fn ugc_split_title_artist_handles_english_spaced_dash_after_preserving_clean() {
+        // Issue #64 follow-up: when the lyrics flow runs the split on
+        // the SEPARATOR-PRESERVING clean of a UGC English upload, the
+        // split must fire so LRCLIB gets both orientations. This test
+        // pins the spaced-dash branch (which already worked but had no
+        // direct test).
+        let split = super::ugc_split_title_artist("Stayin' Alive - Bee Gees");
+        assert_eq!(
+            split,
+            Some(("Stayin' Alive".to_string(), "Bee Gees".to_string())),
+        );
+    }
+
+    #[test]
+    fn clean_query_preserve_separators_keeps_dashes_for_split_pass() {
+        // The split-recovery cleaner must NOT consume " - " / " | " /
+        // fullwidth pipe — those are exactly the separators
+        // ugc_split_title_artist needs to find. It still strips noise
+        // brackets so the inner halves are clean.
+        let raw = "Stayin' Alive (Official Audio) - Bee Gees";
+        let preserved = super::clean_query_preserve_separators(raw);
+        assert!(
+            preserved.contains(" - "),
+            "spaced dash must survive: `{preserved}`"
+        );
+        assert!(
+            !preserved.contains("Official Audio"),
+            "noise bracket should still be stripped: `{preserved}`"
+        );
     }
 
     #[test]
