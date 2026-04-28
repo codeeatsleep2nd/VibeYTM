@@ -1,42 +1,34 @@
 import { type FC, useState } from 'react';
 import { usePlaybackHistory } from '../../hooks/usePlaybackHistory';
-import {
-  clearHistory,
-  type HistoryEntry,
-} from '../../lib/playbackHistory';
+import { clearHistory } from '../../lib/playbackHistory';
 import { SongRow } from '../browse/SongRow';
 
 // Issue #83 — Recently Played view. Mirrors the visual structure of
 // LibraryPage (sticky title plate + scrolling list) so the user sees
 // History as a peer of the existing library tabs.
 
-interface HistoryPageProps {
-  /** Optional handler — if provided the page can route into a track's
-   *  album when the user clicks the row's chevron. Currently unused
-   *  by the row itself; reserved for a future "open album" affordance. */
-  onOpenAlbum?: (browseId: string) => void;
-}
-
 const HISTORY_PAGE_SECTION_LABEL = 'RECENTLY PLAYED';
 
-export const HistoryPage: FC<HistoryPageProps> = () => {
+export const HistoryPage: FC = () => {
   const entries = usePlaybackHistory();
-  // Mirrors the local state pattern used by SearchPage's Recent searches —
-  // "Clear" wipes both the persisted log and the in-memory list. Nothing
-  // else triggers re-render until the next TRACK_CHANGED event.
-  const [showAll, setShowAll] = useState(true);
+  // After Clear, suppress every entry whose `playedAt` predates the
+  // wall-clock instant of the click. Storing the cut-off as a timestamp
+  // (instead of a `showAll` boolean) means a NEW track played after
+  // Clear naturally surfaces — its `playedAt` will be larger than the
+  // cut-off, so the filter passes it through. A boolean would have
+  // permanently hidden the page until app remount (issue caught in
+  // code review of ba71fb0).
+  const [clearedAt, setClearedAt] = useState<number | null>(null);
 
   const handleClear = () => {
     clearHistory();
-    // The recorder is read-once-per-event; after clear we want the page
-    // to immediately reflect an empty list, so we toggle a flag the
-    // render path consults below.
-    setShowAll(false);
+    setClearedAt(Date.now());
   };
 
-  // After Clear, suppress entries even if the in-memory hook still has
-  // them (it re-reads on TRACK_CHANGED, not on synchronous deletes).
-  const visible: HistoryEntry[] = showAll ? entries : [];
+  const visible =
+    clearedAt === null
+      ? entries
+      : entries.filter((e) => e.playedAt > clearedAt);
 
   return (
     <section

@@ -48,11 +48,18 @@ export function usePlaybackHistoryRecorder(): void {
 
 export function usePlaybackHistory(): HistoryEntry[] {
   const [entries, setEntries] = useState<HistoryEntry[]>(() => loadHistory());
+  // Dedupe against the bridge's metadata-refinement re-emits: the
+  // poller re-fires `player:track-changed` whenever duration / title /
+  // artwork is refined for the SAME videoId (CLAUDE.md). The recorder
+  // already guards against this via its own `lastRecordedRef`; the
+  // reader needs an independent guard so the History page doesn't
+  // re-render its grid every time YTM lands a late piece of metadata.
+  const lastSeenVideoIdRef = useRef<string | null>(null);
 
-  // Re-read from localStorage when a new track-change happens so the
-  // History page updates while it's open. Reading is cheap (a single
-  // JSON parse from a capped 100-entry array).
-  useTauriEvent<TrackInfo>(EVENTS.TRACK_CHANGED, () => {
+  useTauriEvent<TrackInfo>(EVENTS.TRACK_CHANGED, (track) => {
+    if (!track?.videoId) return;
+    if (track.videoId === lastSeenVideoIdRef.current) return;
+    lastSeenVideoIdRef.current = track.videoId;
     setEntries(loadHistory());
   });
 
