@@ -37,8 +37,10 @@ public struct BridgePipelineState: Sendable, Equatable {
 ///      leak through during the reconcile window.
 ///   3. Seek echo filtering — drop stale pre-seek positions during the
 ///      seek-pending window.
-///   4. Volume reconcile — within `pushSettle`, prefer the user's last
-///      pushed value over what the bridge reports.
+///   4. Volume reconcile — within the `VolumeSettle.pushSettle` window
+///      (or on the cycle that arms `armReconcileWindow`), prefer the
+///      user's last pushed `storedVolume` over the bridge's reported
+///      volume.
 ///   5. Map remaining BridgeState fields onto PlayerState (title, artist,
 ///      artwork, status, repeat, shuffle, like, duration).
 ///

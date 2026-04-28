@@ -104,10 +104,15 @@ final class PersistenceStore {
     /// called more often the extra calls drop. The 2-second cadence is
     /// enough to capture the user's last position within a few seconds
     /// of any meaningful interaction without thrashing the disk.
+    ///
+    /// Importantly, `lastWriteAt` is NOT advanced here. `saveImmediate`
+    /// is the sole writer of that timestamp, and it only advances on a
+    /// successful disk write. If we pre-advanced here, a write failure
+    /// would still close the throttle window for 2 s and drop the next
+    /// legitimate save — defeating the round-1 fix.
     func saveDebounced(_ state: PersistedState) {
         let now = Date()
         guard now.timeIntervalSince(lastWriteAt) >= throttleInterval else { return }
-        lastWriteAt = now
         saveImmediate(state)
     }
 

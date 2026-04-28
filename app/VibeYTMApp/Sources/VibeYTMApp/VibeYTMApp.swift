@@ -1,7 +1,10 @@
 import SwiftUI
 import AppKit
+import OSLog
 import PlayerCore
 import YTMBridge
+
+private let appLog = Logger(subsystem: "com.vibeytm.app", category: "AppBootstrap")
 
 @main
 struct VibeYTMApp: App {
@@ -174,6 +177,13 @@ final class AppBootstrap {
             // boundary, which the checker rejects as a data race.
             // We leave the warnings and accept the structurally
             // safe runtime guarantee (`queue: .main`).
+            // Filters: `alphaValue > 0` excludes the off-screen bridge
+            // window (BridgeHost.start sets alpha 0 deliberately so it
+            // can host audio without ever being visible). `canBecomeMain`
+            // excludes panels and popovers. `title.isEmpty || "VibeYTM"`
+            // matches the visible content window only — any future
+            // inspector / About / preferences window will set its own
+            // title and won't accidentally trigger pause-on-close.
             let isMainVisible: Bool = {
                 guard let window = note.object as? NSWindow else { return false }
                 guard window.alphaValue > 0, window.canBecomeMain else { return false }
@@ -226,14 +236,33 @@ final class AppBootstrap {
     // Other commands have no pipeline-state side effects yet — the
     // bridge's response feeds back through the next poll cycle.
 
-    func play() { Task { try? await bridge?.play() } }
-    func pause() { Task { try? await bridge?.pause() } }
-    func togglePlay() { Task { try? await bridge?.togglePlay() } }
-    func next() { Task { try? await bridge?.next() } }
-    func previous() { Task { try? await bridge?.previous() } }
-    func toggleShuffle() { Task { try? await bridge?.toggleShuffle() } }
-    func toggleRepeatMode() { Task { try? await bridge?.toggleRepeatMode() } }
-    func toggleLike() { Task { try? await bridge?.toggleLike() } }
+    /// Run a bridge command, logging any failure. The previous shape
+    /// `Task { try? await bridge?.cmd() }` silently swallowed every
+    /// WKWebView error; users would tap a transport button, see no
+    /// response, and have no diagnostic. Now any throw lands in
+    /// Console.app at the warning level with the command name.
+    private func runCommand(_ name: String, _ body: @escaping @Sendable (BridgeHost) async throws -> Void) {
+        guard let bridge else {
+            appLog.debug("Command \(name, privacy: .public) skipped — bridge not yet available")
+            return
+        }
+        Task {
+            do {
+                try await body(bridge)
+            } catch {
+                appLog.warning("Command \(name, privacy: .public) failed: \((error as NSError).localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    func play() { runCommand("play") { try await $0.play() } }
+    func pause() { runCommand("pause") { try await $0.pause() } }
+    func togglePlay() { runCommand("togglePlay") { try await $0.togglePlay() } }
+    func next() { runCommand("next") { try await $0.next() } }
+    func previous() { runCommand("previous") { try await $0.previous() } }
+    func toggleShuffle() { runCommand("toggleShuffle") { try await $0.toggleShuffle() } }
+    func toggleRepeatMode() { runCommand("toggleRepeatMode") { try await $0.toggleRepeatMode() } }
+    func toggleLike() { runCommand("toggleLike") { try await $0.toggleLike() } }
 
     func seek(secs: Double) {
         // Arm the seek filter BEFORE firing the IPC so any stale
@@ -245,7 +274,7 @@ final class AppBootstrap {
             lastSeekAt: now,
             target: secs
         )
-        Task { try? await bridge?.seek(secs: secs) }
+        runCommand("seek") { try await $0.seek(secs: secs) }
     }
 
     func setVolume(level: Double) {
@@ -255,7 +284,7 @@ final class AppBootstrap {
         // our pushed value when the bridge reports something different.
         pipeline.volumeSettle.lastPushAt = now
         storedVolume = clamped
-        Task { try? await bridge?.setVolume(level: clamped) }
+        runCommand("setVolume") { try await $0.setVolume(level: clamped) }
     }
 
     /// Shuffle-then-play — used by the BrowseDetailView header's
@@ -326,6 +355,7 @@ final class AppBootstrap {
             )
             return Innertube.parseShelves(from: data)
         } catch {
+            appLog.warning("getHomeShelves failed: \((error as NSError).localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -376,6 +406,7 @@ final class AppBootstrap {
             )
             return Innertube.parseBrowseResponse(from: data)
         } catch {
+            appLog.warning("getBrowseDetail(\(browseId, privacy: .public)) failed: \((error as NSError).localizedDescription, privacy: .public)")
             return BrowseResponse(header: nil, shelves: [])
         }
     }
@@ -399,6 +430,7 @@ final class AppBootstrap {
             }
             return shelves
         } catch {
+            appLog.warning("getBrowseShelves(\(browseId, privacy: .public)) failed: \((error as NSError).localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -436,6 +468,7 @@ final class AppBootstrap {
             )
             return true
         } catch {
+            appLog.warning("setSavedToLibrary(\(playlistId, privacy: .public)) saved=\(saved, privacy: .public) failed: \((error as NSError).localizedDescription, privacy: .public)")
             return false
         }
     }
@@ -465,6 +498,7 @@ final class AppBootstrap {
             )
             return Innertube.parseSearchResults(from: data)
         } catch {
+            appLog.warning("search(filter=\(filter.rawValue, privacy: .public)) failed: \((error as NSError).localizedDescription, privacy: .public)")
             return []
         }
     }

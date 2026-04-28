@@ -176,6 +176,13 @@ public final class BridgeHost {
         pollTimer?.invalidate()
         pollTimer = nil
         isStarted = false
+        // Reset pollInFlight too so a `stop() ... start()` cycle on the
+        // same instance starts cleanly. Without this reset, an
+        // in-flight poll task captured `[weak self]`; if `stop()` runs
+        // before that task's defer fires, `self` is nilled and the
+        // defer never executes, stranding `pollInFlight = true` and
+        // permanently blocking polls after a subsequent `start()`.
+        pollInFlight = false
         // Tear down the hidden NSWindow so the WKWebView can drop its
         // process and reclaim memory. `isReleasedWhenClosed = false`
         // means we have to nil the reference ourselves.
@@ -184,12 +191,11 @@ public final class BridgeHost {
         hiddenWindow = nil
     }
 
-    /// Returns the underlying `WKWebView` so callers can attach it to a
-    /// hidden window if they want devtools to work. **The view IS
-    /// parented to an off-screen NSWindow** (see `start()`); a detached
-    /// WKWebView refuses media playback on macOS regardless of
-    /// `mediaTypesRequiringUserActionForPlayback`. The exposed reference
-    /// is for inspection only — moving it elsewhere will break audio.
+    /// Underlying WKWebView, exposed for diagnostics / Web Inspector
+    /// access only. **The view IS parented to an off-screen NSWindow**
+    /// (see `start()`); a detached WKWebView refuses media playback on
+    /// macOS regardless of `mediaTypesRequiringUserActionForPlayback`.
+    /// Moving this reference elsewhere will break audio.
     public var hiddenWebView: WKWebView { webView }
 
     // MARK: - Player commands
@@ -310,7 +316,7 @@ public final class BridgeHost {
     /// Returns the raw JSON response body as `Data`. Callers parse with
     /// `JSONSerialization` or a typed Codable struct.
     public func callYTMAPI(endpoint: String, body: [String: Any]) async throws -> Data {
-        // Retry up to 4 times on transient errors. Two patterns:
+        // Retry up to 5 times on transient errors. Two patterns:
         //   • "Load failed" — observed when YTM's ytcfg / cookies / SAPISID
         //     hash haven't plumbed through yet on a fresh page load.
         //   • timeout — observed when the fetch promise never resolves
@@ -373,7 +379,18 @@ public final class BridgeHost {
         let deadline = Date().addingTimeInterval(6)
         while Date() < deadline {
             try await Task.sleep(nanoseconds: 150_000_000)
-            let result = try? await webView.evaluateJavaScript(readJS, in: nil, contentWorld: .page)
+            // Catch the read explicitly so a real WK error (context
+            // gone, content-process crash, content-world drift) doesn't
+            // get silently absorbed as "result not ready yet". The
+            // previous `try?` form turned every error into another 6 s
+            // of fruitless polling.
+            let result: Any?
+            do {
+                result = try await webView.evaluateJavaScript(readJS, in: nil, contentWorld: .page)
+            } catch {
+                bridgeLog.warning("API poll read failed for reqId=\(reqId, privacy: .public): \((error as NSError).localizedDescription, privacy: .public)")
+                throw BridgeAPIError.fetchFailed(message: (error as NSError).localizedDescription)
+            }
             if let s = result as? String {
                 if s.hasPrefix("VIBEYTM_ERROR:") {
                     throw BridgeAPIError.fetchFailed(message: String(s.dropFirst("VIBEYTM_ERROR:".count)))
@@ -559,24 +576,26 @@ public final class BridgeHost {
 
     private func handleEvalError(_ error: Error) {
         let nsError = error as NSError
-        // During the first 1–2 s of a navigation, evaluateJavaScript
-        // raises a benign "result of unsupported type" error because
-        // the page's globals haven't been written yet. Demote that to
-        // debug; everything else is at least a warning, and a content-
-        // process termination triggers a webview reload.
-        let isExpectedDuringNavigation = nsError.domain == "WKErrorDomain"
-            && nsError.localizedDescription.contains("unsupported type")
-        if isExpectedDuringNavigation {
-            bridgeLog.debug("evaluateJavaScript transient: \(nsError.localizedDescription, privacy: .public)")
+        guard nsError.domain == WKError.errorDomain else {
+            bridgeLog.warning("evaluateJavaScript failed (\(nsError.domain, privacy: .public) #\(nsError.code, privacy: .public)): \(nsError.localizedDescription, privacy: .public)")
             return
         }
-        bridgeLog.warning("evaluateJavaScript failed (\(nsError.domain, privacy: .public) #\(nsError.code, privacy: .public)): \(nsError.localizedDescription, privacy: .public)")
-        // 4 = WKError.Code.webContentProcessTerminated. The view's JS
-        // context is gone; reload to recover. Without this the poll
-        // loop keeps ticking forever against a dead context.
-        if nsError.domain == "WKErrorDomain" && nsError.code == 4 {
+        // Match WK error codes by their stable numeric value, NOT by
+        // `localizedDescription` — that's locale-dependent and would
+        // mis-classify on a non-English macOS.
+        switch nsError.code {
+        case WKError.javaScriptResultTypeIsUnsupported.rawValue:
+            // Benign: during the first 1–2 s of a page navigation the
+            // page's globals haven't been written yet. Demote to debug.
+            bridgeLog.debug("evaluateJavaScript transient (result type unsupported)")
+        case WKError.webContentProcessTerminated.rawValue:
+            // The view's JS context is gone; reload to recover.
+            // Without this the poll loop keeps ticking against a dead
+            // context until the user restarts the app.
             bridgeLog.error("WKWebView content process terminated — reloading bridge")
             webView.reload()
+        default:
+            bridgeLog.warning("evaluateJavaScript failed (WKError #\(nsError.code, privacy: .public)): \(nsError.localizedDescription, privacy: .public)")
         }
     }
 

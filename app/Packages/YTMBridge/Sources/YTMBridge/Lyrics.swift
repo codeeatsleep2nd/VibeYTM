@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let lyricsLog = Logger(subsystem: "com.vibeytm.app", category: "Lyrics")
 
 /// One synced lyric line. `timeSecs` is the offset from track start;
 /// `text` is the line as displayed. Empty `text` is allowed (instrumental
@@ -66,10 +69,25 @@ public enum LyricsClient {
             request.setValue("VibeYTM/2.0 (lrclib lookup)", forHTTPHeaderField: "User-Agent")
             request.timeoutInterval = 8
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            guard let http = response as? HTTPURLResponse else {
+                lyricsLog.debug("lrclib non-HTTP response")
+                return .empty
+            }
+            // 404 is the common "no lyrics for this track" outcome —
+            // demote to debug. Everything else (rate limit, server
+            // error) is at least a warning so we can distinguish a
+            // transient backend issue from "track has no lyrics" in
+            // Console.app.
+            guard http.statusCode == 200 else {
+                if http.statusCode == 404 {
+                    lyricsLog.debug("lrclib 404 — no lyrics for track")
+                } else {
+                    lyricsLog.warning("lrclib HTTP \(http.statusCode, privacy: .public)")
+                }
                 return .empty
             }
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                lyricsLog.warning("lrclib response was not JSON")
                 return .empty
             }
             if let synced = json["syncedLyrics"] as? String, !synced.isEmpty {
@@ -89,6 +107,7 @@ public enum LyricsClient {
             }
             return .empty
         } catch {
+            lyricsLog.warning("lrclib fetch error: \((error as NSError).localizedDescription, privacy: .public)")
             return .empty
         }
     }
