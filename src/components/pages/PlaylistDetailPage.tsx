@@ -1,6 +1,7 @@
 import { type FC, useEffect, useState } from 'react';
 import type { PlaylistDetail } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
+import { debug } from '../../lib/debug';
 import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
 import { rememberShowCover } from '../../lib/showCoverRegistry';
 import { rememberTrackMetas } from '../../lib/trackMetaRegistry';
@@ -73,7 +74,7 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
       setSaveError(
         next ? `Could not save to ${surface}` : `Could not remove from ${surface}`,
       );
-      console.error('[PlaylistDetailPage] save toggle failed:', e);
+      debug.error('PlaylistDetailPage', 'save toggle failed', e);
     } finally {
       setIsSaving(false);
     }

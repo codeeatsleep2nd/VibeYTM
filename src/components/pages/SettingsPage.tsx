@@ -1,6 +1,7 @@
 import { type FC, useEffect, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { aboutApi, cacheApi, settingsApi, ytmApi, type AboutInfo, type AppSettings, type CacheStats } from '../../lib/ipc';
+import { debug } from '../../lib/debug';
 
 declare const __APP_VERSION__: string;
 // Fallback only — the real version is fetched at runtime via Tauri's getVersion()
@@ -206,7 +207,7 @@ export const SettingsPage: FC = () => {
     cacheApi
       .stats()
       .then(setCacheStats)
-      .catch((e) => console.error('cache stats failed', e));
+      .catch((e) => debug.error('SettingsPage', 'cache stats failed', e));
   };
 
   useEffect(() => {
@@ -214,17 +215,17 @@ export const SettingsPage: FC = () => {
     settingsApi
       .get()
       .then(setSettings)
-      .catch((e) => console.error('settings load failed', e));
+      .catch((e) => debug.error('SettingsPage', 'settings load failed', e));
     // Fetch the authoritative version from the Tauri runtime (Cargo/tauri.conf).
     // This is the version actually bundled in the running app, so About can't
     // drift from the real build (issue #45).
     getVersion()
       .then(setAppVersion)
-      .catch((e) => console.error('getVersion failed', e));
+      .catch((e) => debug.error('SettingsPage', 'getVersion failed', e));
     aboutApi
       .get()
       .then(setAboutInfo)
-      .catch((e) => console.error('about info load failed', e));
+      .catch((e) => debug.error('SettingsPage', 'about info load failed', e));
   }, []);
 
   useEffect(() => {
@@ -235,7 +236,9 @@ export const SettingsPage: FC = () => {
       hydratedRef.current = true;
       return;
     }
-    settingsApi.set(settings).catch((e) => console.error('settings save failed', e));
+    settingsApi.set(settings).catch((e) =>
+      debug.error('SettingsPage', 'settings save failed', e),
+    );
   }, [settings]);
 
   const updateGeneral = (patch: Partial<AppSettings['general']>) => {

@@ -1,6 +1,7 @@
 import { type FC, useEffect, useState } from 'react';
 import type { AlbumSummary, SearchResults, TrackInfo } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
+import { debug } from '../../lib/debug';
 import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
 import { useCoverColors } from '../../hooks/useCoverColors';
 import { albumArtOrNothing } from '../../lib/artwork';
@@ -84,7 +85,7 @@ export const ArtistPage: FC<ArtistPageProps> = ({
         if (cancelled) return;
         setError(`Could not load ${artistName}`);
         setIsLoading(false);
-        console.error('[ArtistPage] load failed:', e);
+        debug.error('ArtistPage', 'load failed', e);
       });
 
     return () => {

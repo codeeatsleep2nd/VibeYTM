@@ -460,16 +460,16 @@ pub async fn get_lyrics(
             e.to_string()
         })?;
 
-    // Persist only meaningful results. Empty stubs are left un-cached so a
-    // later probe (with better title cleaning or once LRCLIB re-indexes)
-    // can still populate the track.
-    let has_text = !result.text.trim().is_empty();
-    let has_lines = result.lines.as_ref().map_or(false, |l| !l.is_empty());
-    if has_text || has_lines {
-        if let Ok(json) = serde_json::to_string(&result) {
-            if let Err(e) = cache.put_lyrics(&video_id, &json) {
-                tracing::warn!(error = %e, "failed to persist lyrics cache");
-            }
+    // Persist BOTH meaningful results AND empty stubs (issue #74). The
+    // disk cache's 7d+jitter TTL handles freshness for negative results
+    // — if LRCLIB re-indexes or the title parsing improves later, the
+    // entry expires and the next play re-races all sources. Without
+    // this, every replay of a lyric-less track ran the YTM → LRCLIB →
+    // NetEase pipeline from scratch, costing ~1-3 s per open of the
+    // now-playing view.
+    if let Ok(json) = serde_json::to_string(&result) {
+        if let Err(e) = cache.put_lyrics(&video_id, &json) {
+            tracing::warn!(error = %e, "failed to persist lyrics cache");
         }
     }
 
