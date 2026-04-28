@@ -144,6 +144,8 @@ private struct SectionScaffold: View {
             LibrarySongsView()
         case .allPlaylists:
             AllPlaylistsView()
+        case .settings:
+            SettingsView()
         }
     }
 

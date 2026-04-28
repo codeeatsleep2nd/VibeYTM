@@ -20,6 +20,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
     case recentlyPlayed, artists, albums, songs
     case allPlaylists
     case search
+    case settings
 
     var id: String { rawValue }
 
@@ -33,6 +34,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .songs: "Songs"
         case .allPlaylists: "Playlists"
         case .search: "Search"
+        case .settings: "Settings"
         }
     }
 
@@ -46,6 +48,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .songs: "music.note"
         case .allPlaylists: "rectangle.stack"
         case .search: "magnifyingglass"
+        case .settings: "gearshape"
         }
     }
 }
@@ -72,6 +75,9 @@ struct SidebarView: View {
                 }
                 Section("Playlists") {
                     row(.allPlaylists)
+                }
+                Section {
+                    row(.settings)
                 }
             }
             .listStyle(.sidebar)

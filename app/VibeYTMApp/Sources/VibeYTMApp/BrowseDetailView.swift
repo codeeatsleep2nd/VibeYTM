@@ -19,6 +19,15 @@ struct BrowseDetailView: View {
     @Environment(AppBootstrap.self) private var bootstrap
     @State private var shelves: [Shelf] = []
     @State private var loading = true
+    /// Save-to-library state (#54 / #55). Tri-state: `nil` = unsaved
+    /// (initial), `true` = saved, `false` = saved-then-removed in
+    /// this session. We don't parse YTM's response for the initial
+    /// like-status yet — that's a per-renderer extraction job. The
+    /// button starts as "Save" and toggles on click; if the user
+    /// already had this album saved, hitting Save again is a no-op
+    /// on the YTM side (idempotent).
+    @State private var savedToLibrary: Bool = false
+    @State private var savePending: Bool = false
 
     var body: some View {
         ScrollView(.vertical) {
@@ -73,13 +82,6 @@ struct BrowseDetailView: View {
                         }
                         .buttonStyle(.borderedProminent)
 
-                        // Shuffle starts the lead track AND toggles
-                        // shuffle, but the shuffle command needs to land
-                        // AFTER YTM has loaded the new track and
-                        // initialised its queue context — otherwise it
-                        // gets dropped or applied to the previous queue.
-                        // Bootstrap.shuffleAndPlay sequences the two
-                        // calls with the right delay.
                         Button {
                             if let lead { bootstrap.shuffleAndPlay(item: lead) }
                         } label: {
@@ -89,6 +91,28 @@ struct BrowseDetailView: View {
                                 .padding(.vertical, 8)
                         }
                         .buttonStyle(.bordered)
+
+                        // Save / Remove from Library (#54 / #55) — only
+                        // for browseIds that map to a saveable playlist
+                        // (albums + community playlists). Artist /
+                        // search-result browseIds don't have a single
+                        // playlistId we can like, so the button is
+                        // hidden for those.
+                        if let pid = lead?.playlistId, isLibrarySaveable {
+                            Button {
+                                Task { await toggleSave(playlistId: pid) }
+                            } label: {
+                                Label(
+                                    savedToLibrary ? "Remove from Library" : "Save to Library",
+                                    systemImage: savedToLibrary ? "minus" : "plus"
+                                )
+                                .font(.headline)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(savePending)
+                        }
                     }
                     .padding(.top, 4)
                 }
@@ -161,6 +185,29 @@ struct BrowseDetailView: View {
         loading = true
         shelves = await bootstrap.getBrowseShelves(browseId: browseId)
         loading = false
+    }
+
+    /// Whether this browse page corresponds to something the user can
+    /// add to / remove from their library. MPRE / MPLA / OLAK
+    /// (album-as-audio-playlist) and VL / PL (regular playlists) all
+    /// support like_playlist. Artist channels (UC / MPLA) and search
+    /// indices don't.
+    private var isLibrarySaveable: Bool {
+        let upper = browseId.uppercased()
+        return upper.hasPrefix("MPRE")
+            || upper.hasPrefix("VL")
+            || upper.hasPrefix("PL")
+            || upper.hasPrefix("OLAK")
+    }
+
+    private func toggleSave(playlistId: String) async {
+        savePending = true
+        defer { savePending = false }
+        let target = !savedToLibrary
+        let ok = await bootstrap.setSavedToLibrary(playlistId: playlistId, saved: target)
+        if ok {
+            savedToLibrary = target
+        }
     }
 }
 

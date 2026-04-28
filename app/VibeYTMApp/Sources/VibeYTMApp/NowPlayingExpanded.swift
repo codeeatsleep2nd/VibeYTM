@@ -3,11 +3,26 @@ import PlayerCore
 import YTMBridge
 
 /// Full-screen "expanded" Now Playing surface — large artwork on the
-/// left, title + artist + scrubber + transport on the right. Modeled on
-/// macOS Apple Music's "full screen player" treatment: a darkened glass
-/// backdrop, oversized cover, and a spacious typographic block. The
-/// chrome's artwork thumb opens this sheet; tapping outside or pressing
-/// Escape dismisses it.
+/// left, title + artist + scrubber + transport on the right.
+///
+/// **DISMISSAL CONTRACT (regression-prevention):**
+/// This sheet has been broken twice now where it was opened and the
+/// user couldn't close it. Going forward there must always be at
+/// least THREE redundant dismissal paths, each tested independently:
+///
+///   1. Visible "chevron-down" button at top-leading, bound to the
+///      `.cancelAction` keyboard shortcut (Escape).
+///   2. Visible "Done" button at top-trailing, bound to the
+///      `.defaultAction` keyboard shortcut (Return / Enter).
+///   3. Tap the backdrop area outside the player content to dismiss.
+///
+/// DO NOT attach nested `.sheet(isPresented:)` modifiers to this view.
+/// Doing so causes SwiftUI to consume the parent sheet's keyboard
+/// shortcuts (only the most-recent .sheet modifier wins), silently
+/// breaking Esc / Return dismissal. If you need to open lyrics or
+/// queue from here, dismiss this sheet first and re-open from
+/// PlayerChrome — or use a separate inspector pattern, not nested
+/// sheets.
 struct NowPlayingExpanded: View {
     @Environment(PlayerStore.self) private var store
     @Environment(AppBootstrap.self) private var bootstrap
@@ -15,85 +30,94 @@ struct NowPlayingExpanded: View {
 
     var body: some View {
         let state = store.state
-        ZStack(alignment: .topLeading) {
+        ZStack(alignment: .top) {
             backdrop(track: state.track)
+                // Path 3 — tap backdrop to dismiss. Sits on its own
+                // layer below the content so taps only register when
+                // the user clicks empty space, not on buttons /
+                // sliders / cover art.
+                .contentShape(Rectangle())
+                .onTapGesture { dismiss() }
 
-            // Header row with a real Done button + a chevron-down icon —
-            // either dismisses the sheet. The previous corner X glyph at
-            // 22 pt against a dark blurred backdrop was visually invisible
-            // and `.cancelAction` keyboard shortcut didn't reach the
-            // button when focus wasn't there. Apple Music's expanded
-            // player uses a chevron-down on the left + Done on the right;
-            // mirror both so users have an obvious path back.
             VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    Button { dismiss() } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 32, height: 32)
-                            .background(.white.opacity(0.18), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.cancelAction)
-
-                    Spacer()
-
-                    Button("Done") { dismiss() }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.regular)
-                        .keyboardShortcut(.defaultAction)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-
-                Spacer(minLength: 0)
+                header
+                Spacer(minLength: 24)
+                content(state: state)
+                    .padding(.horizontal, 40)
+                Spacer(minLength: 24)
             }
-
-            HStack(alignment: .center, spacing: 36) {
-                Cover(track: state.track)
-                    .frame(width: 320, height: 320)
-                    .shadow(color: .black.opacity(0.5), radius: 40, y: 20)
-
-                VStack(alignment: .leading, spacing: 18) {
-                    Spacer(minLength: 0)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(state.track?.title.isEmpty == false ? state.track!.title : "Not Playing")
-                            .font(.system(size: 30, weight: .bold))
-                            .foregroundStyle(.white)
-                            .lineLimit(2)
-                        if let artist = state.track?.artist, !artist.isEmpty {
-                            Text(artist)
-                                .font(.title3)
-                                .foregroundStyle(.white.opacity(0.8))
-                                .lineLimit(1)
-                        }
-                        if let album = state.track?.album, !album.isEmpty {
-                            Text(album)
-                                .font(.callout)
-                                .foregroundStyle(.white.opacity(0.55))
-                                .lineLimit(1)
-                        }
-                    }
-                    BigScrubber()
-                    BigTransport()
-                    Spacer(minLength: 0)
-                }
-                .frame(minWidth: 320, idealWidth: 420, maxWidth: 460, alignment: .leading)
-            }
-            .padding(.horizontal, 36)
-            .padding(.top, 76)
-            .padding(.bottom, 48)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Block backdrop tap-to-dismiss when the click lands on
+            // actual interactive content. The backdrop tapGesture is
+            // the OUTER layer; this VStack's contentShape makes it
+            // hit-test as a unit so its onTapGesture (a no-op) wins
+            // over the backdrop's. Without this, every click on a
+            // button or slider would also trigger dismissal.
+            .contentShape(Rectangle())
+            .onTapGesture { /* swallow */ }
         }
-        // Sheet sized to fit content with breathing room: cover (320) +
-        // spacing (36) + text col (320 min) + horizontal padding (36×2) =
-        // 748 minimum. Earlier layout (380 cover, 460 text, 64 padding)
-        // demanded 1016 pt and clipped on the chrome's own minWidth=980
-        // sheet — content at the right edge fell outside the visible
-        // area. Smaller cover + tighter padding + flexible text column
-        // keeps everything inside the frame.
-        .frame(minWidth: 800, minHeight: 560)
+        .frame(minWidth: 880, minHeight: 600, idealHeight: 700)
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        HStack(spacing: 12) {
+            // Path 1 — chevron-down + Esc.
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 32, height: 32)
+                    .background(.white.opacity(0.18), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+
+            Spacer()
+
+            // Path 2 — Done + Return.
+            Button("Done") { dismiss() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 16)
+    }
+
+    @ViewBuilder
+    private func content(state: PlayerState) -> some View {
+        HStack(alignment: .center, spacing: 44) {
+            Cover(track: state.track)
+                .frame(width: 380, height: 380)
+                .shadow(color: .black.opacity(0.5), radius: 36, y: 18)
+
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(state.track?.title.isEmpty == false ? state.track!.title : "Not Playing")
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    if let artist = state.track?.artist, !artist.isEmpty {
+                        Text(artist)
+                            .font(.title3)
+                            .foregroundStyle(.white.opacity(0.8))
+                            .lineLimit(1)
+                    }
+                    if let album = state.track?.album, !album.isEmpty {
+                        Text(album)
+                            .font(.callout)
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(1)
+                    }
+                }
+
+                BigScrubber()
+                BigTransport()
+            }
+            .frame(minWidth: 320, idealWidth: 440, maxWidth: 480, alignment: .leading)
+        }
+        .frame(maxWidth: 1100, alignment: .center)
     }
 
     @ViewBuilder
@@ -115,7 +139,13 @@ private struct Cover: View {
 
     var body: some View {
         CachedAsyncImage(url: track?.artworkUrl.flatMap(URL.init(string:))) {
-            Rectangle().fill(.white.opacity(0.08))
+            Rectangle()
+                .fill(.white.opacity(0.08))
+                .overlay {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 64))
+                        .foregroundStyle(.white.opacity(0.3))
+                }
         }
         .clipShape(RoundedRectangle(cornerRadius: 18))
     }
@@ -129,6 +159,7 @@ private struct BigScrubber: View {
     var body: some View {
         let state = store.state
         let duration = state.track?.durationSecs ?? 0
+        let hasTrack = state.track != nil && duration > 0
         let displayValue = draggingValue ?? state.positionSecs
 
         VStack(spacing: 6) {
@@ -141,11 +172,15 @@ private struct BigScrubber: View {
                 onEditingChanged: { editing in
                     if !editing, let target = draggingValue {
                         bootstrap.seek(secs: target)
+                        if state.status != .playing {
+                            bootstrap.play()
+                        }
                         draggingValue = nil
                     }
                 }
             )
             .tint(.white)
+            .disabled(!hasTrack)
 
             HStack {
                 Text(format(displayValue))
@@ -158,7 +193,7 @@ private struct BigScrubber: View {
     }
 
     private func format(_ secs: Double) -> String {
-        guard secs.isFinite, secs >= 0 else { return "—" }
+        guard secs.isFinite, secs >= 0 else { return "—:—" }
         let total = Int(secs)
         return String(format: "%d:%02d", total / 60, total % 60)
     }
@@ -171,7 +206,9 @@ private struct BigTransport: View {
     var body: some View {
         let state = store.state
         let isPlaying = state.status == .playing
-        HStack(spacing: 24) {
+        let repeatActive = state.repeatMode != .none
+
+        HStack(spacing: 28) {
             Button { bootstrap.toggleShuffle() } label: {
                 Image(systemName: "shuffle")
                     .font(.title3)
@@ -195,7 +232,12 @@ private struct BigTransport: View {
             Button { bootstrap.toggleRepeatMode() } label: {
                 Image(systemName: state.repeatMode == .one ? "repeat.1" : "repeat")
                     .font(.title3)
-                    .foregroundStyle(state.repeatMode == .none ? .white.opacity(0.85) : Color.accentColor)
+                    .foregroundStyle(repeatActive ? Color.accentColor : .white.opacity(0.85))
+            }
+            Button { bootstrap.toggleLike() } label: {
+                Image(systemName: state.isLiked ? "heart.fill" : "heart")
+                    .font(.title3)
+                    .foregroundStyle(state.isLiked ? Color.pink : .white.opacity(0.85))
             }
         }
         .buttonStyle(.borderless)

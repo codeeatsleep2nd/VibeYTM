@@ -2,24 +2,68 @@ import Foundation
 
 /// Snapshot persisted across launches. Holds just enough to restore the
 /// user's last session: the video they were playing, where they were in
-/// it, the volume, and the sidebar tab. Everything else (queue, track
-/// metadata, account) is rebuilt fresh from the bridge on launch.
+/// it, the volume, the sidebar tab, and the user-toggled preferences.
+/// Everything else (queue, track metadata, account) is rebuilt fresh
+/// from the bridge on launch.
 ///
 /// Stored at `~/Library/Application Support/VibeYTM/state.json`. Writes
-/// are coalesced via a 500 ms debounce so per-cycle position updates
-/// don't hammer disk; a final save runs on `applicationWillTerminate`.
+/// are throttled (2 s); a final synchronous save runs on
+/// `applicationWillTerminate`.
 struct PersistedState: Codable, Equatable {
     var videoId: String?
     var positionSecs: Double
     var volume: Double
     var sidebarSelection: String
+    /// When true, closing the main window hides it instead of quitting
+    /// (#43). When false, red-traffic-light closes the app outright.
+    /// Defaults to true — matches Apple Music's behavior.
+    var closeToTray: Bool = true
+    /// When true, audio continues playing after the user closes the
+    /// main window (#47). When false, playback pauses on window close.
+    /// Defaults to true — most users expect audio to keep playing.
+    var backgroundPlayback: Bool = true
 
     static let `default` = PersistedState(
         videoId: nil,
         positionSecs: 0,
         volume: 1.0,
-        sidebarSelection: "home"
+        sidebarSelection: "home",
+        closeToTray: true,
+        backgroundPlayback: true
     )
+
+    private enum CodingKeys: String, CodingKey {
+        case videoId, positionSecs, volume, sidebarSelection
+        case closeToTray, backgroundPlayback
+    }
+
+    /// Decoding-tolerant — fields added in newer versions default
+    /// gracefully when the on-disk file predates them.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.videoId = try? c.decode(String?.self, forKey: .videoId)
+        self.positionSecs = (try? c.decode(Double.self, forKey: .positionSecs)) ?? 0
+        self.volume = (try? c.decode(Double.self, forKey: .volume)) ?? 1.0
+        self.sidebarSelection = (try? c.decode(String.self, forKey: .sidebarSelection)) ?? "home"
+        self.closeToTray = (try? c.decode(Bool.self, forKey: .closeToTray)) ?? true
+        self.backgroundPlayback = (try? c.decode(Bool.self, forKey: .backgroundPlayback)) ?? true
+    }
+
+    init(
+        videoId: String?,
+        positionSecs: Double,
+        volume: Double,
+        sidebarSelection: String,
+        closeToTray: Bool = true,
+        backgroundPlayback: Bool = true
+    ) {
+        self.videoId = videoId
+        self.positionSecs = positionSecs
+        self.volume = volume
+        self.sidebarSelection = sidebarSelection
+        self.closeToTray = closeToTray
+        self.backgroundPlayback = backgroundPlayback
+    }
 }
 
 @MainActor

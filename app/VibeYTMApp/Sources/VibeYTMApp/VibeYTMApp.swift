@@ -29,6 +29,8 @@ struct VibeYTMApp: App {
                 .task {
                     bootstrap.startNowPlayingIntegration()
                     bootstrap.installShutdownHook()
+                    bootstrap.installWindowHooks()
+                    appDelegate.bootstrap = bootstrap
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -65,6 +67,14 @@ final class AppBootstrap {
     /// The sidebar tab from the persisted snapshot — the view reads
     /// this on first appearance.
     let initialSidebarSelection: SidebarSection
+    /// User preferences (#43 / #47) — observable so the Settings page
+    /// can bind toggles directly. Mutating either triggers a save.
+    var closeToTray: Bool {
+        didSet { if oldValue != closeToTray { persistIfMeaningful() } }
+    }
+    var backgroundPlayback: Bool {
+        didSet { if oldValue != backgroundPlayback { persistIfMeaningful() } }
+    }
     private var bridge: BridgeHost?
     private var nowPlaying: NowPlayingIntegration?
     private var pipeline = BridgePipelineState()
@@ -87,6 +97,8 @@ final class AppBootstrap {
         self.pendingResumeVideoId = saved.videoId
         self.pendingResumePosition = saved.positionSecs
         self.initialSidebarSelection = SidebarSection(rawValue: saved.sidebarSelection) ?? .home
+        self.closeToTray = saved.closeToTray
+        self.backgroundPlayback = saved.backgroundPlayback
         // Seed the volume into the player state immediately so the
         // chrome's slider doesn't briefly render at 1.0 on launch.
         var initial = store.state
@@ -137,15 +149,48 @@ final class AppBootstrap {
         }
     }
 
+    /// Observe the main window's close notifications so we can pause
+    /// playback (#47) when the user has background-playback OFF and
+    /// hides the window via close-to-tray. The notification fires
+    /// once per close — if close-to-tray is OFF, the app is about to
+    /// quit anyway and the pause is a no-op.
+    private var windowHooksInstalled = false
+    func installWindowHooks() {
+        guard !windowHooksInstalled else { return }
+        windowHooksInstalled = true
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            // Pull the relevant fields off the (non-Sendable) note BEFORE
+            // hopping back onto the actor — Swift 6 strict concurrency
+            // refuses to capture `note` across the boundary.
+            let isMainVisible: Bool = {
+                guard let window = note.object as? NSWindow else { return false }
+                return window.alphaValue > 0 && window.canBecomeMain
+            }()
+            guard isMainVisible else { return }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.closeToTray && !self.backgroundPlayback {
+                    self.pause()
+                }
+            }
+        }
+    }
+
     /// Synchronous final write — bypasses the throttle.
     private func flushPersistence() {
         let state = playerStore.state
-        guard let videoId = state.track?.videoId, !videoId.isEmpty else { return }
+        let videoId = state.track?.videoId ?? ""
         let snapshot = PersistedState(
-            videoId: videoId,
+            videoId: videoId.isEmpty ? nil : videoId,
             positionSecs: state.positionSecs,
             volume: state.volume,
-            sidebarSelection: persistedSidebar
+            sidebarSelection: persistedSidebar,
+            closeToTray: closeToTray,
+            backgroundPlayback: backgroundPlayback
         )
         persistence.saveImmediate(snapshot)
     }
@@ -335,16 +380,53 @@ final class AppBootstrap {
         )
     }
 
-    /// Run a YTM search and parse the result into shelves (Top result,
-    /// Songs, Videos, Albums, Artists, Playlists, Community Playlists).
-    func search(query: String) async -> [Shelf] {
+    // MARK: - Library mutations (#54 / #55)
+
+    /// Save / unsave a playlist or album to the user's library. Hits
+    /// YTM's `like/like_playlist` Innertube endpoint with one of three
+    /// statuses:
+    ///   • `LIKE` — add to library
+    ///   • `INDIFFERENT` — remove from library
+    ///   • `DISLIKE` — unused, but accepted by the endpoint
+    /// `target` should be the album's MPRE-prefixed playlistId (the
+    /// audio playlist YTM associates with the album page) or the
+    /// playlist's normal playlistId. Returns true on success.
+    func setSavedToLibrary(playlistId: String, saved: Bool) async -> Bool {
+        guard let bridge else { return false }
+        let status = saved ? "LIKE" : "INDIFFERENT"
+        do {
+            _ = try await bridge.callYTMAPI(
+                endpoint: "like/like_playlist",
+                body: ["target": ["playlistId": playlistId], "status": status]
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Run a YTM search and parse the result into shelves. When `params`
+    /// is supplied, YTM filters results to a single category (Songs,
+    /// Albums, Artists, Playlists, Videos). Without it the response
+    /// contains the unfiltered "All" view (Top result + each category
+    /// in order).
+    ///
+    /// `params` tokens are stable but version-fragile filter blobs
+    /// extracted from YTM's own search-filter chip endpoints. The
+    /// values used here are the same ones ytmusicapi ships in its
+    /// `SearchFilter` enum.
+    func search(query: String, filter: SearchFilter = .all) async -> [Shelf] {
         guard let bridge else { return [] }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
+        var body: [String: Any] = ["query": trimmed]
+        if let params = filter.params {
+            body["params"] = params
+        }
         do {
             let data = try await bridge.callYTMAPI(
                 endpoint: "search",
-                body: ["query": trimmed]
+                body: body
             )
             return Innertube.parseSearchResults(from: data)
         } catch {
@@ -416,13 +498,19 @@ final class AppBootstrap {
     }
 
     private func persistIfMeaningful() {
+        // Always persist preferences and sidebar selection — even when no
+        // track is loaded yet. The previous guard `!videoId.isEmpty`
+        // dropped writes for first-launch sessions where the user
+        // toggled a preference before playing anything.
         let state = playerStore.state
-        guard let videoId = state.track?.videoId, !videoId.isEmpty else { return }
+        let videoId = state.track?.videoId ?? ""
         let snapshot = PersistedState(
-            videoId: videoId,
+            videoId: videoId.isEmpty ? nil : videoId,
             positionSecs: state.positionSecs,
             volume: state.volume,
-            sidebarSelection: persistedSidebar
+            sidebarSelection: persistedSidebar,
+            closeToTray: closeToTray,
+            backgroundPlayback: backgroundPlayback
         )
         persistence.saveDebounced(snapshot)
     }

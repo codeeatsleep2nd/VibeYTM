@@ -16,29 +16,51 @@ struct SearchView: View {
     @State private var shelves: [Shelf] = []
     @State private var loading = false
     @State private var debounceTask: Task<Void, Never>?
+    @State private var filter: SearchFilter = .all
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Search artists, songs, albums, playlists", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.title3)
-                    .onSubmit { commit(query) }
-                    .onChange(of: query) { _, newValue in
-                        scheduleDebouncedSearch(for: newValue)
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search artists, songs, albums, playlists", text: $query)
+                        .textFieldStyle(.plain)
+                        .font(.title3)
+                        .onSubmit { commit(query) }
+                        .onChange(of: query) { _, newValue in
+                            scheduleDebouncedSearch(for: newValue)
+                        }
+                    if !query.isEmpty {
+                        Button {
+                            query = ""
+                            shelves = []
+                            lastSubmitted = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
                     }
-                if !query.isEmpty {
-                    Button {
-                        query = ""
-                        shelves = []
-                        lastSubmitted = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
+                }
+
+                // Category filter chips (#18). Hidden until the user
+                // has searched something — empty-state Search shouldn't
+                // display irrelevant filter UI.
+                if !lastSubmitted.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(SearchFilter.allCases) { tab in
+                                FilterChip(
+                                    label: tab.label,
+                                    isSelected: filter == tab
+                                ) {
+                                    filter = tab
+                                    Task { await commit(lastSubmitted, force: true) }
+                                }
+                            }
+                        }
                     }
-                    .buttonStyle(.borderless)
                 }
             }
             .padding(.horizontal, 16)
@@ -110,24 +132,47 @@ struct SearchView: View {
         debounceTask = Task {
             try? await Task.sleep(nanoseconds: 400_000_000)
             if Task.isCancelled { return }
-            await commit(trimmed)
+            await commit(trimmed, force: false)
         }
     }
 
     private func commit(_ query: String) {
-        Task { await commit(query) }
+        Task { await commit(query, force: false) }
     }
 
-    private func commit(_ query: String) async {
+    private func commit(_ query: String, force: Bool = false) async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard trimmed != lastSubmitted else { return }
+        // `force` lets a filter-tab tap re-run the same query under a
+        // different filter; the equality guard would otherwise drop it.
+        if !force && trimmed == lastSubmitted { return }
         lastSubmitted = trimmed
         loading = true
-        let result = await bootstrap.search(query: trimmed)
+        let result = await bootstrap.search(query: trimmed, filter: filter)
         if !Task.isCancelled {
             shelves = result
             loading = false
         }
+    }
+}
+
+private struct FilterChip: View {
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.callout.weight(.medium))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(
+                    isSelected ? Color.accentColor : Color.secondary.opacity(0.15),
+                    in: Capsule()
+                )
+                .foregroundStyle(isSelected ? .white : .primary)
+        }
+        .buttonStyle(.plain)
     }
 }

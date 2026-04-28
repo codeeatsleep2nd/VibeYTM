@@ -18,9 +18,14 @@ The window has `.windowStyle(.hiddenTitleBar)` and a ~12 pt corner radius. Witho
 
 ## Sheets — must dismiss without searching for a button
 
-- [ ] **NowPlayingExpanded** has TWO visible dismiss controls — chevron-down (top-left, with `.keyboardShortcut(.cancelAction)`) and Done (top-right, with `.keyboardShortcut(.defaultAction)`). The original 22 pt corner X glyph against a dark blurred backdrop was effectively invisible and the keyboard shortcut required focus.
+- [ ] **`NowPlayingExpanded` has THREE redundant dismissal paths.** This sheet has been broken twice now where the user couldn't close it; the contract is documented as a doc-comment at the top of `NowPlayingExpanded.swift`. The three paths must each work independently:
+  1. Visible **chevron-down** button (top-leading) bound to `.keyboardShortcut(.cancelAction)` — covers Esc.
+  2. Visible **Done** button (top-trailing) bound to `.keyboardShortcut(.defaultAction)` — covers Return.
+  3. **Tap-on-backdrop** to dismiss — implemented via an outer-layer `.onTapGesture { dismiss() }` on the backdrop ZStack child, with the inner content layer using `.contentShape(Rectangle()).onTapGesture { /* swallow */ }` so taps on buttons / sliders don't bubble up.
+- [ ] **DO NOT attach nested `.sheet(isPresented:)` modifiers to `NowPlayingExpanded`.** When two `.sheet` modifiers share a view, SwiftUI honours only the most recently attached one — and worse, those nested presentations can hijack the parent sheet's keyboard shortcuts, silently breaking Esc / Return dismissal. If you need lyrics or queue access from the expanded view, dismiss this sheet first and re-open from `PlayerChrome`. Use a separate inspector pattern, not nested sheets.
 - [ ] **Lyrics / Queue sheets**: Done button bound to `.keyboardShortcut(.defaultAction)` (Return). macOS sheets dismiss on Escape only when there's a button with `.cancelAction` in scope; we accept Return-only dismissal and ship a clearly-visible Done button.
-- [ ] **NowPlayingExpanded content fits its sheet**: `cover (320) + spacing (36) + text-col min (320) + horizontal padding (36×2)` = 748 pt. Sheet is `minWidth: 800`. Earlier `380 + 48 + 460 + 64×2` demanded 1016 pt and clipped the right edge inside its own 980 pt minWidth.
+- [ ] **`NowPlayingExpanded` content fits its sheet**: `cover (380) + spacing (44) + text-col min (320) + horizontal padding (40×2)` = 824 pt. Sheet is `minWidth: 880`. Earlier `380 + 48 + 460 + 64×2` demanded 1016 pt and clipped the right edge inside its own 980 pt minWidth.
+- [ ] **Avoid `.focusEffectDisabled()` on a sheet that needs keyboard shortcuts.** It's safe on PlayerChrome (no .cancelAction / .defaultAction shortcuts there), but on a sheet with explicit `keyboardShortcut(.cancelAction|.defaultAction)` modifiers it can interfere with the focus chain that those shortcuts traverse. If you need to suppress focus rings on individual buttons, scope `.focusEffectDisabled()` to those buttons specifically.
 
 ## WebKit — the hidden audio engine
 
