@@ -44,22 +44,22 @@ export const AppShell: FC<AppShellProps> = ({
   >
     {/*
       Title bar drag region.
-      `left: var(--sidebar-width)` so the sidebar's x-extent is OUTSIDE
-      the OS-level drag region (issue #92). The collapsible-sidebar
-      toggle (#82) lives at the same vertical row as the macOS traffic-
-      lights but on the right edge of the sidebar; with the previous
-      `left: 0` the OS treated every click there as a window-drag
-      gesture, so the button was unreachable. Carving out the sidebar
-      keeps drag-from-titlebar working everywhere except over the
-      sidebar — the traffic-lights themselves are managed by macOS
-      and unaffected by this CSS region.
+      `left: var(--sidebar-expanded-width)` (a constant 240 px,
+      decoupled from the dynamic `--sidebar-width`) so the collapse
+      toggle stays click-reachable in BOTH states (#92 / #92-followup):
+      - Expanded: sidebar fills 240 px on the left; drag region starts
+        right of it. Toggle (~x=210) sits in the sidebar, click works.
+      - Collapsed: sidebar is 0 wide but the drag region still starts
+        at 240; the strip from 0 to 240 is unmanaged at the OS level
+        so the toggle can claim it. macOS traffic-lights are unaffected
+        since they're system-managed, not CSS-region-based.
     */}
     <div
       data-tauri-drag-region
       style={{
         position: 'fixed',
         top: 0,
-        left: 'var(--sidebar-width)',
+        left: 'var(--sidebar-expanded-width)',
         right: 0,
         height: 'var(--title-bar-height)',
         zIndex: 200,

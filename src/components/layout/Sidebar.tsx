@@ -298,7 +298,12 @@ const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
     style={{
       position: 'fixed',
       top: 'calc((var(--title-bar-height) - 22px) / 2)',
-      left: 'calc(var(--sidebar-width) - 22px - var(--space-2))',
+      // Stays anchored to the EXPANDED sidebar's right edge (#92
+      // follow-up): the user wants the button to remain at its
+      // original position after click, while the rest of the sidebar
+      // hides. `--sidebar-expanded-width` is a constant 240 px from
+      // tokens.css; `--sidebar-width` is what changes during collapse.
+      left: 'calc(var(--sidebar-expanded-width) - 22px - var(--space-2))',
       width: '22px',
       height: '22px',
       display: 'flex',
@@ -311,7 +316,7 @@ const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
       color: 'var(--color-text-tertiary)',
       cursor: 'pointer',
       transition:
-        'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), left var(--duration-normal) var(--ease-out)',
+        'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)',
       zIndex: 201,
       // @ts-expect-error -- non-standard WebKit property, opts the
       // button OUT of Tauri's window-drag region so clicks land here

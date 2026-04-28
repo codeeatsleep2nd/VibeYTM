@@ -10,7 +10,13 @@ import { useCallback, useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'vibeytm:sidebar-collapsed';
 const EXPANDED_WIDTH = '240px';
-const COLLAPSED_WIDTH = '64px';
+// Hide the entire sidebar (including its nav buttons) when collapsed —
+// the toggle button itself stays at its original viewport position
+// because it reads from `--sidebar-expanded-width` (a constant), not
+// `--sidebar-width` (which collapses to 0). User behaviour: click to
+// hide → main content fills the gained space; click again to bring
+// the sidebar back. Matches the user's #92 follow-up request.
+const COLLAPSED_WIDTH = '0px';
 
 function readPersisted(): boolean {
   try {

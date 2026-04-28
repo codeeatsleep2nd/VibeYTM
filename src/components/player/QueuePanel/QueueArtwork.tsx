@@ -4,6 +4,7 @@ import { CachedImage } from '../../CachedImage';
 import type { TrackInfo } from '../../../lib/types';
 import { usePlayerState } from '../../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../../hooks/useAudioCounterpartArtwork';
+import { BRIDGE_SETTLE_MS } from '../../../hooks/useBridgeSafeFetch';
 import { lookupShowCover } from '../../../lib/showCoverRegistry';
 import { isAlbumArtUrl } from '../../../lib/artwork';
 import { artworkChain } from './artwork';
@@ -56,11 +57,23 @@ export const QueueArtwork: FC<QueueArtworkProps> = ({ track, liveTrack }) => {
   // it via `useAudioCounterpartArtwork`. The hook is module-cached and
   // de-duped across rows, so opening the queue produces at most one
   // IPC per upcoming videoId we haven't seen, and zero on subsequent
-  // re-mounts. We only inject the result when it's a real album-art
-  // URL — defensive against the hook returning the bridge fallback
-  // unchanged.
+  // re-mounts.
+  //
+  // Settle gating (#96 follow-up): the hook itself doesn't respect the
+  // CLAUDE.md "background fetches need ~1.5-2 s after track-change"
+  // rule. With a 10-row queue, opening the panel during a track change
+  // would fan out 10 simultaneous getAudioCounterpartArtwork IPCs and
+  // starve user-driven IPCs (get_playlist, search). We delay the hook
+  // mount by `BRIDGE_SETTLE_MS` so the fan-out only fires once the
+  // bridge has settled.
+  const [readyForCounterpart, setReadyForCounterpart] = useState(false);
+  useEffect(() => {
+    setReadyForCounterpart(false);
+    const t = setTimeout(() => setReadyForCounterpart(true), BRIDGE_SETTLE_MS);
+    return () => clearTimeout(t);
+  }, [sourceTrack.videoId]);
   const counterpart = useAudioCounterpartArtwork(
-    sourceTrack.videoId,
+    readyForCounterpart ? sourceTrack.videoId : undefined,
     sourceTrack.artworkUrl,
   );
   const counterpartChain =
