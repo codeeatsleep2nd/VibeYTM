@@ -553,6 +553,13 @@ impl YtmApi {
         };
 
         let browse_body = serde_json::json!({ "browseId": browse_id }).to_string();
+        // NOTE: a `?` exit here (HTTP error or parse failure) drops
+        // `externals_pre` without calling `handle.abort()`. JoinHandle
+        // does NOT cancel on drop, so the spawned race keeps running
+        // until both fetches complete or timeout. Acceptable because
+        // the task is bounded by reqwest's per-source timeouts and
+        // does no work beyond the in-flight connections; not worth a
+        // failure-path branch to abort here.
         let browse_raw = ytm_api_call(app, "browse", &browse_body)
             .await
             .map_err(anyhow::Error::msg)?;
@@ -602,6 +609,16 @@ impl YtmApi {
         let has_plain_text = !lyrics.text.trim().is_empty();
         let title_for_check = effective_title.as_deref().unwrap_or("");
         if !has_plain_text && looks_like_instrumental(title_for_check) {
+            // Abort the spawned external race — same reasoning as the
+            // YTM-synced fast path above. JoinHandle::abort() does not
+            // wait; in-flight HTTP futures are dropped at the next
+            // scheduler tick. Without this, LRCLIB and NetEase still
+            // ran to completion in the background for instrumental
+            // tracks where we already decided their result wouldn't
+            // be used.
+            if let Some(handle) = externals_pre {
+                handle.abort();
+            }
             tracing::info!(
                 video_id,
                 title = %title_for_check,
