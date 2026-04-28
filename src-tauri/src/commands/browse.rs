@@ -150,6 +150,29 @@ pub async fn get_playlist(
     Ok(result)
 }
 
+/// Issue #79 — fetch artist channel detail (bio + avatar) so the
+/// ArtistPage can render an introduction below the title plate. The
+/// FE first finds the artist's `channelId` via the existing search
+/// endpoint, then calls this to pull the description.
+#[tauri::command]
+pub async fn get_artist(
+    channel_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<ArtistDetail, String> {
+    tracing::info!(channel_id = %channel_id, "browse::get_artist called");
+    let result = api.get_artist(&app, &channel_id).await.map_err(|e| {
+        tracing::error!(error = %e, "browse::get_artist failed");
+        e.to_string()
+    })?;
+    tracing::info!(
+        channel_id = %channel_id,
+        has_description = !result.description.is_empty(),
+        "browse::get_artist done"
+    );
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn get_library_playlists(
     app: AppHandle,

@@ -52,6 +52,16 @@ export interface ArtistSummary {
   subscriberCount?: string;
 }
 
+/** Artist channel detail returned by `get_artist` (issue #79).
+ *  `description` may be an empty string when YTM didn't surface a bio
+ *  for the channel. */
+export interface ArtistDetail {
+  channelId: string;
+  name: string;
+  description: string;
+  avatarUrl: string;
+}
+
 export interface PlaylistSummary {
   playlistId: string;
   title: string;

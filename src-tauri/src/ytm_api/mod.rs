@@ -288,6 +288,35 @@ impl YtmApi {
         Ok(parse_library_albums(&data))
     }
 
+    /// Fetch artist channel detail (bio + avatar) via the real YTM API
+    /// for issue #79. `channel_id` is a UC* identifier obtained from a
+    /// search-with-artist-filter response (`SearchResults.artists[].channelId`).
+    /// Returns an `ArtistDetail` with whatever fields the channel surfaces;
+    /// `description` is empty when YTM didn't expose one.
+    ///
+    /// We hit the standard `browse` endpoint with the UC* id directly —
+    /// no `VL` prefix (artist channels are NOT playlists / albums).
+    pub async fn get_artist(
+        &self,
+        app: &AppHandle,
+        channel_id: &str,
+    ) -> anyhow::Result<ArtistDetail> {
+        if channel_id.is_empty() {
+            anyhow::bail!("channel_id is empty");
+        }
+        let body = serde_json::json!({ "browseId": channel_id }).to_string();
+        let raw = ytm_api_call_cached(
+            app,
+            "browse",
+            &body,
+            Some(api_cache::ttl::PLAYLIST),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let data: Value = serde_json::from_str(&raw)?;
+        Ok(parse_artist_detail(&data, channel_id))
+    }
+
     /// Fetch user's library artists via the real YTM API.
     pub async fn get_library_artists(
         &self,
@@ -2571,6 +2600,41 @@ fn parse_album_from_list_item(renderer: &Value) -> Option<AlbumSummary> {
         artwork_url,
         year,
     })
+}
+
+/// Pull an `ArtistDetail` from YTM's artist-channel browse response
+/// (issue #79). YTM exposes the artist bio in two different places
+/// depending on whether the channel has an "About" blurb:
+///
+///   1. `header.musicImmersiveHeaderRenderer.description.runs[].text`
+///      (most music artists with curated channels)
+///   2. `microformat.microformatDataRenderer.description` (string)
+///      (smaller channels — auto-generated metadata)
+///
+/// We try them in order and return the first non-empty result. The
+/// avatar / banner image is best-effort from the same header.
+fn parse_artist_detail(data: &Value, channel_id: &str) -> ArtistDetail {
+    let header = &data["header"]["musicImmersiveHeaderRenderer"];
+
+    let name = runs_text(&header["title"]["runs"]);
+
+    // Bio — try the immersive-header description first.
+    let mut description = runs_text(&header["description"]["runs"]);
+    if description.trim().is_empty() {
+        // Fall back to the microformat description (raw string).
+        if let Some(s) = data["microformat"]["microformatDataRenderer"]["description"].as_str() {
+            description = s.to_string();
+        }
+    }
+
+    let avatar_url = best_thumbnail(&header["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"]);
+
+    ArtistDetail {
+        channel_id: channel_id.to_string(),
+        name,
+        description,
+        avatar_url,
+    }
 }
 
 /// Parse an artist from a `musicResponsiveListItemRenderer` in filtered search results.
@@ -4992,5 +5056,70 @@ mod tests {
     fn title_matches_rejects_empty_either_side() {
         assert!(!super::title_matches("", "APT."));
         assert!(!super::title_matches("Apt", ""));
+    }
+
+    // ---- parse_artist_detail (issue #79) --------------------------------
+
+    #[test]
+    fn parse_artist_detail_pulls_immersive_header_description() {
+        let data = json!({
+            "header": {
+                "musicImmersiveHeaderRenderer": {
+                    "title": { "runs": [{ "text": "ROSÉ" }] },
+                    "description": {
+                        "runs": [
+                            { "text": "Rosé is a singer-songwriter " },
+                            { "text": "and member of BLACKPINK." }
+                        ]
+                    },
+                    "thumbnail": {
+                        "musicThumbnailRenderer": {
+                            "thumbnail": {
+                                "thumbnails": [
+                                    { "url": "https://example/avatar.jpg" }
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let detail = super::parse_artist_detail(&data, "UC123");
+        assert_eq!(detail.channel_id, "UC123");
+        assert_eq!(detail.name, "ROSÉ");
+        assert_eq!(
+            detail.description,
+            "Rosé is a singer-songwriter and member of BLACKPINK."
+        );
+        assert!(detail.avatar_url.contains("example"));
+    }
+
+    #[test]
+    fn parse_artist_detail_falls_back_to_microformat_description() {
+        // Channels without an immersive-header description still surface
+        // a microformat blurb. Pin the fallback so smaller artists get a
+        // bio rather than a blank section.
+        let data = json!({
+            "header": {
+                "musicImmersiveHeaderRenderer": {
+                    "title": { "runs": [{ "text": "Indie Artist" }] }
+                }
+            },
+            "microformat": {
+                "microformatDataRenderer": {
+                    "description": "Auto-generated bio from microformat."
+                }
+            }
+        });
+        let detail = super::parse_artist_detail(&data, "UC456");
+        assert_eq!(detail.description, "Auto-generated bio from microformat.");
+    }
+
+    #[test]
+    fn parse_artist_detail_returns_empty_description_when_none_present() {
+        let data = json!({ "header": { "musicImmersiveHeaderRenderer": {} } });
+        let detail = super::parse_artist_detail(&data, "UC789");
+        assert_eq!(detail.description, "");
+        assert_eq!(detail.channel_id, "UC789");
     }
 }

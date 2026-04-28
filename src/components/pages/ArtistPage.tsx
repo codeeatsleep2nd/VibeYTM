@@ -25,8 +25,12 @@ interface ArtistPageProps {
 // SearchPage's constants.
 const SEARCH_FILTER_SONGS = 'EgWKAQIIAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 const SEARCH_FILTER_ALBUMS = 'EgWKAQIYAWoSEA4QCRAKEAUQBBADEBUQEBAR';
+const SEARCH_FILTER_ARTISTS = 'EgWKAQIgAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 
 const TOP_SONGS_DISPLAY_LIMIT = 8;
+// Bio fetch failures (no channelId, empty description, network error)
+// are silently downgraded to "no bio shown" — the existing songs/albums
+// shelves still render. We never surface a bio-specific error toast.
 
 /**
  * Artist landing page — name, top songs, top albums. Replaces the
@@ -52,6 +56,7 @@ export const ArtistPage: FC<ArtistPageProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [songs, setSongs] = useState<TrackInfo[]>([]);
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
+  const [bio, setBio] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -60,6 +65,7 @@ export const ArtistPage: FC<ArtistPageProps> = ({
     setError(null);
     setSongs([]);
     setAlbums([]);
+    setBio('');
 
     const songsPromise: Promise<SearchResults> = browseApi.search(
       artistName,
@@ -69,9 +75,32 @@ export const ArtistPage: FC<ArtistPageProps> = ({
       artistName,
       SEARCH_FILTER_ALBUMS,
     );
+    // Issue #79: pull the artist channelId from a parallel artist-search,
+    // then fetch the channel's bio. Runs alongside songs/albums so it
+    // doesn't lengthen the page's overall load. Failure is silent — the
+    // shelves still render even if the bio call errors.
+    const bioPromise: Promise<string> = browseApi
+      .search(artistName, SEARCH_FILTER_ARTISTS)
+      .then((res) => {
+        const match = res.artists.find((a) =>
+          matchesArtist(a.name, artistName),
+        );
+        if (!match?.channelId) return '';
+        return browseApi
+          .getArtist(match.channelId)
+          .then((d) => d.description.trim())
+          .catch((e) => {
+            debug.error('ArtistPage', 'getArtist failed', e);
+            return '';
+          });
+      })
+      .catch((e) => {
+        debug.error('ArtistPage', 'artist-search for bio failed', e);
+        return '';
+      });
 
-    Promise.all([songsPromise, albumsPromise])
-      .then(([songsRes, albumsRes]) => {
+    Promise.all([songsPromise, albumsPromise, bioPromise])
+      .then(([songsRes, albumsRes, bioText]) => {
         if (cancelled) return;
         const matchedSongs = songsRes.songs.filter((t) =>
           matchesArtist(t.artist, artistName),
@@ -79,6 +108,7 @@ export const ArtistPage: FC<ArtistPageProps> = ({
         rememberTrackArtworks(matchedSongs);
         setSongs(matchedSongs.slice(0, TOP_SONGS_DISPLAY_LIMIT));
         setAlbums(albumsRes.albums.filter((a) => matchesArtist(a.artist, artistName)));
+        setBio(bioText);
         setIsLoading(false);
       })
       .catch((e) => {
@@ -230,6 +260,10 @@ export const ArtistPage: FC<ArtistPageProps> = ({
         </p>
       )}
 
+      {!isLoading && bio.length > 0 && (
+        <ArtistBio text={bio} />
+      )}
+
       {!isLoading && songs.length > 0 && (
         <section>
           <h2
@@ -292,6 +326,64 @@ export const ArtistPage: FC<ArtistPageProps> = ({
         </section>
       )}
       </div>
+    </section>
+  );
+};
+
+/**
+ * Bio block — sits between the hero and the Top Songs shelf.
+ * YTM artist descriptions are often long (sometimes 1000+ chars); we
+ * collapse to ~300 chars by default and reveal the full text behind a
+ * "Show more / Show less" toggle so the page doesn't push everything
+ * else below the fold.
+ */
+const BIO_PREVIEW_CHARS = 300;
+
+const ArtistBio: FC<{ text: string }> = ({ text }) => {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > BIO_PREVIEW_CHARS;
+  const visible =
+    !isLong || expanded ? text : text.slice(0, BIO_PREVIEW_CHARS).trimEnd() + '…';
+  return (
+    <section>
+      <h2
+        style={{
+          fontSize: 'var(--text-lg)',
+          margin: '0 0 var(--space-3) 0',
+          color: 'var(--color-text-primary)',
+        }}
+      >
+        About
+      </h2>
+      <p
+        style={{
+          margin: 0,
+          fontSize: 'var(--text-sm)',
+          lineHeight: 1.6,
+          color: 'var(--color-text-secondary)',
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {visible}
+      </p>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          style={{
+            marginTop: 'var(--space-2)',
+            background: 'transparent',
+            border: 'none',
+            padding: 0,
+            fontSize: 'var(--text-sm)',
+            fontWeight: 500,
+            color: 'var(--color-accent)',
+            cursor: 'pointer',
+          }}
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
     </section>
   );
 };
