@@ -124,10 +124,13 @@ describe('ytm-player-bridge: volume seed-then-persist contract', () => {
     expect(window.__VIBEYTM_DESIRED_VOLUME_PCT__).toBe(43);
   });
 
-  it('ignores a non-numeric stored value', () => {
+  it('falls back to the 50%% default when the stored value is non-numeric (issue #69 follow-up)', () => {
+    // A corrupted localStorage entry must not leave the volume lock
+    // un-seeded — that path was the original burst regression. The
+    // 50%% default is applied for both first-launch and corruption.
     localStorage.setItem('__VIBEYTM_VOLUME_PCT__', 'not-a-number');
     evalBridge();
-    expect(window.__VIBEYTM_DESIRED_VOLUME_PCT__).toBeUndefined();
+    expect(window.__VIBEYTM_DESIRED_VOLUME_PCT__).toBe(50);
   });
 
   it('preserves the bridge file structure (locking the seed-then-persist contract by source pattern)', () => {

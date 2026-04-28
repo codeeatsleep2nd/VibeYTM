@@ -153,6 +153,14 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
   useEffect(() => {
     staleQueueFpRef.current = liveQueue.map((t) => t.videoId).join('|');
     setFrozenQueue([]);
+    // Issue #68 follow-up — flush the upcoming-rows artwork overrides
+    // on a genuine playlist switch. We deliberately KEEP overrides on
+    // a same-playlist track-change (so the user doesn't see a brief
+    // placeholder window between BRIDGE_SETTLE_MS + the in-flight
+    // /next), but on a playlist change the previous overrides are
+    // wrong-track artwork pinned to a row's videoId — visually
+    // misleading until the new fetch lands.
+    setFetchedUpcoming([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePlaylist]);
 
