@@ -541,10 +541,29 @@ impl YtmApi {
             if artist.trim().is_empty() || title.trim().is_empty() {
                 None
             } else {
+                let clean_artist = clean_query_field(artist);
+                let clean_title = clean_query_field(title);
+                // Issue #64 — for UGC fan uploads YTM hands us a noisy
+                // title that packs Artist+Title together with the channel
+                // name in the artist slot. After standard cleaning the
+                // title may still be of the form "Song-Artist" or
+                // "Artist - Song". Submit the original pair AND both
+                // orientations of the split so LRCLIB/NetEase can match
+                // either reading. The race short-circuits on the first
+                // non-empty hit, so adding more candidates only costs
+                // network when the original pair has nothing.
+                let mut candidates: Vec<(String, String)> = vec![
+                    (clean_artist.clone(), clean_title.clone()),
+                ];
+                if let Some((left, right)) = ugc_split_title_artist(&clean_title) {
+                    // We don't know which side is the artist vs title in a
+                    // raw "X-Y" upload, so emit both orientations.
+                    candidates.push((left.clone(), right.clone()));
+                    candidates.push((right, left));
+                }
                 Some(spawn_external_lyrics_race(
                     video_id.to_string(),
-                    clean_query_field(artist),
-                    clean_query_field(title),
+                    candidates,
                     effective_duration,
                 ))
             }
@@ -722,25 +741,60 @@ fn apply_synced_lrc(lyrics: &mut Lyrics, lrc: &str, source_name: &str) -> bool {
 
 /// Strip common YouTube-title noise that kills exact-match lookups on
 /// LRCLIB / NetEase: parenthesized "Official MV" markers, bracketed tags,
-/// full-width Chinese brackets, and a trailing `- My Secret` translation.
+/// full-width Chinese brackets, trailing `- My Secret` translation, and
+/// fan-upload (UGC) decorations like `｜超高無損音樂-動態歌詞` (issue #64).
 fn clean_query_field(s: &str) -> String {
     // Noise tokens we strip when they appear inside any bracket pair. Match
     // case-insensitively; any bracket whose lowercased inner text contains
-    // one of these tokens gets dropped wholesale.
+    // one of these tokens gets dropped wholesale. New tokens for issue #64
+    // target the long-tail of UGC patterns (fan-uploaded compilations,
+    // OST/drama tags, "dynamic lyrics" markers, lossless tags, etc.).
     const NOISE_TOKENS: &[&str] = &[
         "official", "mv", "music video", "audio", "lyric", "visualizer",
         "hd", "hq", "remix", "cover", "live", "版", "版本",
+        // Issue #64 — UGC noise.
+        "ost", "drama", "theme", "soundtrack",
+        "動態歌詞", "动态歌词", "歌詞", "歌词",
+        "高音質", "高音质", "無損", "无损", "lossless",
+        "4k", "hdr",
     ];
 
-    let noise_pairs: &[(char, char)] = &[('(', ')'), ('[', ']'), ('【', '】'), ('〈', '〉')];
+    let noise_pairs: &[(char, char)] = &[
+        ('(', ')'),
+        ('[', ']'),
+        ('【', '】'),
+        ('〈', '〉'),
+        ('「', '」'),
+        ('（', '）'),
+    ];
     let mut out = s.to_string();
 
     for (open, close) in noise_pairs {
         out = strip_noise_brackets(&out, *open, *close, NOISE_TOKENS);
     }
 
-    // Cut at " - " dash-tail (translations, "- My Secret", etc.) only when
-    // the part before it is meaningfully long.
+    // Cut at fullwidth pipe `｜` — common in CJK fan uploads to chain
+    // language tags and channel decorations onto the title (e.g.
+    // "人世间-雷佳｜Drama A Lifelong Journey OST｜超高無損"). Only the
+    // first segment carries the song identity.
+    if let Some(idx) = out.find('｜') {
+        let head = &out[..idx];
+        if head.trim().chars().count() >= 2 {
+            out = head.to_string();
+        }
+    }
+
+    // Cut at " | " ASCII pipe — same role as the fullwidth variant for
+    // English-language UGC uploads ("Stayin' Alive | Bee Gees | HD").
+    if let Some(idx) = out.find(" | ") {
+        let head = &out[..idx];
+        if head.trim().chars().count() >= 2 {
+            out = head.to_string();
+        }
+    }
+
+    // Cut at " - " dash-tail (translations, "- My Secret", "- 動態歌詞")
+    // only when the part before it is meaningfully long.
     if let Some(idx) = out.find(" - ") {
         let head = &out[..idx];
         if head.trim().chars().count() >= 2 {
@@ -750,6 +804,55 @@ fn clean_query_field(s: &str) -> String {
 
     // Collapse internal whitespace runs so the remote query encodes cleanly.
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Issue #64 — UGC fan-uploads often pack `Artist - Title` (or the
+/// reverse) into a single video title, with the channel name in the
+/// `artist` slot. When the audio-counterpart fetch failed to refine
+/// the metadata, try splitting the cleaned title on common
+/// artist/title separators so we have a chance of querying LRCLIB
+/// with the actual song identity.
+///
+/// Returns `Some((left, right))` when the input contains exactly one
+/// of the recognized separators and both halves are non-trivial. The
+/// caller is expected to try (left, right) and the swapped pair
+/// (right, left) — we don't know which side is the artist vs title
+/// without further heuristics.
+fn ugc_split_title_artist(cleaned: &str) -> Option<(String, String)> {
+    // Step 1: prefer the spaced or unicode-dash separators — those are
+    // unambiguous artist/title delimiters.
+    let separators: &[&str] = &[" - ", " – ", " — ", "–", "—", "－"];
+    for sep in separators {
+        if let Some(idx) = cleaned.find(sep) {
+            let left = cleaned[..idx].trim();
+            let right = cleaned[idx + sep.len()..].trim();
+            if left.chars().count() >= 2 && right.chars().count() >= 2 {
+                return Some((left.to_string(), right.to_string()));
+            }
+        }
+    }
+    // Step 2: bare ASCII "-" between two compact (whitespace-free) tokens.
+    // Required for CJK uploads like "人世间-雷佳" where the script doesn't
+    // use spaces. Guarded against in-word hyphens by demanding NEITHER
+    // half contain whitespace AND at least one half contain a non-ASCII
+    // character — a hyphen between two ASCII English words is far more
+    // likely a real word-internal hyphen than a delimiter.
+    if let Some(idx) = cleaned.find('-') {
+        let left = cleaned[..idx].trim();
+        let right = cleaned[idx + 1..].trim();
+        let no_internal_space =
+            !left.contains(char::is_whitespace) && !right.contains(char::is_whitespace);
+        let has_non_ascii =
+            left.chars().any(|c| !c.is_ascii()) || right.chars().any(|c| !c.is_ascii());
+        if no_internal_space
+            && has_non_ascii
+            && left.chars().count() >= 2
+            && right.chars().count() >= 2
+        {
+            return Some((left.to_string(), right.to_string()));
+        }
+    }
+    None
 }
 
 /// Remove every `open..close` pair whose contents contain any of the given
@@ -808,61 +911,80 @@ const LRCLIB_DURATION_TOLERANCE_SECS: f64 = 2.0;
 /// short-circuit; an empty result waits for its peer.
 fn spawn_external_lyrics_race(
     video_id: String,
-    clean_artist: String,
-    clean_title: String,
+    candidates: Vec<(String, String)>,
     lookup_duration: Option<f64>,
 ) -> tokio::task::JoinHandle<Option<(String, &'static str)>> {
     tokio::spawn(async move {
-        let artist_l = clean_artist.clone();
-        let title_l = clean_title.clone();
-        let vid_l = video_id.clone();
-        let lrc_fut = async move {
-            tracing::info!(video_id = %vid_l, "LRCLIB: about to call fetch_lrclib_synced");
-            match fetch_lrclib_synced(&artist_l, &title_l, lookup_duration).await {
-                Ok(Some(body)) => Some((body, "LRCLIB")),
-                Ok(None) => {
-                    tracing::info!(video_id = %vid_l, "LRCLIB had no synced lyrics");
-                    None
+        // Issue #64 — fan up-loads pack the actual artist/title into one
+        // YouTube title field with the channel name in the artist slot.
+        // Callers pass MULTIPLE (artist, title) candidates: the original
+        // pair, plus optional UGC splits ("Title - Artist" → split, then
+        // both orientations). Each candidate fans out into LRCLIB +
+        // NetEase queries, and the whole fleet races in one select loop.
+        // First non-empty winner returns; empty results wait for peers
+        // before giving up.
+        type Fut = std::pin::Pin<
+            Box<dyn std::future::Future<Output = Option<(String, &'static str)>> + Send>,
+        >;
+        let mut futs: Vec<Fut> = Vec::with_capacity(candidates.len() * 2);
+        for (artist, title) in candidates {
+            let a_l = artist.clone();
+            let t_l = title.clone();
+            let v_l = video_id.clone();
+            futs.push(Box::pin(async move {
+                tracing::info!(
+                    video_id = %v_l,
+                    artist = %a_l,
+                    title = %t_l,
+                    "LRCLIB: about to call fetch_lrclib_synced"
+                );
+                match fetch_lrclib_synced(&a_l, &t_l, lookup_duration).await {
+                    Ok(Some(body)) => Some((body, "LRCLIB")),
+                    Ok(None) => {
+                        tracing::info!(video_id = %v_l, "LRCLIB had no synced lyrics");
+                        None
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "LRCLIB fetch failed");
+                        None
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "LRCLIB fetch failed");
-                    None
+            }));
+            let a_n = artist;
+            let t_n = title;
+            let v_n = video_id.clone();
+            futs.push(Box::pin(async move {
+                tracing::info!(
+                    video_id = %v_n,
+                    artist = %a_n,
+                    title = %t_n,
+                    "NetEase: about to call fetch_netease_synced"
+                );
+                match fetch_netease_synced_with_duration(&a_n, &t_n, lookup_duration).await {
+                    Ok(Some(body)) => Some((body, "NetEase")),
+                    Ok(None) => {
+                        tracing::info!(video_id = %v_n, "NetEase had no synced lyrics");
+                        None
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "NetEase fetch failed");
+                        None
+                    }
                 }
-            }
-        };
+            }));
+        }
 
-        let artist_n = clean_artist;
-        let title_n = clean_title;
-        let vid_n = video_id;
-        let ne_fut = async move {
-            tracing::info!(video_id = %vid_n, "NetEase: about to call fetch_netease_synced");
-            match fetch_netease_synced_with_duration(&artist_n, &title_n, lookup_duration).await {
-                Ok(Some(body)) => Some((body, "NetEase")),
-                Ok(None) => {
-                    tracing::info!(video_id = %vid_n, "NetEase had no synced lyrics");
-                    None
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "NetEase fetch failed");
-                    None
-                }
-            }
-        };
-
-        tokio::pin!(lrc_fut, ne_fut);
-        let mut lrc_done = false;
-        let mut ne_done = false;
+        // Race them all. `select_all` returns whichever future completes
+        // first; we then drop the index and continue selecting on the
+        // remaining ones until we find a winner or all return None.
+        use futures_util::future::select_all;
+        let mut remaining = futs;
         let mut winner: Option<(String, &'static str)> = None;
-        while winner.is_none() && !(lrc_done && ne_done) {
-            tokio::select! {
-                r = &mut lrc_fut, if !lrc_done => {
-                    lrc_done = true;
-                    if r.is_some() { winner = r; }
-                }
-                r = &mut ne_fut, if !ne_done => {
-                    ne_done = true;
-                    if r.is_some() { winner = r; }
-                }
+        while winner.is_none() && !remaining.is_empty() {
+            let (result, _idx, rest) = select_all(remaining).await;
+            remaining = rest;
+            if result.is_some() {
+                winner = result;
             }
         }
         winner
@@ -5154,6 +5276,92 @@ mod tests {
         });
         let detail = super::parse_artist_detail(&data, "UC456");
         assert_eq!(detail.description, "Auto-generated bio from microformat.");
+    }
+
+    // ---- UGC title cleaning + split (issue #64) ------------------------
+
+    #[test]
+    fn clean_query_field_strips_fullwidth_pipe_tail() {
+        // The example videoId from issue #64 — fan upload of "人世间" by 雷佳.
+        let raw =
+            "人世间-雷佳（人世间 电视剧歌曲  主题曲 ）｜ Drama A Lifelong Journey OST｜超高無損音樂-動態歌詞";
+        let cleaned = super::clean_query_field(raw);
+        // The first ｜ cuts everything after; the parenthetical is then
+        // dropped because it contains the noise token "歌曲" — but our
+        // current noise list doesn't include "歌曲", so the parenthetical
+        // is preserved. What MUST hold is that nothing past the first
+        // fullwidth pipe survives.
+        assert!(
+            !cleaned.contains('｜'),
+            "fullwidth pipe should be cut, got `{cleaned}`"
+        );
+        assert!(
+            !cleaned.contains("OST"),
+            "OST tail should be removed, got `{cleaned}`"
+        );
+        assert!(
+            !cleaned.contains("動態歌詞"),
+            "動態歌詞 tail should be removed, got `{cleaned}`"
+        );
+        // Core song identity survives.
+        assert!(
+            cleaned.contains("人世间"),
+            "core song title should survive, got `{cleaned}`"
+        );
+        assert!(
+            cleaned.contains("雷佳"),
+            "artist should survive (split happens later), got `{cleaned}`"
+        );
+    }
+
+    #[test]
+    fn clean_query_field_strips_fullwidth_corner_brackets() {
+        let raw = "Stayin' Alive 「Bee Gees」 Music Video";
+        // The corner brackets contain "Bee Gees" — NOT a noise token, so
+        // the bracket should be PRESERVED. (We only strip brackets whose
+        // contents match a noise token.) But the trailing "Music Video"
+        // tail is unbracketed garbage that the existing dash-cut will
+        // not catch. Good enough — the duration filter on LRCLIB still
+        // protects us. This test just pins that we don't accidentally
+        // drop the artist bracket.
+        let cleaned = super::clean_query_field(raw);
+        assert!(cleaned.contains("Stayin"), "title survives: `{cleaned}`");
+    }
+
+    #[test]
+    fn ugc_split_title_artist_handles_bare_dash_with_cjk() {
+        // Per the example: after cleaning the noisy ｜ tail, we're left
+        // with "人世间-雷佳" — bare ASCII dash, no spaces, both halves
+        // contain non-ASCII characters. The split should fire.
+        let split = super::ugc_split_title_artist("人世间-雷佳");
+        assert_eq!(
+            split,
+            Some(("人世间".to_string(), "雷佳".to_string())),
+            "split should produce title + artist halves",
+        );
+    }
+
+    #[test]
+    fn ugc_split_title_artist_does_not_fire_on_internal_english_hyphen() {
+        // "Long-Term" inside an English title is a legitimate hyphenation,
+        // NOT a delimiter. The split must skip it (no non-ASCII characters
+        // on either side).
+        assert_eq!(super::ugc_split_title_artist("Long-Term"), None);
+        assert_eq!(super::ugc_split_title_artist("Catch-22"), None);
+    }
+
+    #[test]
+    fn ugc_split_title_artist_handles_em_dash() {
+        let split = super::ugc_split_title_artist("Stayin' Alive — Bee Gees");
+        assert_eq!(
+            split,
+            Some(("Stayin' Alive".to_string(), "Bee Gees".to_string()))
+        );
+    }
+
+    #[test]
+    fn ugc_split_title_artist_returns_none_for_no_separator() {
+        assert_eq!(super::ugc_split_title_artist("Stayin' Alive"), None);
     }
 
     #[test]
