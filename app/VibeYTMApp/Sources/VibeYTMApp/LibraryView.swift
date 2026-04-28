@@ -12,7 +12,8 @@ struct RecentlyPlayedView: View {
             emptyStateIcon: "clock",
             emptyStateTitle: "Nothing recent",
             emptyStateBody: "Listen to something — your history will show up here.",
-            loadingLabel: "Loading recently played…",
+            loadingLabel: "Loading history…",
+            cacheKey: "library_history",
             fetch: bootstrap.getRecentlyPlayedShelves
         )
     }
@@ -26,6 +27,7 @@ struct LibraryArtistsView: View {
             emptyStateTitle: "No artists in library",
             emptyStateBody: "Subscribe to an artist on YouTube Music — they'll appear here.",
             loadingLabel: "Loading artists…",
+            cacheKey: "library_artists",
             fetch: bootstrap.getLibraryArtistsShelves
         )
     }
@@ -39,6 +41,7 @@ struct LibraryAlbumsView: View {
             emptyStateTitle: "No albums in library",
             emptyStateBody: "Add an album to your library on YouTube Music — it'll appear here.",
             loadingLabel: "Loading albums…",
+            cacheKey: "library_albums",
             fetch: bootstrap.getLibraryAlbumsShelves
         )
     }
@@ -52,6 +55,7 @@ struct LibrarySongsView: View {
             emptyStateTitle: "No liked songs",
             emptyStateBody: "Like a song on YouTube Music — it'll appear here.",
             loadingLabel: "Loading songs…",
+            cacheKey: "library_songs",
             fetch: bootstrap.getLibrarySongsShelves
         )
     }
@@ -65,6 +69,7 @@ struct AllPlaylistsView: View {
             emptyStateTitle: "No playlists yet",
             emptyStateBody: "Save a playlist on YouTube Music — it'll appear here.",
             loadingLabel: "Loading playlists…",
+            cacheKey: "library_playlists",
             fetch: bootstrap.getLibraryPlaylistsShelves
         )
     }

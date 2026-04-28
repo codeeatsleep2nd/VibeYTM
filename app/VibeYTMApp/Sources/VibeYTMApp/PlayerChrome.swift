@@ -126,6 +126,15 @@ private struct PositionScrubber: View {
                 onEditingChanged: { editing in
                     if !editing, let target = draggingValue {
                         bootstrap.seek(secs: target)
+                        // #28 — clicking the progress bar while paused
+                        // should resume playback from the new position.
+                        // Users expect "drag the scrubber" to act as
+                        // both a seek AND an implicit play. Without
+                        // this, the cursor jumps but the track stays
+                        // paused at 0:00.
+                        if state.status != .playing {
+                            bootstrap.play()
+                        }
                         draggingValue = nil
                     }
                 }

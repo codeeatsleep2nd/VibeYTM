@@ -6,6 +6,7 @@ import YTMBridge
 @main
 struct VibeYTMApp: App {
     @State private var bootstrap = AppBootstrap()
+    @NSApplicationDelegateAdaptor(VibeYTMAppDelegate.self) private var appDelegate
 
     init() {
         // Without a real .app bundle, the OS treats `swift run` binaries
@@ -31,6 +32,23 @@ struct VibeYTMApp: App {
                 }
         }
         .windowStyle(.hiddenTitleBar)
+        // App-scoped keyboard shortcuts (#17). Global system-wide
+        // shortcuts that work even when the app is in the background
+        // would need accessibility permission + an NSEvent.global
+        // monitor — we'll add those in a follow-up. App-scoped
+        // (Cmd+Shift+Space, Cmd+Opt+Right, Cmd+Opt+Left) cover the
+        // common case while VibeYTM is the active app.
+        .commands {
+            CommandGroup(after: .newItem) {
+                Divider()
+                Button("Play / Pause") { bootstrap.togglePlay() }
+                    .keyboardShortcut(.space, modifiers: [.command, .shift])
+                Button("Next Track") { bootstrap.next() }
+                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                Button("Previous Track") { bootstrap.previous() }
+                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+            }
+        }
     }
 }
 
