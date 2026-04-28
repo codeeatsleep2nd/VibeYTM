@@ -3,6 +3,8 @@ import type { TrackInfo } from '../../lib/types';
 import { playerApi } from '../../lib/ipc';
 import { CachedImage } from '../CachedImage';
 import { MarqueeText } from '../MarqueeText';
+import { ContextMenuTarget } from '../contextMenu/ContextMenu';
+import { buildTrackContextMenu } from '../contextMenu/trackActions';
 
 interface SongRowProps {
   track: TrackInfo;
@@ -29,6 +31,7 @@ export const SongRow: FC<SongRowProps> = ({ track, index, onClick, playlistId })
   };
 
   return (
+    <ContextMenuTarget buildSections={() => buildTrackContextMenu({ track })}>
     <button
       onClick={handleClick}
       onMouseEnter={() => setIsHovered(true)}
@@ -38,7 +41,12 @@ export const SongRow: FC<SongRowProps> = ({ track, index, onClick, playlistId })
         alignItems: 'center',
         gap: 'var(--space-3)',
         width: '100%',
-        padding: 'var(--space-2) var(--space-3)',
+        // No paddingLeft — list rows align their content with the
+        // parent container's content edge (matching the leftmost
+        // visual element of the page, e.g., a hero cover image).
+        // paddingRight stays so the duration column doesn't crowd
+        // the row's right edge.
+        padding: 'var(--space-2) var(--space-3) var(--space-2) 0',
         background: isHovered ? 'var(--color-surface-2)' : 'transparent',
         border: 'none',
         borderRadius: 'var(--radius-md)',
@@ -121,5 +129,6 @@ export const SongRow: FC<SongRowProps> = ({ track, index, onClick, playlistId })
         </span>
       )}
     </button>
+    </ContextMenuTarget>
   );
 };

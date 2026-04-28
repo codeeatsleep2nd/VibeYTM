@@ -8,6 +8,7 @@ import {
   ExploreIcon,
   HomeIcon,
   PlaylistsIcon,
+  PodcastsIcon,
   SearchIcon,
   SettingsIcon,
   SongsIcon,
@@ -31,6 +32,11 @@ const NavItem: FC<NavItemProps> = ({ label, icon, isActive, onClick }) => (
     onClick={onClick}
     aria-current={isActive ? 'page' : undefined}
     style={{
+      // `position: relative` so the absolutely-positioned active
+      // accent bar (the <span> below) anchors to the row, not the
+      // viewport. The bar has `pointer-events: none` so it never
+      // intercepts clicks meant for the button itself.
+      position: 'relative',
       display: 'flex',
       alignItems: 'center',
       gap: 'var(--space-3)',
@@ -38,7 +44,12 @@ const NavItem: FC<NavItemProps> = ({ label, icon, isActive, onClick }) => (
       padding: 'var(--space-2) var(--space-3)',
       border: 'none',
       borderRadius: 'var(--radius-md)',
-      background: isActive ? 'oklch(62% 0.24 25 / 0.12)' : 'transparent',
+      // Selection style unified across the app: same white-wash glass
+      // tint used by the QueuePanel highlighted row
+      // (`QueueRow.tsx` baseStyle.background). Replaces the previous
+      // accent-tinted red so every "selected" surface in the UI reads
+      // the same visual weight against the liquid-glass plates.
+      background: isActive ? 'oklch(100% 0 0 / 0.10)' : 'transparent',
       color: isActive
         ? 'var(--color-accent)'
         : 'var(--color-text-secondary)',
@@ -64,6 +75,26 @@ const NavItem: FC<NavItemProps> = ({ label, icon, isActive, onClick }) => (
       }
     }}
   >
+    {/* Active-row left accent bar — Apple-Music signature. Hidden when
+        inactive but kept mounted so the show/hide is a pure opacity +
+        transform-X transition (compositor-only). */}
+    <span
+      aria-hidden
+      style={{
+        position: 'absolute',
+        left: 4,
+        top: 8,
+        bottom: 8,
+        width: 3,
+        borderRadius: 2,
+        background: 'var(--color-accent)',
+        opacity: isActive ? 1 : 0,
+        transform: isActive ? 'translateX(0)' : 'translateX(-4px)',
+        transition:
+          'opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out)',
+        pointerEvents: 'none',
+      }}
+    />
     <span
       style={{
         display: 'inline-flex',
@@ -96,6 +127,7 @@ const LIBRARY_ITEMS: { path: string; label: string; icon: ReactNode }[] = [
   { path: 'library/songs', label: 'Songs', icon: <SongsIcon size={16} /> },
   { path: 'library/albums', label: 'Albums', icon: <AlbumsIcon size={16} /> },
   { path: 'library/artists', label: 'Artists', icon: <ArtistsIcon size={16} /> },
+  { path: 'library/podcasts', label: 'Podcasts', icon: <PodcastsIcon size={16} /> },
 ];
 
 const SectionLabel: FC<{ children: ReactNode }> = ({ children }) => (
@@ -121,13 +153,15 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
   return (
     <aside
       style={{
+        position: 'relative',
+        zIndex: 50,
         width: 'var(--sidebar-width)',
         height: '100%',
         paddingTop: 'var(--title-bar-height)',
-        background: 'var(--glass-bg)',
-        backdropFilter: `blur(var(--glass-blur))`,
-        WebkitBackdropFilter: `blur(var(--glass-blur))`,
-        borderRight: '1px solid oklch(100% 0 0 / 0.06)',
+        background: 'var(--glass-bg-chrome)',
+        backdropFilter: 'blur(var(--glass-blur))',
+        WebkitBackdropFilter: 'blur(var(--glass-blur))',
+        borderRight: '1px solid var(--glass-rim-mid)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',

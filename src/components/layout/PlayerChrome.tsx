@@ -1,7 +1,12 @@
-import { type FC, type ReactNode, useEffect, useRef } from 'react';
+import { type FC, type ReactNode, useEffect, useRef, useState } from 'react';
+import { LiquidGlass } from '@liquidglass/react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { preloadLyrics } from '../../hooks/useLyrics';
 import { preloadAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import {
+  BRIDGE_SETTLE_MS,
+  useDeferredEffect,
+} from '../../hooks/useBridgeSafeFetch';
 import { isAlbumArtUrl } from '../../lib/artwork';
 import { lookupTrackArtwork } from '../../lib/trackArtworkRegistry';
 import {
@@ -64,6 +69,9 @@ interface ChromeButtonProps {
   children: ReactNode;
   isActive?: boolean;
   size?: number;
+  /** Render greyed-out and ignore clicks. Used by the lyrics button
+   *  when a podcast is playing — there are no lyrics to look up. */
+  disabled?: boolean;
 }
 
 /**
@@ -82,39 +90,47 @@ const ChromeButton: FC<ChromeButtonProps> = ({
   children,
   isActive = false,
   size = 28,
-}) => (
-  <button
-    type="button"
-    onClick={onClick}
-    aria-label={label}
-    aria-pressed={isActive}
-    style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: `${size}px`,
-      height: `${size}px`,
-      padding: 0,
-      background: 'transparent',
-      border: 'none',
-      cursor: 'pointer',
-      color: isActive
-        ? 'var(--color-accent)'
-        : 'var(--color-text-primary)',
-      opacity: isActive ? 1 : 0.92,
-      transition:
-        'color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out)',
-    }}
-    onMouseEnter={(e) => {
-      e.currentTarget.style.opacity = '1';
-    }}
-    onMouseLeave={(e) => {
-      e.currentTarget.style.opacity = isActive ? '1' : '0.92';
-    }}
-  >
-    {children}
-  </button>
-);
+  disabled = false,
+}) => {
+  const restingOpacity = disabled ? 0.35 : isActive ? 1 : 0.92;
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onClick}
+      aria-label={label}
+      aria-pressed={isActive}
+      aria-disabled={disabled}
+      disabled={disabled}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: `${size}px`,
+        height: `${size}px`,
+        padding: 0,
+        background: 'transparent',
+        border: 'none',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        color: isActive
+          ? 'var(--color-accent)'
+          : 'var(--color-text-primary)',
+        opacity: restingOpacity,
+        transition:
+          'color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out)',
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.opacity = '1';
+      }}
+      onMouseLeave={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.opacity = isActive ? '1' : '0.92';
+      }}
+    >
+      {children}
+    </button>
+  );
+};
 
 export const PlayerChrome: FC<PlayerChromeProps> = ({
   onToggleNowPlaying,
@@ -125,35 +141,32 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   queueOpen,
 }) => {
   const state = usePlayerState();
-  const { track, status, volume, isShuffled, repeatMode, applyOptimistic } = state;
+  const { track, status, volume, isShuffled, repeatMode, applyOptimistic, activePlaylistId } = state;
   const isPlaying = status === 'playing';
+  // YTM podcasts/shows ride the same player surface as music, but have
+  // no lyrics to look up — the LRC fetch (LRCLIB / NetEase) is built
+  // around song title + artist, not episode metadata. Detect via the
+  // active playlist context: MPSP* browseIds are show / podcast feeds.
+  const isPodcastContext = (activePlaylistId ?? '').startsWith('MPSP');
 
-  // 2-second-deferred preload of CURRENT track's lyrics + the next
-  // track's lyrics + cover. Copied verbatim from the old PlayerBar —
-  // the deferral is the bridge saturation fix from CLAUDE.md
-  // ("Background fetches need a settle delay after track change").
-  // Cache-first via three tiers:
+  // Background preload of the CURRENT track's lyrics + the next track's
+  // lyrics + cover. Routed through `useDeferredEffect` so the bridge
+  // settles after a track change before any of these IPCs fire (see
+  // CLAUDE.md "Background fetches need a settle delay after track
+  // change"). Cache-first via three tiers:
   //   1. trackArtworkRegistry (populated by playlist visits)
   //   2. track.artworkUrl when it's already album art
   //   3. preloadAudioCounterpartArtwork (Rust /next lookup)
-  // The CURRENT track preload (added here) makes the LRC panel render
-  // instantly when the user opens it later — without it, opening the
-  // panel triggers a fresh fetch on every previously-uncached song.
+  // The CURRENT track preload makes the LRC panel render instantly the
+  // next time the user opens it.
   const currentVideoId = track?.videoId;
   const currentArtist = track?.artist;
   const currentTitle = track?.title;
   const currentDuration = track?.durationSecs;
-  useEffect(() => {
-    if (!currentVideoId) return;
+  useDeferredEffect(
+    () => {
+      if (!currentVideoId) return;
 
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      if (cancelled) return;
-
-      // Background-load lyrics for the CURRENT track so the LRC panel
-      // is warm whenever the user clicks it later. preloadLyrics is a
-      // no-op when the track is already in the hits/misses cache, so
-      // this is free for repeat plays.
       preloadLyrics({
         videoId: currentVideoId,
         artist: currentArtist ?? null,
@@ -191,6 +204,7 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         return;
       }
 
+      let cancelled = false;
       browseApi
         .getUpcomingTracks(currentVideoId, 2)
         .then((tracks) => {
@@ -214,13 +228,13 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         .catch(() => {
           // Best-effort preload; the on-demand fetch path covers misses.
         });
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [currentVideoId, currentArtist, currentTitle, currentDuration]);
+      return () => {
+        cancelled = true;
+      };
+    },
+    [currentVideoId, currentArtist, currentTitle, currentDuration],
+    BRIDGE_SETTLE_MS,
+  );
 
   const handleTogglePlay = () => {
     applyOptimistic({ status: isPlaying ? 'paused' : 'playing' });
@@ -282,6 +296,12 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   // between mute and the user's previous level. Default to 0.5 if the
   // user opened the app already at 0 (so unmute does something visible).
   const lastNonZeroVolumeRef = useRef<number>(volume > 0 ? volume : 0.5);
+  // Volume slider visibility — Apple-Music-style hover reveal. The
+  // slider sits next to the speaker button; both share a wrapper that
+  // toggles `isVolumeHovered` on enter/leave. Width animates from 0
+  // (collapsed) → 55px (expanded) so the slot doesn't visually
+  // jitter the surrounding chrome on toggle.
+  const [isVolumeHovered, setIsVolumeHovered] = useState(false);
   useEffect(() => {
     if (volume > 0) lastNonZeroVolumeRef.current = volume;
   }, [volume]);
@@ -297,21 +317,68 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
 
   return (
     <footer
+      // Positioning wrapper — a fixed strip at the bottom of the
+      // window. The visible glass capsule is the `<LiquidGlass>` child;
+      // matches the floating-pill shape used by every page's top
+      // title plate.
       style={{
         position: 'fixed',
-        bottom: 0,
-        left: 'var(--sidebar-width)',
-        right: 0,
+        bottom: 'var(--space-3)',
+        // Both gutters use `--space-6` (24 px) — same as the page
+        // section's horizontal padding above. Equal visible gap on
+        // both sides of the chrome capsule, window-size-independent.
+        // Bumped from `--space-4` (16 px) so the right gap visually
+        // matches the left despite the window's rounded bottom-right
+        // corner curving inward (the bottom-left is hidden behind
+        // the sidebar so no curve is visible there).
+        left: 'calc(var(--sidebar-width) + var(--space-6))',
+        right: 'var(--space-6)',
+        // Explicit height — `<LiquidGlass>` inside takes 100 % of its
+        // parent. Without this the footer auto-fits and the WebGL/SVG
+        // wrapper collapses, clipping the controls' top edge.
         height: 'var(--player-bar-height)',
-        background: 'var(--color-surface-1)',
-        borderTop: '1px solid oklch(100% 0 0 / 0.06)',
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 var(--space-4)',
-        gap: 'var(--space-3)',
-        zIndex: 100,
+        // Above every overlay surface so the floating capsule is
+        // never occluded — sits below only the title-bar drag region
+        // (z 200, top of window only).
+        zIndex: 150,
       }}
     >
+      <LiquidGlass
+        borderRadius={150}
+        // blur=40 matches the NowPlaying overlay's
+        // `backdrop-filter: blur(40px) saturate(180%)`. The
+        // LiquidGlass component applies blur via its OWN
+        // backdrop-filter on the capsule div (the inner-content
+        // div's own backdrop-filter only filters the LiquidGlass
+        // output, not the page underneath — filters don't chain).
+        blur={40}
+        contrast={1.2}
+        brightness={1.05}
+        saturation={1.8}
+        shadowIntensity={0.25}
+        displacementScale={1}
+        elasticity={1}
+        zIndex={150}
+      ><div
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 var(--space-10)',
+          gap: 'var(--space-3)',
+          // Semi-transparent dark wash + heavy backdrop-filter (same
+          // recipe SafeOverlay uses for the NowPlaying / queue
+          // surfaces) so the chrome's blur character matches the
+          // other glass plates instead of relying only on
+          // LiquidGlass's own filter (which WebKit drops the SVG
+          // displacement portion of).
+          background: 'oklch(20% 0.005 270 / 0.30)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          borderRadius: 'inherit',
+        }}
+      >
       {/* LEFT — transports (Apple Music: flat white glyphs, prev/play/next
           rendered as filled SF-Symbol shapes; shuffle/repeat are smaller
           stroke icons that bracket the row at lower visual weight) */}
@@ -388,6 +455,16 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         }}
       >
         <div
+          // Apple-Music-style volume control: speaker button always
+          // visible, slider hidden by default and revealed on hover
+          // over either the button or the slider's reserved slot. Both
+          // share a wrapper so the slider stays open while the user
+          // moves between button and slider thumb. Width animates so
+          // the chrome doesn't jitter during the reveal.
+          onMouseEnter={() => setIsVolumeHovered(true)}
+          onMouseLeave={() => setIsVolumeHovered(false)}
+          onFocus={() => setIsVolumeHovered(true)}
+          onBlur={() => setIsVolumeHovered(false)}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -438,8 +515,14 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
               );
             }}
             aria-label="Volume"
+            tabIndex={isVolumeHovered ? 0 : -1}
             style={{
-              width: '55px', /* 2/3 of prior 83px */
+              width: isVolumeHovered ? '55px' : '0px',
+              opacity: isVolumeHovered ? 1 : 0,
+              pointerEvents: isVolumeHovered ? 'auto' : 'none',
+              overflow: 'hidden',
+              transition:
+                'width var(--duration-normal) var(--ease-out), opacity var(--duration-normal) var(--ease-out)',
               backgroundImage: `linear-gradient(to right, var(--color-text-secondary) ${
                 volume * 100
               }%, var(--color-surface-3) ${volume * 100}%)`,
@@ -449,9 +532,16 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
 
         {track && (
           <ChromeButton
-            label={lyricsOpen ? 'Hide lyrics' : 'Show lyrics'}
+            label={
+              isPodcastContext
+                ? 'Lyrics unavailable for podcasts'
+                : lyricsOpen
+                  ? 'Hide lyrics'
+                  : 'Show lyrics'
+            }
             onClick={onToggleLyrics}
-            isActive={lyricsOpen}
+            isActive={lyricsOpen && !isPodcastContext}
+            disabled={isPodcastContext}
             size={28}
           >
             <LyricsIcon size={20} />
@@ -467,6 +557,8 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
           <QueueIcon size={20} />
         </ChromeButton>
       </div>
+      </div>
+      </LiquidGlass>
     </footer>
   );
 };

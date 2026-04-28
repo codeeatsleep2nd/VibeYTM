@@ -9,6 +9,11 @@ pub struct SearchResults {
     pub albums: Vec<AlbumSummary>,
     pub artists: Vec<ArtistSummary>,
     pub playlists: Vec<PlaylistSummary>,
+    /// Podcast / show shelves from the search response. Populated only when
+    /// the caller passes the podcasts filter param; absent in the unified
+    /// (no-filter) search view since the user picks the surface explicitly.
+    #[serde(default)]
+    pub podcasts: Vec<PodcastSummary>,
     /// First real album surfaced from an unfiltered search response. Used by
     /// the unified search view to render the "Top result" album hero. None
     /// when no album was found or when the search was filtered.
@@ -44,6 +49,33 @@ pub struct PlaylistSummary {
     pub track_count: Option<u32>,
 }
 
+/// One row in the user's "Subscribed podcasts" library section.
+/// `browse_id` is an MPSP* identifier the existing get_playlist IPC
+/// already routes correctly (the shows-support change taught it to
+/// keep MPSP raw, no VL prefix). Author lands as the secondary text
+/// the user sees under the show title in the card.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PodcastSummary {
+    pub browse_id: String,
+    pub title: String,
+    pub author: String,
+    pub artwork_url: String,
+}
+
+/// Result of `get_podcast_last_episode` — the most recent episode's
+/// publish-age text + a numeric seconds-since-now used purely for
+/// client-side sorting. Returned as a thin envelope so the frontend
+/// can fetch a flock of these in parallel without parsing each show's
+/// full episode list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PodcastLastEpisode {
+    pub display: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secs_ago: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Shelf {
@@ -75,6 +107,19 @@ pub struct PlaylistDetail {
     /// can pick the correct "saved to Albums / Playlists" label (issue #55).
     #[serde(default)]
     pub is_album: bool,
+    /// Release year — extracted from the responsive-header subtitle runs
+    /// (e.g., `Album • Artist • 2023`). Only the trailing 4-digit token is
+    /// kept; absent for entries where YTM didn't include a year (most
+    /// playlists, charts, mood mixes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<String>,
+    /// Artist / creator from the responsive-header subtitle. For albums
+    /// this is the credited artist (frequently absent from per-track
+    /// rows since the album header already carries it). Skipped for
+    /// shows / podcasts and for playlists where the subtitle has no
+    /// artist run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -10,7 +10,8 @@ use tauri::AppHandle;
 use tokio::sync::OnceCell;
 
 use crate::state::player::TrackInfo;
-use crate::webview_bridge::api::ytm_api_call;
+use crate::webview_bridge::api::{ytm_api_call, ytm_api_call_cached};
+use crate::webview_bridge::api_cache;
 
 use self::types::*;
 
@@ -118,7 +119,14 @@ impl YtmApi {
         if let Some(ref params) = filter {
             body["params"] = serde_json::Value::String(params.clone());
         }
-        let raw = ytm_api_call(app, "search", &body.to_string()).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(
+            app,
+            "search",
+            &body.to_string(),
+            Some(api_cache::ttl::SEARCH),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         let results = parse_search_results(&data, filter.as_deref());
         Ok(results)
@@ -127,7 +135,9 @@ impl YtmApi {
     /// Fetch home page shelves with recommended content via the real YTM API.
     pub async fn get_home(&self, app: &AppHandle) -> anyhow::Result<Vec<Shelf>> {
         let body = serde_json::json!({ "browseId": "FEmusic_home" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::HOME))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         let mut shelves = parse_home_shelves(&data);
 
@@ -170,16 +180,21 @@ impl YtmApi {
         app: &AppHandle,
         playlist_id: &str,
     ) -> anyhow::Result<PlaylistDetail> {
-        // Album IDs (MPRE...) must NOT have VL prefix
-        // Playlist IDs (RDCLAK, PL, OLAK, etc.) MUST have VL prefix
-        let browse_id = if playlist_id.starts_with("VL") || playlist_id.starts_with("MPRE") {
+        // Album IDs (MPRE...) and Show / Podcast IDs (MPSPP...) must
+        // NOT have a VL prefix — YTM's `browse` endpoint expects them
+        // raw. Playlist IDs (RDCLAK, PL, OLAK, etc.) MUST have a VL
+        // prefix.
+        let browse_id = if playlist_id.starts_with("VL")
+            || playlist_id.starts_with("MPRE")
+            || playlist_id.starts_with("MPSPP")
+        {
             playlist_id.to_string()
         } else {
             format!("VL{}", playlist_id)
         };
         tracing::info!(original = %playlist_id, browse_id = %browse_id, "get_playlist browse_id");
         let body = serde_json::json!({ "browseId": browse_id }).to_string();
-        let raw = ytm_api_call(app, "browse", &body)
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::PLAYLIST))
             .await
             .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
@@ -189,7 +204,9 @@ impl YtmApi {
     /// Fetch explore page shelves via the real YTM API.
     pub async fn get_explore(&self, app: &AppHandle) -> anyhow::Result<Vec<Shelf>> {
         let body = serde_json::json!({ "browseId": "FEmusic_explore" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::HOME))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         let mut shelves = parse_explore_shelves(&data);
 
@@ -238,7 +255,9 @@ impl YtmApi {
         app: &AppHandle,
     ) -> anyhow::Result<Vec<PlaylistSummary>> {
         let body = serde_json::json!({ "browseId": "FEmusic_liked_playlists" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::LIBRARY))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_playlists(&data))
     }
@@ -249,7 +268,9 @@ impl YtmApi {
         app: &AppHandle,
     ) -> anyhow::Result<Vec<TrackInfo>> {
         let body = serde_json::json!({ "browseId": "FEmusic_liked_videos" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::LIBRARY))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_songs(&data))
     }
@@ -260,7 +281,9 @@ impl YtmApi {
         app: &AppHandle,
     ) -> anyhow::Result<Vec<AlbumSummary>> {
         let body = serde_json::json!({ "browseId": "FEmusic_liked_albums" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::LIBRARY))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_albums(&data))
     }
@@ -271,9 +294,88 @@ impl YtmApi {
         app: &AppHandle,
     ) -> anyhow::Result<Vec<ArtistSummary>> {
         let body = serde_json::json!({ "browseId": "FEmusic_library_corpus_track_artists" }).to_string();
-        let raw = ytm_api_call(app, "browse", &body).await.map_err(anyhow::Error::msg)?;
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::LIBRARY))
+            .await
+            .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_artists(&data))
+    }
+
+    /// Fetch the user's subscribed podcasts. The dedicated podcast
+    /// library endpoint is `FEmusic_library_non_music_audio_list` —
+    /// the same browseId ytmusicapi uses. The library-landing endpoint
+    /// only returns a recent / "Continue listening" subset, so the
+    /// previous wiring was missing the long tail of subscribed shows.
+    /// Each row resolves to a PodcastSummary whose browse_id is an
+    /// MPSPP identifier the existing get_playlist IPC already routes
+    /// correctly. Falls back to library-landing if the dedicated
+    /// endpoint returns an empty / unexpected shape (older YTM accounts).
+    pub async fn get_library_podcasts(
+        &self,
+        app: &AppHandle,
+    ) -> anyhow::Result<Vec<PodcastSummary>> {
+        let dedicated_body = serde_json::json!({
+            "browseId": "FEmusic_library_non_music_audio_list",
+        })
+        .to_string();
+        let raw = ytm_api_call_cached(
+            app,
+            "browse",
+            &dedicated_body,
+            Some(api_cache::ttl::LIBRARY),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let data: Value = serde_json::from_str(&raw)?;
+        let primary = parse_library_podcasts(&data);
+        if !primary.is_empty() {
+            return Ok(primary);
+        }
+
+        // Fallback: older accounts / experiments may not surface the
+        // dedicated endpoint. The landing page still carries the
+        // subscribed-shows shelf, so use that as a backstop.
+        let landing_body = serde_json::json!({
+            "browseId": "FEmusic_library_landing",
+        })
+        .to_string();
+        let raw = ytm_api_call_cached(
+            app,
+            "browse",
+            &landing_body,
+            Some(api_cache::ttl::LIBRARY),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let data: Value = serde_json::from_str(&raw)?;
+        Ok(parse_library_podcasts(&data))
+    }
+
+    /// Lightweight per-show recency probe: hits the show's `browse`
+    /// endpoint and pulls only the first episode's `publishedTimeText`.
+    /// Cached at the API layer so calling it for many shows in
+    /// parallel is a one-shot cost per show, then near-free on
+    /// repeat. Used by the Library Podcasts tab to display a
+    /// "last updated" line and sort subscriptions by recency.
+    pub async fn get_podcast_last_episode(
+        &self,
+        app: &AppHandle,
+        browse_id: &str,
+    ) -> anyhow::Result<Option<PodcastLastEpisode>> {
+        if !browse_id.starts_with("MPSP") {
+            return Ok(None);
+        }
+        let body = serde_json::json!({ "browseId": browse_id }).to_string();
+        let raw = ytm_api_call_cached(app, "browse", &body, Some(api_cache::ttl::PLAYLIST))
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let data: Value = serde_json::from_str(&raw)?;
+        let display = match parse_first_episode_published(&data) {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+        let secs_ago = parse_published_time_secs_ago(&display);
+        Ok(Some(PodcastLastEpisode { display, secs_ago }))
     }
 
     /// Add a playlist to the signed-in user's library ("Saved playlists").
@@ -1099,6 +1201,7 @@ const FILTER_ARTISTS: &str = "EgWKAQIgAWoSEA4QCRAKEAUQBBADEBUQEBAR";
 #[allow(dead_code)]
 const FILTER_VIDEOS: &str = "EgWKAQIQAWoSEA4QCRAKEAUQBBADEBUQEBAR";
 const FILTER_PLAYLISTS: &str = "EgWKAQIoAWoSEA4QCRAKEAUQBBADEBUQEBAR";
+const FILTER_PODCASTS: &str = "EgWKAQJQAWoSEA4QCRAKEAUQBBADEBUQEBAR";
 
 /// Extract autocomplete suggestion strings from a `music/get_search_suggestions`
 /// response. The response wraps each suggestion in a `searchSuggestionRenderer`
@@ -1132,6 +1235,7 @@ fn parse_search_results(data: &Value, filter: Option<&str>) -> SearchResults {
     let mut albums = Vec::new();
     let mut artists = Vec::new();
     let mut playlists = Vec::new();
+    let mut podcasts: Vec<PodcastSummary> = Vec::new();
     let mut top_album: Option<AlbumSummary> = None;
 
     let tabs = &data["contents"]["tabbedSearchResultsRenderer"]["tabs"];
@@ -1140,7 +1244,14 @@ fn parse_search_results(data: &Value, filter: Option<&str>) -> SearchResults {
         .and_then(|t| t["tabRenderer"]["content"]["sectionListRenderer"]["contents"].as_array());
 
     let Some(sections) = sections else {
-        return SearchResults { songs, albums, artists, playlists, top_album };
+        return SearchResults {
+            songs,
+            albums,
+            artists,
+            playlists,
+            podcasts,
+            top_album,
+        };
     };
 
     for section in sections {
@@ -1198,6 +1309,11 @@ fn parse_search_results(data: &Value, filter: Option<&str>) -> SearchResults {
                                 playlists.push(pl);
                             }
                         }
+                        Some(FILTER_PODCASTS) => {
+                            if let Some(p) = parse_podcast_from_list_item(renderer) {
+                                podcasts.push(p);
+                            }
+                        }
                         _ => {
                             // Songs, Videos, or no filter — parse as tracks
                             if let Some(track) = parse_track_from_list_item(renderer) {
@@ -1210,7 +1326,14 @@ fn parse_search_results(data: &Value, filter: Option<&str>) -> SearchResults {
         }
     }
 
-    SearchResults { songs, albums, artists, playlists, top_album }
+    SearchResults {
+        songs,
+        albums,
+        artists,
+        playlists,
+        podcasts,
+        top_album,
+    }
 }
 
 fn extract_continuation(data: &Value) -> Option<String> {
@@ -1557,6 +1680,289 @@ fn parse_library_albums(data: &Value) -> Vec<AlbumSummary> {
     albums
 }
 
+fn parse_library_podcasts(data: &Value) -> Vec<PodcastSummary> {
+    let items = find_browse_list_items(data);
+    let mut out = Vec::new();
+    for item in items {
+        // Subscribed podcasts surface as musicTwoRowItemRenderer cards
+        // (cover + show title + author). The browseId on the
+        // navigation endpoint identifies the show (MPSP*); we keep
+        // only those so the cards can drive PlaylistDetailPage's
+        // existing MPSP path without ambiguity.
+        if let Some(two_row) = item.get("musicTwoRowItemRenderer") {
+            if let Some(p) = parse_podcast_from_two_row(two_row) {
+                out.push(p);
+            }
+            continue;
+        }
+        // Some library variants list shows as musicResponsiveListItemRenderer
+        // rows (compact list view). Try that too.
+        if let Some(renderer) = item.get("musicResponsiveListItemRenderer") {
+            if let Some(p) = parse_podcast_from_list_item(renderer) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Parse a podcast / show card from a `musicTwoRowItemRenderer`. The
+/// browseId starts with MPSPP (5 chars — kaset's PodcastParser uses
+/// the same prefix); anything else returns None so callers don't
+/// accidentally render a non-podcast row in the Podcasts tab.
+fn parse_podcast_from_two_row(two_row: &Value) -> Option<PodcastSummary> {
+    let browse_id = two_row["navigationEndpoint"]["browseEndpoint"]["browseId"]
+        .as_str()?
+        .to_string();
+    if !browse_id.starts_with("MPSPP") {
+        return None;
+    }
+    let title = runs_text(&two_row["title"]["runs"]);
+    if title.is_empty() {
+        return None;
+    }
+    let author = runs_text(&two_row["subtitle"]["runs"]);
+    let artwork_url = best_thumbnail(
+        &two_row["thumbnailRenderer"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
+    );
+    Some(PodcastSummary {
+        browse_id,
+        title,
+        author,
+        artwork_url,
+    })
+}
+
+/// Parse a podcast / show row from a `musicResponsiveListItemRenderer`.
+/// Same MPSPP-only constraint as the two-row variant.
+fn parse_podcast_from_list_item(renderer: &Value) -> Option<PodcastSummary> {
+    let browse_id = renderer["navigationEndpoint"]["browseEndpoint"]["browseId"]
+        .as_str()?
+        .to_string();
+    if !browse_id.starts_with("MPSPP") {
+        return None;
+    }
+    let flex_columns = renderer["flexColumns"].as_array()?;
+    let title = flex_columns
+        .first()
+        .map(|c| runs_text(&c["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"]))
+        .unwrap_or_default();
+    if title.is_empty() {
+        return None;
+    }
+    let author = flex_columns
+        .get(1)
+        .map(|c| runs_text(&c["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"]))
+        .unwrap_or_default();
+    let artwork_url = best_thumbnail(
+        &renderer["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
+    );
+    Some(PodcastSummary {
+        browse_id,
+        title,
+        author,
+        artwork_url,
+    })
+}
+
+/// Convert a YTM `publishedTimeText` like "3 days ago", "Yesterday",
+/// or "Sep 28, 2024" into an approximate seconds-since-now. Used to
+/// sort podcast subscriptions client-side after the per-show fetches
+/// land. None for unparseable strings — the UI sorts those last.
+fn parse_published_time_secs_ago(raw: &str) -> Option<i64> {
+    const SEC: i64 = 1;
+    const MIN: i64 = 60;
+    const HOUR: i64 = 60 * 60;
+    const DAY: i64 = 24 * HOUR;
+    const WEEK: i64 = 7 * DAY;
+    const MONTH: i64 = 30 * DAY;
+    const YEAR: i64 = 365 * DAY;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_lowercase();
+    if lower == "today" || lower == "just now" {
+        return Some(0);
+    }
+    if lower == "yesterday" {
+        return Some(DAY);
+    }
+    if lower.ends_with(" ago") {
+        let body = lower[..lower.len() - 4].trim();
+        // YTM compact tokens collapse the count + unit into one
+        // word ("10h", "2d", "5w", "3mo", "1y") AND the spaced form
+        // ("3 days", "an hour"). Try compact first — if the leading
+        // digits cleanly split off, parse them; otherwise fall back
+        // to the two-token form.
+        let lookup_unit = |unit_raw: &str| -> Option<i64> {
+            match unit_raw.trim_end_matches('s') {
+                "second" | "sec" | "s" => Some(SEC),
+                "minute" | "min" | "m" => Some(MIN),
+                "hour" | "hr" | "h" => Some(HOUR),
+                "day" | "d" => Some(DAY),
+                "week" | "wk" | "w" => Some(WEEK),
+                "month" | "mo" => Some(MONTH),
+                "year" | "yr" | "y" => Some(YEAR),
+                _ => None,
+            }
+        };
+        // Compact: lead with digits, then unit letters, no whitespace.
+        if let Some(split_at) = body.find(|c: char| !c.is_ascii_digit()) {
+            if split_at > 0 {
+                let count_str = &body[..split_at];
+                let unit_str = body[split_at..].trim();
+                if !unit_str.contains(char::is_whitespace) {
+                    if let (Ok(count), Some(unit_secs)) =
+                        (count_str.parse::<i64>(), lookup_unit(unit_str))
+                    {
+                        if count > 0 {
+                            return Some(count * unit_secs);
+                        }
+                    }
+                }
+            }
+        }
+        // Spaced: "<count> <unit>".
+        let mut parts = body.split_whitespace();
+        if let (Some(count_token), Some(unit_token)) = (parts.next(), parts.next()) {
+            let count: i64 = match count_token {
+                "a" | "an" => 1,
+                other => other.parse().unwrap_or(0),
+            };
+            if let (Some(unit_secs), true) = (lookup_unit(unit_token), count > 0) {
+                return Some(count * unit_secs);
+            }
+        }
+    }
+    // "<Mon> <D>" or "<Mon> <D>, <YYYY>" — YTM podcast subtitles
+    // surface dates in this form (e.g. "Feb 17", "Sept 28, 2024").
+    // Convert to an approximate days-ago count using the current
+    // system date. When the year is omitted, assume the most recent
+    // occurrence (this year if it's already passed; previous year
+    // otherwise). Coarse but enough to drive sort order.
+    let months: [(&str, u32); 12] = [
+        ("jan", 1), ("feb", 2), ("mar", 3), ("apr", 4),
+        ("may", 5), ("jun", 6), ("jul", 7), ("aug", 8),
+        ("sep", 9), ("oct", 10), ("nov", 11), ("dec", 12),
+    ];
+    let lower_alpha = lower.to_lowercase();
+    for (mon_abbrev, mon_num) in months {
+        if let Some(rest) = lower_alpha
+            .split_whitespace()
+            .next()
+            .filter(|first| first.starts_with(mon_abbrev))
+            .and_then(|_| lower_alpha.splitn(2, ' ').nth(1))
+        {
+            // rest looks like "17" or "17, 2024" or "28, 2024"
+            let mut day: u32 = 0;
+            let mut year: Option<i32> = None;
+            for tok in rest.split(|c: char| !c.is_ascii_digit()) {
+                if tok.is_empty() {
+                    continue;
+                }
+                if tok.len() == 4 {
+                    if let Ok(y) = tok.parse::<i32>() {
+                        if (1990..=2100).contains(&y) {
+                            year = Some(y);
+                        }
+                    }
+                } else if day == 0 {
+                    if let Ok(d) = tok.parse::<u32>() {
+                        if (1..=31).contains(&d) {
+                            day = d;
+                        }
+                    }
+                }
+            }
+            if day == 0 {
+                break;
+            }
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            // Days-since-epoch using the cheap-and-coarse 365.25 year.
+            // We don't need calendar precision — only sort order.
+            let now_days = now_secs / DAY;
+            let now_year = 1970 + (now_days * 100 / 36525) as i32;
+            let now_doy = (now_days * 100 % 36525 / 100) as i64; // approx day-of-year
+            // Approximate day-of-year for the parsed (year, mon_num, day).
+            // Cumulative days at start of each month, ignoring leap days
+            // (good enough for sort order with day granularity).
+            let cum = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+            let parsed_doy = cum[(mon_num - 1) as usize] + (day as i64) - 1;
+            let chosen_year = year.unwrap_or_else(|| {
+                // No year given — pick the most recent occurrence.
+                if parsed_doy <= now_doy { now_year } else { now_year - 1 }
+            });
+            let years_diff = (now_year - chosen_year) as i64;
+            let days_ago = (years_diff * 365 + (now_doy - parsed_doy)).max(0);
+            return Some(days_ago * DAY);
+        }
+    }
+    // Standalone 4-digit year (an absolute date like "2024").
+    if let Some(year_str) = trimmed
+        .split(|c: char| !c.is_ascii_digit())
+        .find(|t| t.len() == 4 && t.chars().all(|c| c.is_ascii_digit()))
+    {
+        if let Ok(year) = year_str.parse::<i32>() {
+            if (1990..=2100).contains(&year) {
+                let now_year = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| 1970 + (d.as_secs() / YEAR as u64) as i32)
+                    .unwrap_or(2025);
+                let age_years = (now_year - year).max(0) as i64;
+                return Some(age_years * YEAR);
+            }
+        }
+    }
+    None
+}
+
+/// Walk a show-detail browse response for the FIRST episode's publish
+/// date display string. The field name varies by response shape:
+///   - older / spec'd responses use `publishedTimeText.runs[]`
+///   - current MPSP show responses put the date in `subtitle.runs[]`
+///     as a bare "Feb 17" (current year implied) or "Feb 17, 2024".
+/// We walk for the first `musicMultiRowListItemRenderer` and try those
+/// fields in order, returning the first non-empty trimmed text.
+fn parse_first_episode_published(data: &Value) -> Option<String> {
+    fn first_run_text(field: &Value) -> Option<&str> {
+        field["runs"]
+            .as_array()
+            .and_then(|r| r.first())
+            .and_then(|r| r["text"].as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+    }
+    fn walk(node: &Value) -> Option<String> {
+        if let Some(renderer) = node.get("musicMultiRowListItemRenderer") {
+            for field_name in ["publishedTimeText", "subtitle", "secondTitle"] {
+                if let Some(text) = first_run_text(&renderer[field_name]) {
+                    return Some(text.to_string());
+                }
+            }
+        }
+        if let Some(map) = node.as_object() {
+            for v in map.values() {
+                if let Some(found) = walk(v) {
+                    return Some(found);
+                }
+            }
+        }
+        if let Some(arr) = node.as_array() {
+            for v in arr {
+                if let Some(found) = walk(v) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(data)
+}
+
 fn parse_library_artists(data: &Value) -> Vec<ArtistSummary> {
     let items = find_browse_list_items(data);
     let mut artists = Vec::new();
@@ -1624,15 +2030,30 @@ fn parse_playlist_detail(data: &Value, playlist_id: &str) -> PlaylistDetail {
         .unwrap_or_default()
         .to_string();
 
+    // Concatenate every run inside the description's runs array — YTM
+    // splits multi-line/formatted descriptions across many runs, so
+    // taking only `runs[0]` was lopping descriptions to their first
+    // segment (often a single word or empty before a `\n`). Also
+    // checks musicDetailHeaderRenderer (user-created playlists),
+    // which the previous version missed entirely.
+    let join_runs = |runs: &Value| -> Option<String> {
+        let arr = runs.as_array()?;
+        let joined = arr
+            .iter()
+            .filter_map(|r| r["text"].as_str())
+            .collect::<String>();
+        if joined.is_empty() { None } else { Some(joined) }
+    };
     let description = responsive_header
-        .and_then(|h| h["description"]["musicDescriptionShelfRenderer"]["description"]["runs"].get(0))
-        .and_then(|r| r["text"].as_str())
-        .or_else(|| {
-            data["header"]["musicImmersiveHeaderRenderer"]["description"]["runs"]
-                .get(0).and_then(|r| r["text"].as_str())
+        .and_then(|h| {
+            join_runs(&h["description"]["musicDescriptionShelfRenderer"]["description"]["runs"])
         })
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty());
+        .or_else(|| {
+            join_runs(&data["header"]["musicImmersiveHeaderRenderer"]["description"]["runs"])
+        })
+        .or_else(|| {
+            join_runs(&editable_inner["musicDetailHeaderRenderer"]["description"]["runs"])
+        });
 
     let artwork_url = responsive_header
         .map(|h| best_thumbnail(&h["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"]))
@@ -1689,6 +2110,18 @@ fn parse_playlist_detail(data: &Value, playlist_id: &str) -> PlaylistDetail {
                                 out.push(track);
                             }
                         }
+                        // Show / podcast pages (browseId MPSP*) emit
+                        // episodes as multi-row list items rather than
+                        // the single-row renderer used by song-bearing
+                        // playlists. Drain the same shelf for either
+                        // shape so the same get_playlist IPC handles
+                        // both surfaces — frontend doesn't need a
+                        // separate `get_show` endpoint.
+                        if let Some(renderer) = item.get("musicMultiRowListItemRenderer") {
+                            if let Some(track) = parse_episode_from_multi_row(renderer) {
+                                out.push(track);
+                            }
+                        }
                     }
                 }
             }
@@ -1728,6 +2161,92 @@ fn parse_playlist_detail(data: &Value, playlist_id: &str) -> PlaylistDetail {
         .or_else(|| extract_audio_playlist_id(data));
     let is_album = playlist_id.starts_with("MPRE");
 
+    // --- Year extraction (albums/EPs/singles) ---
+    // YTM's responsive header subtitle reads as runs like
+    //   `Album` `•` `Artist Name` `•` `2023`
+    // (or `Single` / `EP` for those types). We scan every run's text for
+    // the first standalone 4-digit year token and surface that. Absent
+    // for most playlists, charts, and mood mixes — those don't carry a
+    // year in the subtitle.
+    let year = responsive_header
+        .and_then(|h| h["subtitle"]["runs"].as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|r| r["text"].as_str())
+                .find_map(|s| {
+                    let t = s.trim();
+                    if t.len() == 4
+                        && t.chars().all(|c| c.is_ascii_digit())
+                        && t.starts_with(|c: char| c == '1' || c == '2')
+                    {
+                        Some(t.to_string())
+                    } else {
+                        None
+                    }
+                })
+        });
+
+    // Artist credit from the responsive header. Albums ship the artist
+    // in `straplineTextOne.runs` (a dedicated artist line under the
+    // album title) — NOT in `subtitle.runs`, which is just
+    // `Album • 2026`. Skipped for shows / podcasts since their
+    // strapline carries the channel name and we don't want to
+    // mis-credit a channel as an artist.
+    let is_show_browse = playlist_id.starts_with("MPSP");
+    let artist: Option<String> = if is_show_browse {
+        None
+    } else {
+        // Primary path: musicResponsiveHeaderRenderer.straplineTextOne.runs
+        responsive_header
+            .and_then(|h| h["straplineTextOne"]["runs"].as_array())
+            .and_then(|arr| {
+                let joined = arr
+                    .iter()
+                    .filter_map(|r| r["text"].as_str())
+                    .collect::<String>();
+                let trimmed = joined.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+            // Legacy fallbacks: musicDetailHeaderRenderer.subtitle.runs
+            // (older responses) — pattern is `Album • Artist • 2023`.
+            // Pick a run that has a browseEndpoint (the artist link).
+            .or_else(|| {
+                let detail_subtitle = data["header"]["musicDetailHeaderRenderer"]["subtitle"]
+                    ["runs"]
+                    .as_array()
+                    .or_else(|| {
+                        editable_inner["musicDetailHeaderRenderer"]["subtitle"]["runs"].as_array()
+                    })?;
+                detail_subtitle.iter().find_map(|r| {
+                    let text = r["text"].as_str()?.trim();
+                    if text.is_empty() {
+                        return None;
+                    }
+                    r["navigationEndpoint"]["browseEndpoint"]["browseId"]
+                        .as_str()
+                        .map(|_| text.to_string())
+                })
+            })
+    };
+
+    // For shows / podcasts, override every episode's per-row artwork
+    // with the show's own cover. YTM stamps each episode card with a
+    // different thumbnail (a graphic from inside the episode), but
+    // the user expects the SHOW's channel art to follow the audio
+    // through the now-playing surfaces (queue rows, player chrome,
+    // playing page) so the player feels like "playing the show", not
+    // a slideshow of per-episode promo images.
+    let is_show = playlist_id.starts_with("MPSP");
+    if is_show && !artwork_url.is_empty() {
+        for t in tracks.iter_mut() {
+            t.artwork_url = Some(artwork_url.clone());
+        }
+    }
+
     PlaylistDetail {
         playlist_id: playlist_id.to_string(),
         title,
@@ -1738,6 +2257,8 @@ fn parse_playlist_detail(data: &Value, playlist_id: &str) -> PlaylistDetail {
         is_in_library,
         audio_playlist_id,
         is_album,
+        year,
+        artist,
     }
 }
 
@@ -2306,6 +2827,140 @@ fn parse_track_from_list_item(renderer: &Value) -> Option<TrackInfo> {
         artwork_url,
         duration_secs,
     })
+}
+
+/// Parse a podcast / show episode from a `musicMultiRowListItemRenderer`.
+///
+/// Field paths verified against the kaset reference's
+/// `PodcastParser.parseMultiRowListItem`. Show pages (browseId
+/// `MPSPP*`) emit episodes as multi-row list items.
+///
+/// ```text
+/// musicMultiRowListItemRenderer:
+///   title:             { runs: [{ text: "<episode title>" }] }
+///   subtitle:          { runs: [{ text: "<show name>" }, ...] }
+///   description:       { runs: [...] }                      (optional)
+///   durationText:      { runs: [{ text: "36 min" | "1:11:19" }] }
+///   publishedTimeText: { runs: [{ text: "Mar 1, 2026" }] }  (optional)
+///   playedText:        { runs: [{ text: "Played" }] }       (optional)
+///   playbackProgress:  { playbackProgressPercentage: 0-100 } (optional)
+///   thumbnail:
+///     musicThumbnailRenderer:
+///       thumbnail: { thumbnails: [...] }
+///   onTap:
+///     watchEndpoint: { videoId: "<episode video id>" }
+/// ```
+fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
+    // Title: first run of `title.runs`. Matches kaset's
+    // extractMultiRowTitle exactly (don't concatenate runs — episodes
+    // can have multiple runs in title for stylized text but only the
+    // first carries the actual title).
+    let title = renderer["title"]["runs"]
+        .as_array()
+        .and_then(|runs| runs.first())
+        .and_then(|r| r["text"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    if title.is_empty() {
+        return None;
+    }
+
+    // Show name = first subtitle run. The show name is reliably the
+    // first run for episodes; published date / other metadata live in
+    // their own dedicated fields (`publishedTimeText`, etc.).
+    let show_name = renderer["subtitle"]["runs"]
+        .as_array()
+        .and_then(|runs| runs.first())
+        .and_then(|r| r["text"].as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    // VideoId — kaset reads `onTap.watchEndpoint.videoId` directly;
+    // we keep the overlay fallback for resilience against shape drift.
+    let video_id = renderer["onTap"]["watchEndpoint"]["videoId"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| extract_video_id(renderer));
+    if video_id.is_empty() {
+        // Episode without a playable id (e.g. "available soon"
+        // placeholder) — skip rather than emit a row that no-ops.
+        return None;
+    }
+
+    // Try multiple thumbnail paths to mirror kaset's
+    // `extractThumbnails` helper — both the primary `thumbnail.*`
+    // path and the `thumbnailRenderer.*` variant some library
+    // shapes use.
+    let mut artwork_url = best_thumbnail(
+        &renderer["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
+    );
+    if artwork_url.is_empty() {
+        artwork_url = best_thumbnail(
+            &renderer["thumbnailRenderer"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
+        );
+    }
+    let artwork_url = if artwork_url.is_empty() {
+        None
+    } else {
+        Some(artwork_url)
+    };
+
+    // Duration: kaset reads `data.durationText.runs[0].text` —
+    // flat, top-level on the renderer. The previous nested
+    // `playbackProgress.musicPlaybackProgressRenderer.durationText`
+    // path was wrong and always returned 0. Format may be
+    // "36 min" / "1 hr 30 min" (podcasts often) or "1:11:19" (some
+    // long-form episodes); both handled by parse_episode_duration_text.
+    let duration_text = renderer["durationText"]["runs"]
+        .as_array()
+        .and_then(|runs| runs.first())
+        .and_then(|r| r["text"].as_str())
+        .unwrap_or_default();
+    let duration_secs = parse_episode_duration_text(duration_text);
+
+    Some(TrackInfo {
+        video_id,
+        title,
+        artist: show_name,
+        artist_id: None,
+        album: String::new(),
+        album_id: None,
+        artwork_url,
+        duration_secs,
+    })
+}
+
+/// Parse an episode duration string. Episodes use either the colon
+/// format ("3:45", "1:02:30" — same as songs) or the prose format
+/// ("36 min", "1 hr 30 min", "2 hr") that podcasts often surface.
+/// Falls back to 0 on anything unrecognized.
+fn parse_episode_duration_text(text: &str) -> f64 {
+    let t = text.trim();
+    if t.is_empty() {
+        return 0.0;
+    }
+    if t.contains(':') {
+        return parse_duration_text(t);
+    }
+    // Prose form like "36 min" or "1 hr 30 min".
+    let lower = t.to_lowercase();
+    let mut total: f64 = 0.0;
+    let mut current_value: Option<f64> = None;
+    for token in lower.split_whitespace() {
+        if let Ok(n) = token.parse::<f64>() {
+            current_value = Some(n);
+            continue;
+        }
+        match (token, current_value) {
+            ("hr" | "hrs" | "hour" | "hours", Some(n)) => total += n * 3600.0,
+            ("min" | "mins" | "minute" | "minutes", Some(n)) => total += n * 60.0,
+            ("sec" | "secs" | "second" | "seconds", Some(n)) => total += n,
+            _ => {}
+        }
+        current_value = None;
+    }
+    total
 }
 
 /// Parse a duration string like "3:45" or "1:02:30" into seconds.
@@ -4016,5 +4671,207 @@ mod tests {
     fn extract_audio_playlist_id_returns_none_when_absent() {
         let data = json!({ "no": "playlist", "ids": "here" });
         assert_eq!(extract_audio_playlist_id(&data), None);
+    }
+
+    // ---- parse_episode_from_multi_row -------------------------------------
+    //
+    // Show / podcast pages emit episodes as `musicMultiRowListItemRenderer`
+    // rather than the single-row renderer used by song-bearing playlists.
+    // These tests pin the synthetic response shape so a future YTM tweak
+    // doesn't silently break show pages.
+
+    /// Synthetic shape that matches kaset's PodcastParser field
+    /// expectations exactly (title.runs[0], subtitle.runs[0],
+    /// durationText.runs[0], onTap.watchEndpoint.videoId, thumbnail
+    /// path, optional publishedTimeText / playedText / playbackProgress).
+    fn sample_multi_row_episode() -> serde_json::Value {
+        json!({
+            "title": { "runs": [{ "text": "Episode 7: A Long Talk" }] },
+            "subtitle": { "runs": [{ "text": "The Demo Show" }] },
+            "thumbnail": {
+                "musicThumbnailRenderer": {
+                    "thumbnail": {
+                        "thumbnails": [
+                            { "url": "https://i.ytimg.com/vi/eee/sm.jpg", "width": 60, "height": 60 },
+                            { "url": "https://i.ytimg.com/vi/eee/lg.jpg", "width": 480, "height": 480 }
+                        ]
+                    }
+                }
+            },
+            "onTap": { "watchEndpoint": { "videoId": "ep7videoid" } },
+            "durationText": { "runs": [{ "text": "42:15" }] },
+            "publishedTimeText": { "runs": [{ "text": "Mar 1, 2026" }] }
+        })
+    }
+
+    #[test]
+    fn parse_episode_extracts_title_show_and_video_id() {
+        let v = sample_multi_row_episode();
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert_eq!(track.video_id, "ep7videoid");
+        assert_eq!(track.title, "Episode 7: A Long Talk");
+        assert_eq!(track.artist, "The Demo Show");
+        assert_eq!(track.album, "");
+    }
+
+    #[test]
+    fn parse_episode_picks_best_thumbnail_url() {
+        let v = sample_multi_row_episode();
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        // best_thumbnail returns the LAST entry — the 480 px one.
+        assert_eq!(
+            track.artwork_url.as_deref(),
+            Some("https://i.ytimg.com/vi/eee/lg.jpg"),
+        );
+    }
+
+    #[test]
+    fn parse_episode_parses_duration_text_to_seconds() {
+        let v = sample_multi_row_episode();
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        // "42:15" → 42*60 + 15 = 2535 secs.
+        assert!((track.duration_secs - 2535.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_episode_handles_prose_duration_format() {
+        // Podcasts often surface "36 min" instead of a colon format.
+        let mut v = sample_multi_row_episode();
+        v["durationText"]["runs"][0]["text"] = json!("36 min");
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert!((track.duration_secs - 2160.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_episode_handles_compound_prose_duration() {
+        // "1 hr 30 min" → 5400 secs.
+        let mut v = sample_multi_row_episode();
+        v["durationText"]["runs"][0]["text"] = json!("1 hr 30 min");
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert!((track.duration_secs - 5400.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_episode_returns_zero_duration_when_text_missing() {
+        let mut v = sample_multi_row_episode();
+        v["durationText"] = json!(null);
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert_eq!(track.duration_secs, 0.0);
+    }
+
+    #[test]
+    fn parse_episode_returns_none_when_title_empty() {
+        let v = json!({
+            "title": { "runs": [] },
+            "subtitle": { "runs": [{ "text": "Show" }] },
+            "onTap": { "watchEndpoint": { "videoId": "vidx" } }
+        });
+        assert!(parse_episode_from_multi_row(&v).is_none());
+    }
+
+    #[test]
+    fn parse_episode_returns_none_when_no_video_id_anywhere() {
+        let v = json!({
+            "title": { "runs": [{ "text": "Coming soon" }] },
+            "subtitle": { "runs": [{ "text": "Show" }] }
+        });
+        assert!(parse_episode_from_multi_row(&v).is_none());
+    }
+
+    #[test]
+    fn parse_episode_falls_back_to_overlay_video_id_when_on_tap_missing() {
+        let v = json!({
+            "title": { "runs": [{ "text": "Fallback Episode" }] },
+            "subtitle": { "runs": [{ "text": "Show" }] },
+            "overlay": {
+                "musicItemThumbnailOverlayRenderer": {
+                    "content": {
+                        "musicPlayButtonRenderer": {
+                            "playNavigationEndpoint": {
+                                "watchEndpoint": { "videoId": "fallbackvid" }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert_eq!(track.video_id, "fallbackvid");
+    }
+
+    #[test]
+    fn parse_episode_uses_thumbnail_renderer_path_when_primary_missing() {
+        // Library / some grid responses put the cover under
+        // thumbnailRenderer.musicThumbnailRenderer.thumbnail rather
+        // than the primary thumbnail.musicThumbnailRenderer path.
+        let v = json!({
+            "title": { "runs": [{ "text": "Alt Path Episode" }] },
+            "subtitle": { "runs": [{ "text": "Show" }] },
+            "onTap": { "watchEndpoint": { "videoId": "altvid" } },
+            "thumbnailRenderer": {
+                "musicThumbnailRenderer": {
+                    "thumbnail": {
+                        "thumbnails": [
+                            { "url": "https://lh3.googleusercontent.com/big.jpg", "width": 480, "height": 480 }
+                        ]
+                    }
+                }
+            }
+        });
+        let track = parse_episode_from_multi_row(&v).expect("episode");
+        assert_eq!(
+            track.artwork_url.as_deref(),
+            Some("https://lh3.googleusercontent.com/big.jpg"),
+        );
+    }
+
+    #[test]
+    fn parse_podcast_from_two_row_requires_mpspp_prefix() {
+        // MPSPP* → accepted; anything else (MPRE, OLAK, RDCLAK) →
+        // rejected so the Podcasts library tab can't accidentally
+        // surface a non-podcast row.
+        let mut v = json!({
+            "navigationEndpoint": {
+                "browseEndpoint": { "browseId": "MPSPPshow123" }
+            },
+            "title": { "runs": [{ "text": "The Demo Show" }] },
+            "subtitle": { "runs": [{ "text": "Demo Author" }] }
+        });
+        let podcast = parse_podcast_from_two_row(&v).expect("podcast");
+        assert_eq!(podcast.browse_id, "MPSPPshow123");
+        assert_eq!(podcast.title, "The Demo Show");
+        assert_eq!(podcast.author, "Demo Author");
+
+        // MPRE (album) — must be rejected.
+        v["navigationEndpoint"]["browseEndpoint"]["browseId"] = json!("MPREalbum123");
+        assert!(parse_podcast_from_two_row(&v).is_none());
+
+        // Plain MPSP without the second P — also rejected (kaset
+        // only accepts MPSPP).
+        v["navigationEndpoint"]["browseEndpoint"]["browseId"] = json!("MPSPbogus");
+        assert!(parse_podcast_from_two_row(&v).is_none());
+    }
+
+    // ---- parse_episode_duration_text -------------------------------------
+
+    #[test]
+    fn parse_episode_duration_text_handles_colon_form() {
+        assert!((parse_episode_duration_text("3:45") - 225.0).abs() < 1e-6);
+        assert!((parse_episode_duration_text("1:02:30") - 3750.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_episode_duration_text_handles_prose_form() {
+        assert!((parse_episode_duration_text("36 min") - 2160.0).abs() < 1e-6);
+        assert!((parse_episode_duration_text("2 hr") - 7200.0).abs() < 1e-6);
+        assert!((parse_episode_duration_text("1 hr 30 min") - 5400.0).abs() < 1e-6);
+        assert!((parse_episode_duration_text("45 minutes") - 2700.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_episode_duration_text_returns_zero_for_unrecognized() {
+        assert_eq!(parse_episode_duration_text(""), 0.0);
+        assert_eq!(parse_episode_duration_text("   "), 0.0);
+        assert_eq!(parse_episode_duration_text("not a duration"), 0.0);
     }
 }

@@ -1,16 +1,21 @@
 import { type FC, useEffect, useRef, useState } from 'react';
-import type { AlbumSummary, PlaylistDetail, SearchResults } from '../../lib/types';
-import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
-import { SongRow } from '../browse/SongRow';
-import { AlbumCard } from '../browse/AlbumCard';
-import { ShelfRow } from '../browse/ShelfRow';
-import { CachedImage } from '../CachedImage';
+import type { AlbumSummary, PlaylistDetail, SearchResults } from '../../../lib/types';
+import { browseApi, playFirstFromPlaylist } from '../../../lib/ipc';
+import { SongRow } from '../../browse/SongRow';
+import { AlbumCard } from '../../browse/AlbumCard';
+import { ShelfRow } from '../../browse/ShelfRow';
+import { CachedImage } from '../../CachedImage';
 
 import {
   loadRecentSearches,
   pushRecentSearch,
   saveRecentSearches,
-} from '../../lib/recentSearches';
+} from '../../../lib/recentSearches';
+
+import { TopAlbumCover } from './TopAlbumCover';
+import { EmptyCategory } from './EmptyCategory';
+import { LiquidGlass } from '@liquidglass/react';
+import { openArtist } from '../../../lib/appNav';
 
 const SUGGEST_DEBOUNCE_MS = 200;
 const MIN_QUERY_LENGTH = 2;
@@ -18,7 +23,7 @@ const MIN_SUGGEST_LENGTH = 3;
 const MAX_SUGGESTIONS = 5;
 const PREVIEW_TRACK_COUNT = 3;
 
-const CATEGORY_TABS = ['Songs', 'Albums', 'Artists', 'Playlists'] as const;
+const CATEGORY_TABS = ['Songs', 'Albums', 'Artists', 'Playlists', 'Podcasts'] as const;
 type CategoryTab = (typeof CATEGORY_TABS)[number];
 
 const CATEGORY_PARAMS: Record<CategoryTab, string | undefined> = {
@@ -26,6 +31,7 @@ const CATEGORY_PARAMS: Record<CategoryTab, string | undefined> = {
   Albums: 'EgWKAQIYAWoSEA4QCRAKEAUQBBADEBUQEBAR',
   Artists: 'EgWKAQIgAWoSEA4QCRAKEAUQBBADEBUQEBAR',
   Playlists: 'EgWKAQIoAWoSEA4QCRAKEAUQBBADEBUQEBAR',
+  Podcasts: 'EgWKAQJQAWoSEA4QCRAKEAUQBBADEBUQEBAR',
 };
 
 interface SearchPageProps {
@@ -232,11 +238,12 @@ export const SearchPage: FC<SearchPageProps> = ({
   return (
     <section
       style={{
-        padding: '0 var(--space-6) var(--space-8)',
+        padding: '0 var(--space-6)',
         overflowY: 'auto',
         height: '100%',
       }}
     >
+      <div style={{ height: 'var(--space-3)', flexShrink: 0 }} aria-hidden="true" />
       {/*
         Sticky wrapper keeps the search bar + category tabs pinned while the
         results scroll underneath (issue #58). Top padding matches the
@@ -246,14 +253,28 @@ export const SearchPage: FC<SearchPageProps> = ({
       <div
         style={{
           position: 'sticky',
-          top: 0,
+          top: 'var(--space-3)',
           zIndex: 20,
-          background: 'var(--color-surface-1)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          paddingTop: 'var(--space-3)',
-          paddingBottom: 'var(--space-3)',
-          marginBottom: 'var(--space-3)',
+          marginBottom: 'var(--space-4)',
+        }}
+      >
+      <LiquidGlass
+        borderRadius={150}
+        blur={8}
+        contrast={1.2}
+        brightness={1.05}
+        saturation={1.1}
+        shadowIntensity={0.25}
+        displacementScale={1}
+        elasticity={1}
+        zIndex={20}
+      ><div
+        style={{
+          width: '100%',
+          padding:
+            'calc(var(--title-bar-height) - var(--space-3)) var(--space-10) var(--space-3)',
+          background: 'oklch(20% 0.005 270 / 0.30)',
+          borderRadius: 'inherit',
         }}
       >
       <div
@@ -318,7 +339,7 @@ export const SearchPage: FC<SearchPageProps> = ({
             setShowSuggestions(true);
           }}
           onBlur={(e) => {
-            e.currentTarget.style.borderColor = 'oklch(100% 0 0 / 0.08)';
+            e.currentTarget.style.borderColor = 'oklch(100% 0 0 / 0.14)';
             // Delay hiding so onMouseDown on a suggestion can fire first.
             window.setTimeout(() => setShowSuggestions(false), 150);
           }}
@@ -326,8 +347,11 @@ export const SearchPage: FC<SearchPageProps> = ({
             width: '100%',
             padding:
               'var(--space-3) var(--space-4) var(--space-3) var(--space-10)',
-            background: 'var(--color-surface-2)',
-            border: '1px solid oklch(100% 0 0 / 0.08)',
+            // Translucent so the LiquidGlass plate behind it remains
+            // visible — the previous opaque surface-2 fill broke the
+            // glass effect with a flat dark pill in the middle.
+            background: 'oklch(100% 0 0 / 0.06)',
+            border: '1px solid oklch(100% 0 0 / 0.14)',
             borderRadius: 'var(--radius-full)',
             fontSize: 'var(--text-base)',
             color: 'var(--color-text-primary)',
@@ -411,12 +435,15 @@ export const SearchPage: FC<SearchPageProps> = ({
                 flexShrink: 0,
                 padding: 'var(--space-2) var(--space-4)',
                 fontSize: 'var(--text-sm)',
-                fontWeight: 500,
+                // Selection style unified with QueuePanel highlighted
+                // row + Sidebar active item + Home mood pill: white
+                // glass wash, accent-colored text, 600 weight.
+                fontWeight: isActive ? 600 : 500,
                 borderRadius: 'var(--radius-full)',
                 border: isActive ? 'none' : '1px solid var(--color-border)',
-                background: isActive ? 'var(--color-accent)' : 'transparent',
+                background: isActive ? 'oklch(100% 0 0 / 0.10)' : 'transparent',
                 color: isActive
-                  ? 'oklch(100% 0 0)'
+                  ? 'var(--color-accent)'
                   : 'var(--color-text-secondary)',
                 cursor: 'pointer',
                 transition: `background var(--duration-fast) var(--ease-out),
@@ -429,6 +456,8 @@ export const SearchPage: FC<SearchPageProps> = ({
           );
         })}
       </div>
+      </div>
+      </LiquidGlass>
       </div>
 
       {/*
@@ -652,7 +681,14 @@ export const SearchPage: FC<SearchPageProps> = ({
 
           {results.songs.length > 0 && (
             <ShelfRow title="Songs">
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  columnGap: 'var(--space-4)',
+                  rowGap: 'var(--space-1)',
+                }}
+              >
                 {results.songs.map((track, i) => (
                   <SongRow key={track.videoId || `song-${i}`} track={track} />
                 ))}
@@ -671,7 +707,14 @@ export const SearchPage: FC<SearchPageProps> = ({
         <>
           {results.songs.length > 0 ? (
             <ShelfRow title="Songs">
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  columnGap: 'var(--space-4)',
+                  rowGap: 'var(--space-1)',
+                }}
+              >
                 {results.songs.map((track, i) => (
                   <SongRow key={track.videoId || `song-${i}`} track={track} />
                 ))}
@@ -757,6 +800,34 @@ export const SearchPage: FC<SearchPageProps> = ({
         </>
       )}
 
+      {results && activeCategory === 'Podcasts' && (
+        <>
+          {results.podcasts && results.podcasts.length > 0 ? (
+            <ShelfRow title="Podcasts">
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                  gap: '20px',
+                }}
+              >
+                {results.podcasts.map((show) => (
+                  <AlbumCard
+                    key={show.browseId}
+                    artworkUrl={show.artworkUrl}
+                    title={show.title}
+                    subtitle={show.author}
+                    onClick={() => onOpenPlaylist?.(show.browseId)}
+                  />
+                ))}
+              </div>
+            </ShelfRow>
+          ) : (
+            <EmptyCategory label="podcasts" />
+          )}
+        </>
+      )}
+
       {results && activeCategory === 'Artists' && (
         <>
           {results.artists.length > 0 ? (
@@ -774,12 +845,11 @@ export const SearchPage: FC<SearchPageProps> = ({
                   <button
                     key={artist.channelId}
                     onClick={() => {
-                      // Switch back to the unified view, then submit a fresh
-                      // search for this artist's name. submitQuery sets both
-                      // `query` and `submittedQuery`, which fires the search
-                      // effect with the new (artist, null) cache key.
-                      setActiveCategory(null);
-                      submitQuery(artist.name);
+                      // Open the dedicated ArtistPage instead of just
+                      // re-running the search. `openArtist` flows
+                      // through App's `searchForArtist` registry handler,
+                      // which closes overlays and sets viewingArtist.
+                      openArtist(artist.name);
                     }}
                     style={{
                       display: 'flex',
@@ -867,112 +937,13 @@ export const SearchPage: FC<SearchPageProps> = ({
         </div>
       )}
       </div>
-
+      <div
+        style={{
+          height: 'calc(var(--player-bar-height) + var(--space-6))',
+          flexShrink: 0,
+        }}
+        aria-hidden="true"
+      />
     </section>
   );
 };
-
-interface TopAlbumCoverProps {
-  album: AlbumSummary;
-  onOpen: () => void;
-  onPlay: () => void;
-}
-
-/**
- * Square album cover for the unified-search "Top result". Sized via flex
- * stretch + aspect-ratio so the height equals the row height (right column
- * content) and width follows naturally — no JS measurement, no flash.
- */
-const TopAlbumCover: FC<TopAlbumCoverProps> = ({ album, onOpen, onPlay }) => {
-  const [isHovered, setIsHovered] = useState(false);
-
-  return (
-    <button
-      type="button"
-      aria-label={`Open ${album.title}`}
-      onClick={onOpen}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      style={{
-        position: 'relative',
-        aspectRatio: '1',
-        height: 'auto',
-        flex: '0 0 auto',
-        // Stretched by the parent flex row; height matches row, width follows
-        // from aspect-ratio: 1.
-        alignSelf: 'stretch',
-        padding: 0,
-        border: 'none',
-        borderRadius: 'var(--radius-lg)',
-        overflow: 'hidden',
-        background: 'var(--color-surface-2)',
-        cursor: 'pointer',
-      }}
-    >
-      <CachedImage
-        src={album.artworkUrl}
-        alt={album.title}
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-          display: 'block',
-        }}
-      />
-
-      {/* Centered play button overlay */}
-      <span
-        aria-hidden
-        onClick={(e) => {
-          e.stopPropagation();
-          onPlay();
-        }}
-        style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          width: '52px',
-          height: '52px',
-          marginTop: '-26px',
-          marginLeft: '-26px',
-          borderRadius: 'var(--radius-full)',
-          background: 'var(--color-accent)',
-          color: 'oklch(100% 0 0)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 'var(--text-lg)',
-          boxShadow: '0 6px 16px oklch(0% 0 0 / 0.45)',
-          cursor: 'pointer',
-          opacity: isHovered ? 1 : 0,
-          transform: isHovered ? 'scale(1)' : 'scale(0.85)',
-          transition:
-            'opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out)',
-        }}
-      >
-        {'\u25B6'}
-      </span>
-    </button>
-  );
-};
-
-const EmptyCategory: FC<{ label: string }> = ({ label }) => (
-  <div
-    style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: '200px',
-    }}
-  >
-    <p
-      style={{
-        fontSize: 'var(--text-base)',
-        color: 'var(--color-text-tertiary)',
-      }}
-    >
-      No {label} found
-    </p>
-  </div>
-);
-

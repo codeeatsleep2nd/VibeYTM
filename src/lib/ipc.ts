@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary, Lyrics } from './types';
+import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary, PodcastSummary, PodcastLastEpisode, Lyrics } from './types';
 import type { RepeatMode } from './types';
 
 export interface CacheStats {
@@ -18,6 +18,16 @@ export const cacheApi = {
   clear: () => invoke<number>('cache_clear'),
   stats: () => invoke<CacheStats>('cache_stats'),
   convertToAssetUrl: (path: string) => convertFileSrc(path),
+  /**
+   * Build a `vibeytm-cache://` URL the webview can use as an `<img src>`
+   * directly. The custom URI scheme handler in
+   * `src-tauri/src/protocols/cache_image.rs` resolves it through the
+   * same disk cache `cache_fetch_image` uses, but without the
+   * JS↔Rust IPC + `convertFileSrc` round trip — so home-page mounts
+   * with 100+ thumbnails no longer back up against the IPC bridge.
+   */
+  buildCacheUrl: (url: string): string =>
+    `vibeytm-cache://localhost/?u=${encodeURIComponent(url)}`,
 };
 
 export interface AboutInfo {
@@ -240,6 +250,9 @@ export const browseApi = {
   getLibrarySongs: () => invoke<TrackInfo[]>('get_library_songs'),
   getLibraryAlbums: () => invoke<AlbumSummary[]>('get_library_albums'),
   getLibraryArtists: () => invoke<ArtistSummary[]>('get_library_artists'),
+  getLibraryPodcasts: () => invoke<PodcastSummary[]>('get_library_podcasts'),
+  getPodcastLastEpisode: (browseId: string) =>
+    invoke<PodcastLastEpisode | null>('get_podcast_last_episode', { browseId }),
   savePlaylistToLibrary: (playlistId: string) =>
     invoke<void>('save_playlist_to_library', { playlistId }),
   removePlaylistFromLibrary: (playlistId: string) =>

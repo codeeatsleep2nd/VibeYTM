@@ -170,7 +170,10 @@ function markFailure(videoId: string): void {
 // Probes that fire the instant a track-change event arrives often collide
 // with YTM's own webview navigation ("JS fetch error: Load failed"). A
 // short delay lets the WKWebView settle before we ask it to run a fetch.
-const PROBE_DEBOUNCE_MS = 2000;
+// Re-exported from `useBridgeSafeFetch` so the same constant gates the
+// queue-refresh fetch and the chrome's lyric+cover preload — drift here
+// would re-open the bridge-saturation regression class.
+import { BRIDGE_SETTLE_MS as PROBE_DEBOUNCE_MS } from './useBridgeSafeFetch';
 
 export type LyricsStatus = 'idle' | 'loading' | 'available' | 'missing';
 
