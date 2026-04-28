@@ -67,12 +67,12 @@ private struct DetailContent: View {
     @Environment(PlayerStore.self) private var playerStore
 
     var body: some View {
-        switch playerStore.state.loggedIn {
-        case .none:
+        switch playerStore.state.authState {
+        case .unknown:
             BootScaffold()
-        case .some(false):
+        case .signedOut:
             AuthScaffold()
-        case .some(true):
+        case .signedIn:
             SectionScaffold(section: section)
         }
     }

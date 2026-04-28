@@ -93,13 +93,16 @@ public actor ImageCache {
     }
 
     private func pathFor(_ url: URL) -> URL {
-        directory.appending(path: hash(url.absoluteString))
+        directory.appending(path: ImageCache.hash(url.absoluteString))
     }
 
     /// Deterministic hex digest. Swift's `Hasher` is salted per process and
     /// would re-key every launch, invalidating the entire on-disk cache —
     /// SHA-256 keeps filenames stable so images survive relaunch.
-    private func hash(_ s: String) -> String {
+    /// `internal static` so the regression test in `YTMBridgeTests` can
+    /// pin a known input → expected hex output and catch any future
+    /// refactor that swaps to `Hasher` or changes input encoding.
+    static func hash(_ s: String) -> String {
         let digest = SHA256.hash(data: Data(s.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }

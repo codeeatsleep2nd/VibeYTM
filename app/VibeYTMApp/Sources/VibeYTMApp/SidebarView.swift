@@ -15,7 +15,7 @@ import YTMBridge
 ///
 /// Identifiers stay stable across launches so navigation state can be
 /// persisted in a follow-up batch.
-enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
+enum SidebarSection: String, CaseIterable, Hashable, Identifiable, Codable {
     case home, explore
     case recentlyPlayed, artists, albums, songs, podcasts
     case allPlaylists
@@ -85,7 +85,7 @@ struct SidebarView: View {
             }
             .listStyle(.sidebar)
 
-            ProfileRow(account: store.state.account)
+            ProfileRow(account: store.state.authState.account)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
         }

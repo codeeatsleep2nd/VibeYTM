@@ -99,7 +99,10 @@ final class AppBootstrap {
         self.storedVolume = saved.volume
         self.pendingResumeVideoId = saved.videoId
         self.pendingResumePosition = saved.positionSecs
-        self.initialSidebarSelection = SidebarSection(rawValue: saved.sidebarSelection) ?? .home
+        // PersistedState now stores `sidebarSelection: SidebarSection`
+        // directly — no rawValue lookup needed. Decoding-side fallback
+        // to `.home` lives in PersistedState.init(from:).
+        self.initialSidebarSelection = saved.sidebarSelection
         self.closeToTray = saved.closeToTray
         self.backgroundPlayback = saved.backgroundPlayback
         // Seed the volume into the player state immediately so the
@@ -586,10 +589,12 @@ final class AppBootstrap {
 
     /// The view layer feeds the current sidebar selection in here so
     /// it can land in the persisted snapshot. Called from RootView's
-    /// `onChange(of: selection)`.
-    var persistedSidebar: String = "home"
+    /// `onChange(of: selection)`. Typed as `SidebarSection` (was a raw
+    /// `String` mirror); the underlying Codable round-trip still
+    /// emits the rawValue, so on-disk format is unchanged.
+    var persistedSidebar: SidebarSection = .home
     func updatePersistedSidebar(_ section: SidebarSection) {
-        persistedSidebar = section.rawValue
+        persistedSidebar = section
         // Persist immediately on selection change; track-position
         // updates handle the rest of the cadence.
         persistIfMeaningful()

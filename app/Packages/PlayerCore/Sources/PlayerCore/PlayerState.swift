@@ -39,6 +39,27 @@ public struct PlayerState: Codable, Sendable, Equatable {
     /// explicitly navigates to a different track. **Never persisted.**
     public var pendingRestore: PendingRestore?
 
+    /// Three-state read-only view onto `loggedIn` + `account`.
+    ///
+    /// The two underlying stored fields are kept for Codable parity
+    /// with the on-disk persisted state and the bridge's snapshot
+    /// envelope (both have shipped already). New consumers should
+    /// switch on this computed `authState` instead of inspecting the
+    /// pair directly — the enum makes it impossible to forget the
+    /// `nil`/unknown branch and removes the ambiguity around
+    /// "signed-in but no account yet" (treated as still-resolving).
+    public var authState: AuthState {
+        switch loggedIn {
+        case .none: .unknown
+        case .some(false): .signedOut
+        case .some(true):
+            if let account { .signedIn(account) }
+            else { .unknown }  // signal still resolving — bridge has
+                               // confirmed login but the account
+                               // metadata fetch hasn't landed yet.
+        }
+    }
+
     public init(
         status: PlaybackStatus = .idle,
         track: Track? = nil,

@@ -16,7 +16,12 @@ struct PersistedState: Codable, Equatable {
     var videoId: String?
     var positionSecs: Double
     var volume: Double
-    var sidebarSelection: String
+    /// Sidebar tab to restore on launch. Stored as the typed enum
+    /// instead of a raw `String` so an unknown on-disk value
+    /// (mismatched build) decodes to `.home` rather than producing
+    /// silent navigation to a nonexistent section. The on-disk
+    /// representation remains the same `rawValue` string.
+    var sidebarSelection: SidebarSection
     /// When true, closing the main window hides it instead of quitting
     /// (#43). When false, red-traffic-light closes the app outright.
     /// Defaults to true — matches Apple Music's behavior.
@@ -30,7 +35,7 @@ struct PersistedState: Codable, Equatable {
         videoId: nil,
         positionSecs: 0,
         volume: 1.0,
-        sidebarSelection: "home",
+        sidebarSelection: .home,
         closeToTray: true,
         backgroundPlayback: true
     )
@@ -41,13 +46,16 @@ struct PersistedState: Codable, Equatable {
     }
 
     /// Decoding-tolerant — fields added in newer versions default
-    /// gracefully when the on-disk file predates them.
+    /// gracefully when the on-disk file predates them. The sidebar
+    /// section decode also tolerates an unknown raw value (build
+    /// mismatch, removed section) by falling back to `.home`.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.videoId = try? c.decode(String?.self, forKey: .videoId)
         self.positionSecs = (try? c.decode(Double.self, forKey: .positionSecs)) ?? 0
         self.volume = (try? c.decode(Double.self, forKey: .volume)) ?? 1.0
-        self.sidebarSelection = (try? c.decode(String.self, forKey: .sidebarSelection)) ?? "home"
+        let sidebarRaw = (try? c.decode(String.self, forKey: .sidebarSelection)) ?? "home"
+        self.sidebarSelection = SidebarSection(rawValue: sidebarRaw) ?? .home
         self.closeToTray = (try? c.decode(Bool.self, forKey: .closeToTray)) ?? true
         self.backgroundPlayback = (try? c.decode(Bool.self, forKey: .backgroundPlayback)) ?? true
     }
@@ -56,7 +64,7 @@ struct PersistedState: Codable, Equatable {
         videoId: String?,
         positionSecs: Double,
         volume: Double,
-        sidebarSelection: String,
+        sidebarSelection: SidebarSection,
         closeToTray: Bool = true,
         backgroundPlayback: Bool = true
     ) {
