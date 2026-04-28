@@ -11,8 +11,10 @@
  */
 
 type ArtistNavHandler = (artistName: string) => void;
+type PlaylistNavHandler = (playlistId: string) => void;
 
 let openArtistHandler: ArtistNavHandler | null = null;
+let openPlaylistHandler: PlaylistNavHandler | null = null;
 
 export function registerOpenArtist(handler: ArtistNavHandler | null): void {
   openArtistHandler = handler;
@@ -24,4 +26,18 @@ export function openArtist(artistName: string): void {
 
 export function hasOpenArtistHandler(): boolean {
   return openArtistHandler !== null;
+}
+
+/**
+ * Mirror of `registerOpenArtist` for opening a playlist / album / show by
+ * its YTM browseId or playlistId. Used by the Now Playing overlay's
+ * artist-line click to jump to a podcast show's MPSP page when the
+ * current track is an episode.
+ */
+export function registerOpenPlaylist(handler: PlaylistNavHandler | null): void {
+  openPlaylistHandler = handler;
+}
+
+export function openPlaylist(playlistId: string): void {
+  openPlaylistHandler?.(playlistId);
 }

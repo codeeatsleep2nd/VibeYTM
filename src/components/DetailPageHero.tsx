@@ -33,6 +33,10 @@ interface DetailPageHeroProps {
    * hasn't completed yet.
    */
   colors: CoverColors;
+  /** Artist / creator subtitle rendered between title and meta. Bigger
+   *  and more prominent than the meta line — Apple-Music style. Skipped
+   *  when omitted (e.g. ArtistPage where the title IS the artist). */
+  artist?: string;
   /** "12 songs · 42 min" or similar. Optional — artist pages skip it. */
   meta?: string;
   /** Free-form text rendered below the meta line in tertiary color. */
@@ -49,6 +53,13 @@ interface DetailPageHeroProps {
   save?: DetailPageHeroSaveProps;
   /** Optional extra nodes rendered after the action row. */
   extra?: ReactNode;
+  /**
+   * When true, render with a transparent background instead of the
+   * cover-tinted radial gradient. Used by sticky-hero parents that
+   * want their own backdrop-filter blur to show scrolled content
+   * through the hero (see ArtistPage).
+   */
+  transparent?: boolean;
 }
 
 /**
@@ -71,6 +82,7 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
   kind,
   coverUrl,
   colors,
+  artist,
   meta,
   description,
   onBack,
@@ -78,6 +90,7 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
   onShuffle,
   save,
   extra,
+  transparent = false,
 }) => {
   // Memoize the gradient so re-renders driven by frequent player events
   // (track-change, position update) don't recompute the string. Same
@@ -101,7 +114,7 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
         // the cover/title block so the track list sits directly below
         // the hero with no extra gap.
         padding: 'calc(var(--title-bar-height) + var(--space-3)) var(--space-6) var(--space-3)',
-        background: backdrop,
+        background: transparent ? 'transparent' : backdrop,
         // Smooth color transition when colors prop updates after async
         // palette extraction settles.
         transition: 'background 700ms var(--ease-out)',
@@ -213,6 +226,20 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
           >
             {title}
           </h1>
+          {artist && (
+            <div
+              style={{
+                fontSize: 'var(--text-base)',
+                fontWeight: 600,
+                color: 'var(--color-accent)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {artist}
+            </div>
+          )}
           {meta && (
             <div
               style={{

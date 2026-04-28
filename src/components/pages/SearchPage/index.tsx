@@ -22,7 +22,7 @@ const MIN_SUGGEST_LENGTH = 3;
 const MAX_SUGGESTIONS = 5;
 const PREVIEW_TRACK_COUNT = 3;
 
-const CATEGORY_TABS = ['Songs', 'Albums', 'Artists', 'Playlists'] as const;
+const CATEGORY_TABS = ['Songs', 'Albums', 'Artists', 'Playlists', 'Podcasts'] as const;
 type CategoryTab = (typeof CATEGORY_TABS)[number];
 
 const CATEGORY_PARAMS: Record<CategoryTab, string | undefined> = {
@@ -30,6 +30,7 @@ const CATEGORY_PARAMS: Record<CategoryTab, string | undefined> = {
   Albums: 'EgWKAQIYAWoSEA4QCRAKEAUQBBADEBUQEBAR',
   Artists: 'EgWKAQIgAWoSEA4QCRAKEAUQBBADEBUQEBAR',
   Playlists: 'EgWKAQIoAWoSEA4QCRAKEAUQBBADEBUQEBAR',
+  Podcasts: 'EgWKAQJQAWoSEA4QCRAKEAUQBBADEBUQEBAR',
 };
 
 interface SearchPageProps {
@@ -780,6 +781,34 @@ export const SearchPage: FC<SearchPageProps> = ({
             </ShelfRow>
           ) : (
             <EmptyCategory label="playlists" />
+          )}
+        </>
+      )}
+
+      {results && activeCategory === 'Podcasts' && (
+        <>
+          {results.podcasts && results.podcasts.length > 0 ? (
+            <ShelfRow title="Podcasts">
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                  gap: '20px',
+                }}
+              >
+                {results.podcasts.map((show) => (
+                  <AlbumCard
+                    key={show.browseId}
+                    artworkUrl={show.artworkUrl}
+                    title={show.title}
+                    subtitle={show.author}
+                    onClick={() => onOpenPlaylist?.(show.browseId)}
+                  />
+                ))}
+              </div>
+            </ShelfRow>
+          ) : (
+            <EmptyCategory label="podcasts" />
           )}
         </>
       )}

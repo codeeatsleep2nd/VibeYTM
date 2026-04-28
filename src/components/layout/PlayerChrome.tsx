@@ -69,6 +69,9 @@ interface ChromeButtonProps {
   children: ReactNode;
   isActive?: boolean;
   size?: number;
+  /** Render greyed-out and ignore clicks. Used by the lyrics button
+   *  when a podcast is playing — there are no lyrics to look up. */
+  disabled?: boolean;
 }
 
 /**
@@ -87,39 +90,47 @@ const ChromeButton: FC<ChromeButtonProps> = ({
   children,
   isActive = false,
   size = 28,
-}) => (
-  <button
-    type="button"
-    onClick={onClick}
-    aria-label={label}
-    aria-pressed={isActive}
-    style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: `${size}px`,
-      height: `${size}px`,
-      padding: 0,
-      background: 'transparent',
-      border: 'none',
-      cursor: 'pointer',
-      color: isActive
-        ? 'var(--color-accent)'
-        : 'var(--color-text-primary)',
-      opacity: isActive ? 1 : 0.92,
-      transition:
-        'color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out)',
-    }}
-    onMouseEnter={(e) => {
-      e.currentTarget.style.opacity = '1';
-    }}
-    onMouseLeave={(e) => {
-      e.currentTarget.style.opacity = isActive ? '1' : '0.92';
-    }}
-  >
-    {children}
-  </button>
-);
+  disabled = false,
+}) => {
+  const restingOpacity = disabled ? 0.35 : isActive ? 1 : 0.92;
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onClick}
+      aria-label={label}
+      aria-pressed={isActive}
+      aria-disabled={disabled}
+      disabled={disabled}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: `${size}px`,
+        height: `${size}px`,
+        padding: 0,
+        background: 'transparent',
+        border: 'none',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        color: isActive
+          ? 'var(--color-accent)'
+          : 'var(--color-text-primary)',
+        opacity: restingOpacity,
+        transition:
+          'color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out)',
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.opacity = '1';
+      }}
+      onMouseLeave={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.opacity = isActive ? '1' : '0.92';
+      }}
+    >
+      {children}
+    </button>
+  );
+};
 
 export const PlayerChrome: FC<PlayerChromeProps> = ({
   onToggleNowPlaying,
@@ -130,8 +141,13 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   queueOpen,
 }) => {
   const state = usePlayerState();
-  const { track, status, volume, isShuffled, repeatMode, applyOptimistic } = state;
+  const { track, status, volume, isShuffled, repeatMode, applyOptimistic, activePlaylistId } = state;
   const isPlaying = status === 'playing';
+  // YTM podcasts/shows ride the same player surface as music, but have
+  // no lyrics to look up — the LRC fetch (LRCLIB / NetEase) is built
+  // around song title + artist, not episode metadata. Detect via the
+  // active playlist context: MPSP* browseIds are show / podcast feeds.
+  const isPodcastContext = (activePlaylistId ?? '').startsWith('MPSP');
 
   // Background preload of the CURRENT track's lyrics + the next track's
   // lyrics + cover. Routed through `useDeferredEffect` so the bridge
@@ -302,8 +318,15 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
       style={{
         position: 'fixed',
         bottom: 'var(--space-3)',
-        left: 'calc(var(--sidebar-width) + var(--space-4))',
-        right: 'var(--space-4)',
+        // Both gutters use `--space-6` (24 px) — same as the page
+        // section's horizontal padding above. Equal visible gap on
+        // both sides of the chrome capsule, window-size-independent.
+        // Bumped from `--space-4` (16 px) so the right gap visually
+        // matches the left despite the window's rounded bottom-right
+        // corner curving inward (the bottom-left is hidden behind
+        // the sidebar so no curve is visible there).
+        left: 'calc(var(--sidebar-width) + var(--space-6))',
+        right: 'var(--space-6)',
         // Explicit height — `<LiquidGlass>` inside takes 100 % of its
         // parent. Without this the footer auto-fits and the WebGL/SVG
         // wrapper collapses, clipping the controls' top edge.
@@ -487,9 +510,16 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
 
         {track && (
           <ChromeButton
-            label={lyricsOpen ? 'Hide lyrics' : 'Show lyrics'}
+            label={
+              isPodcastContext
+                ? 'Lyrics unavailable for podcasts'
+                : lyricsOpen
+                  ? 'Hide lyrics'
+                  : 'Show lyrics'
+            }
             onClick={onToggleLyrics}
-            isActive={lyricsOpen}
+            isActive={lyricsOpen && !isPodcastContext}
+            disabled={isPodcastContext}
             size={28}
           >
             <LyricsIcon size={20} />

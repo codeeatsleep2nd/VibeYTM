@@ -2,6 +2,8 @@ import { type FC, useEffect, useState } from 'react';
 import type { PlaylistDetail } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
 import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
+import { rememberShowCover } from '../../lib/showCoverRegistry';
+import { rememberTrackMetas } from '../../lib/trackMetaRegistry';
 import { useCoverColors } from '../../hooks/useCoverColors';
 import { albumArtOrNothing } from '../../lib/artwork';
 import { SongRow } from '../browse/SongRow';
@@ -96,6 +98,19 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
         // surface them. Same flow for albums (MPRE browseIds also
         // route through getPlaylist).
         rememberTrackArtworks(data.tracks);
+        // Show / podcast cover side-channel — keyed by MPSP browseId so
+        // the now-playing Cover can pick up the show's channel art for
+        // any episode of this show, regardless of what host YTM serves
+        // it from. The strict per-track artwork registry above drops
+        // covers on hosts outside `lh*|yt3.googleusercontent.com`.
+        rememberShowCover(playlistId, data.artworkUrl);
+        // Per-track title + artist side-channel — recovers podcast
+        // queue rows whose `.song-title` / `.byline` DOM scrape comes
+        // back empty because YTM uses a different element shape for
+        // episode list items. The Rust parser (`parse_episode_from_
+        // multi_row`) populates these correctly, so caching them here
+        // gives `<QueueRow>` a reliable fallback.
+        rememberTrackMetas(data.tracks);
         setPlaylist(data);
         // Seed the saved-state from the server so the button renders the
         // correct label on first paint (issue #55). Without this the button
@@ -308,7 +323,12 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
   // Both are pure-frontend computations from the existing tracks
   // payload — no Rust parser change needed.
   const primaryArtist = (() => {
-    if (isShow || playlist.tracks.length === 0) return undefined;
+    if (isShow) return undefined;
+    // Header-credited artist wins — albums often omit the per-track
+    // artist field since the header carries it. Falls back to the
+    // distinct set of per-track artists for playlists / mixes.
+    if (playlist.artist) return playlist.artist;
+    if (playlist.tracks.length === 0) return undefined;
     const distinct = new Set<string>();
     for (const t of playlist.tracks) {
       if (t.artist) distinct.add(t.artist);
@@ -329,8 +349,10 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     if (hours > 0) return `${hours} hr ${minutes} min`;
     return `${minutes} min`;
   };
+  // Artist is hoisted into its own subtitle line (DetailPageHero
+  // `artist` prop) so it reads with prominence instead of vanishing
+  // into the small gray meta string.
   const metaParts: string[] = [];
-  if (primaryArtist) metaParts.push(primaryArtist);
   if (playlist.year) metaParts.push(playlist.year);
   if (playlist.trackCount !== undefined) {
     metaParts.push(`${playlist.trackCount} ${isShow ? 'episodes' : 'songs'}`);
@@ -341,24 +363,34 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
   return (
     <section
       style={{
-        // Cover the entire right column of the AppShell grid — top to
-        // bottom, edge to edge of the right side. The hero (cover, title,
-        // play-all, save) is pinned to the top of the page; only the
-        // track list inside the lower flex child scrolls.
         display: 'flex',
         flexDirection: 'column',
-        height: '100vh',
-        overflow: 'hidden',
+        height: '100%',
+        overflow: 'auto',
       }}
     >
-      {/* Fixed hero block — flexShrink: 0 keeps it at its natural
-          height while the sibling track list owns the scroll. */}
-      <div style={{ flexShrink: 0 }}>
+      {/* Sticky hero — same chrome as ArtistPage. Cover/title/meta/
+          actions stay pinned at the top of the page while the track
+          list scrolls underneath. Transparent background +
+          backdrop-filter blur so scrolled rows show through with a
+          frosted-glass effect. */}
+      <div
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+          flexShrink: 0,
+          background: 'transparent',
+          backdropFilter: `blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))`,
+          WebkitBackdropFilter: `blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))`,
+        }}
+      >
         <DetailPageHero
           title={playlist.title}
           kind={isShow ? 'Show' : isAlbum ? 'Album' : 'Playlist'}
           coverUrl={playlist.artworkUrl ?? ''}
           colors={heroColors}
+          artist={primaryArtist}
           meta={heroMeta}
           description={playlist.description ?? undefined}
           onBack={onBack}
@@ -371,23 +403,20 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
             onToggle: toggleSaved,
             error: saveError,
           }}
+          transparent
         />
       </div>
 
-      {/* Track list — only scrolling region on the page. The wrapper
-          shares the hero's left margin (space-6) so the row's outer
-          edge — and the hover/selection background that paints to
-          that edge — aligns with the hero cover image's left. The
-          row's own internal padding stays inside that edge as
-          breathing room for the row's content. */}
+      {/* Track list. The wrapper shares the hero's left margin
+          (space-6) so the row's outer edge — and the hover/selection
+          background that paints to that edge — aligns with the hero
+          cover image's left. The row's own internal padding stays
+          inside that edge as breathing room for the row's content. */}
       <div
         style={{
-          flex: 1,
-          minHeight: 0,
-          overflowY: 'auto',
           display: 'flex',
           flexDirection: 'column',
-          padding: '0 var(--space-6) 0 var(--space-6)',
+          padding: '0 var(--space-6)',
         }}
       >
         {playlist.tracks.map((track, i) => (
@@ -410,22 +439,18 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
             No tracks found
           </div>
         )}
-        {/* Invisible spacer so the last song row clears the floating
-            player chrome. Height = player-bar-height (chrome itself) +
-            space-3 (chrome's bottom margin from the window) + space-3
-            (breathing room above the chrome). WebKit's
-            `overflow: auto` excludes paddingBottom from `scrollHeight`,
-            so the spacer must be a real DOM child to extend the
-            scrollable area. */}
-        <div
-          aria-hidden="true"
-          style={{
-            flexShrink: 0,
-            height:
-              'calc(var(--player-bar-height) + var(--space-3) * 2)',
-          }}
-        />
       </div>
+      {/* Invisible spacer so the last song row clears the floating
+          player chrome. WebKit's `overflow: auto` excludes
+          paddingBottom from `scrollHeight`, so the spacer must be a
+          real DOM child to extend the scrollable area. */}
+      <div
+        aria-hidden="true"
+        style={{
+          flexShrink: 0,
+          height: 'calc(var(--player-bar-height) + var(--space-3) * 2)',
+        }}
+      />
     </section>
   );
 };

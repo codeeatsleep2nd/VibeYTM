@@ -15,7 +15,7 @@ import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
 import { useBootState } from './hooks/useBootState';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
 import { ytmApi, playerApi } from './lib/ipc';
-import { registerOpenArtist } from './lib/appNav';
+import { registerOpenArtist, registerOpenPlaylist } from './lib/appNav';
 
 interface ViewingPlaylist {
   id: string;
@@ -122,6 +122,22 @@ const App: FC = () => {
     registerOpenArtist(searchForArtist);
     return () => registerOpenArtist(null);
   }, [searchForArtist]);
+
+  // Same registry pattern for "open playlist / show". Used by the Now
+  // Playing overlay's artist-line click to jump to a podcast show's
+  // MPSP detail page. Closes every overlay first so the playlist page
+  // is the focus once it opens.
+  useEffect(() => {
+    const handler = (playlistId: string): void => {
+      setIsNowPlayingOpen(false);
+      setIsLyricsOpen(false);
+      setIsQueueOpen(false);
+      setViewingArtist(null);
+      openPlaylistDetail(playlistId);
+    };
+    registerOpenPlaylist(handler);
+    return () => registerOpenPlaylist(null);
+  }, [openPlaylistDetail]);
 
   // Global keyboard shortcuts. Active only in the app phase (no point
   // intercepting Cmd+L while the LoginPage is up). Bindings stay as a

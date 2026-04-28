@@ -4,6 +4,9 @@ import { usePlayerState } from '../../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../../hooks/useAudioCounterpartArtwork';
 import { useCoverColors } from '../../../hooks/useCoverColors';
 import { albumArtOrNothing } from '../../../lib/artwork';
+import { lookupTrackArtwork } from '../../../lib/trackArtworkRegistry';
+import { lookupShowCover } from '../../../lib/showCoverRegistry';
+import { openArtist, openPlaylist } from '../../../lib/appNav';
 import { ArtworkPlaceholder } from '../../ArtworkPlaceholder';
 import { CachedImage } from '../../CachedImage';
 import { MarqueeText } from '../../MarqueeText';
@@ -46,7 +49,7 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
   // itself is now an independent overlay (LyricsOverlay) — NowPlaying just
   // owns the cover positioning so the cover slides left to make room.
   const splitMode = showLyrics || queueOpen;
-  const { track } = usePlayerState();
+  const { track, activePlaylistId } = usePlayerState();
 
   return (
     <SafeOverlay
@@ -72,6 +75,7 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
         splitMode={splitMode}
         track={track}
         coverSide={coverSide}
+        activePlaylistId={activePlaylistId ?? null}
       />
     </SafeOverlay>
   );
@@ -84,12 +88,14 @@ interface NowPlayingBodyProps {
   splitMode: boolean;
   track: ReturnType<typeof usePlayerState>['track'];
   coverSide: string;
+  activePlaylistId: string | null;
 }
 
 const NowPlayingBody: FC<NowPlayingBodyProps> = ({
   splitMode,
   track,
   coverSide,
+  activePlaylistId,
 }) => {
   const backdropUrl = albumArtOrNothing(track?.artworkUrl);
   const coverColors = useCoverColors(backdropUrl ?? undefined);
@@ -140,11 +146,16 @@ const NowPlayingBody: FC<NowPlayingBodyProps> = ({
             minWidth: 0,
           }}
         >
-          <Cover track={track} size="split" />
+          <Cover
+            track={track}
+            size="split"
+            activePlaylistId={activePlaylistId}
+          />
           <TitleBlock
             track={track}
             width={coverSide}
             align="center"
+            activePlaylistId={activePlaylistId}
           />
         </div>
       )}
@@ -157,53 +168,107 @@ interface TitleBlockProps {
   /** CSS width (string) so the caller can constrain the marquee container. */
   width: string;
   align: 'center' | 'left';
+  /** Active source-playlist context for the currently playing track. When
+   *  it starts with `MPSP`, the artist line links to the show's MPSP page
+   *  instead of triggering an artist search. */
+  activePlaylistId: string | null;
 }
 
-const TitleBlock: FC<TitleBlockProps> = ({ track, width, align }) => (
-  <div style={{ width, textAlign: align, minWidth: 0 }}>
-    <MarqueeText
-      text={track.title}
-      style={{
-        fontSize: 'var(--text-2xl)',
-        fontWeight: 700,
-        color: 'var(--color-text-primary)',
-        letterSpacing: '-0.02em',
-      }}
-    />
-    <div
-      style={{
-        marginTop: 'var(--space-2)',
-        fontSize: 'var(--text-base)',
-        color: 'var(--color-text-secondary)',
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-      }}
-    >
-      {track.artist}
-    </div>
-    {track.album && (
-      <div
+const TitleBlock: FC<TitleBlockProps> = ({
+  track,
+  width,
+  align,
+  activePlaylistId,
+}) => {
+  // Podcast / show episodes: artist field carries the show name (see
+  // parse_episode_from_multi_row), and `activePlaylistId` is the show's
+  // MPSP* browseId. Click should jump to the show page rather than to
+  // an artist-search of the show's name.
+  const isPodcastEpisode = (activePlaylistId ?? '').startsWith('MPSP');
+  const handleArtistClick = (): void => {
+    if (isPodcastEpisode && activePlaylistId) {
+      openPlaylist(activePlaylistId);
+      return;
+    }
+    if (track.artist) {
+      openArtist(track.artist);
+    }
+  };
+  const canNavigate = isPodcastEpisode
+    ? !!activePlaylistId
+    : !!track.artist;
+  return (
+    <div style={{ width, textAlign: align, minWidth: 0 }}>
+      <MarqueeText
+        text={track.title}
         style={{
-          marginTop: 'var(--space-1)',
-          fontSize: 'var(--text-sm)',
-          color: 'var(--color-text-tertiary)',
+          fontSize: 'var(--text-2xl)',
+          fontWeight: 700,
+          color: 'var(--color-text-primary)',
+          letterSpacing: '-0.02em',
+        }}
+      />
+      <button
+        type="button"
+        onClick={canNavigate ? handleArtistClick : undefined}
+        disabled={!canNavigate}
+        aria-label={
+          isPodcastEpisode
+            ? `Open show ${track.artist}`
+            : `Open artist ${track.artist}`
+        }
+        style={{
+          display: 'block',
+          width: '100%',
+          marginTop: 'var(--space-2)',
+          padding: 0,
+          background: 'none',
+          border: 'none',
+          fontSize: 'var(--text-base)',
+          color: 'var(--color-text-secondary)',
+          textAlign: align,
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
+          cursor: canNavigate ? 'pointer' : 'default',
+        }}
+        onMouseEnter={(e) => {
+          if (canNavigate) e.currentTarget.style.color = 'var(--color-text-primary)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.color = 'var(--color-text-secondary)';
         }}
       >
-        {track.album}
-      </div>
-    )}
-  </div>
-);
+        {track.artist}
+      </button>
+      {track.album && (
+        <div
+          style={{
+            marginTop: 'var(--space-1)',
+            fontSize: 'var(--text-sm)',
+            color: 'var(--color-text-tertiary)',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {track.album}
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface CoverProps {
   track: { title: string; videoId?: string; artworkUrl?: string };
   /** `full`: largest square that fits the viewport.
    *  `split`: fixed medium size used alongside the lyrics panel. */
   size: 'full' | 'split';
+  /** Active source-playlist context. When it starts with `MPSP*`, the
+   *  cover falls back to the show's channel art (looked up by browseId
+   *  in the show-cover registry) since podcast episodes don't surface
+   *  album art through the audio-counterpart hook. */
+  activePlaylistId: string | null;
 }
 
   // Single square side length used in BOTH cover-only and split modes so
@@ -215,13 +280,17 @@ interface CoverProps {
   const SPLIT_COVER_FRACTION = 2 / 3;
   const coverSide = `min(${SPLIT_ROW_MAX * SPLIT_COVER_FRACTION}px, calc(${SPLIT_COVER_FRACTION} * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px))`;
 
-const Cover: FC<CoverProps> = ({ track, size }) => {
+const Cover: FC<CoverProps> = ({ track, size, activePlaylistId }) => {
   void size; // kept for API compatibility; both modes now share one size
   const sideLength = coverSide;
   const counterpartArtwork = useAudioCounterpartArtwork(
     track.videoId,
     track.artworkUrl,
   );
+  const isPodcastContext = (activePlaylistId ?? '').startsWith('MPSP');
+  const showCoverUrl = isPodcastContext
+    ? lookupShowCover(activePlaylistId)
+    : undefined;
   return (
     <div
       style={{
@@ -257,13 +326,25 @@ const Cover: FC<CoverProps> = ({ track, size }) => {
           }}
         >
           {(() => {
-            // NEVER show a video thumbnail here. Use the audio counterpart's
-            // album cover when the hook has resolved one; otherwise the
-            // bridge's captured artworkUrl IF AND ONLY IF it's actually
-            // album art; otherwise a placeholder. Issue #48's "letterbox
-            // the music video" workaround is no longer needed because the
-            // music-video frame is gone from this surface entirely.
-            const url = albumArtOrNothing(counterpartArtwork ?? track.artworkUrl);
+            // For podcast / show episodes, prefer the show's channel
+            // art. Pulled from the show-cover registry (populated by
+            // PlaylistDetailPage when the user visits any MPSP
+            // playlist), keyed by the active MPSP browseId rather
+            // than per-episode videoId. Bypasses the album-art host
+            // filter because the channel page renders the same URL
+            // via `<CachedImage>` with no host check, so we can trust
+            // it here too. NEVER falls back to a video thumbnail.
+            // Source order:
+            //   1. Show-cover registry (if podcast context)
+            //   2. Audio counterpart's album cover (from /next)
+            //   3. Bridge's captured artworkUrl
+            //   4. Per-track artwork registry
+            // Falls through to placeholder only when none resolve.
+            const url =
+              showCoverUrl ??
+              albumArtOrNothing(counterpartArtwork) ??
+              albumArtOrNothing(track.artworkUrl) ??
+              albumArtOrNothing(lookupTrackArtwork(track.videoId));
             if (!url) return <ArtworkPlaceholder size={500} />;
             return (
               <CachedImage

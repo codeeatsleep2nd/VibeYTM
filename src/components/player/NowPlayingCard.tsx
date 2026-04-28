@@ -3,6 +3,7 @@ import { usePlayerState } from '../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
 import { useSmoothedPosition } from '../../hooks/useSmoothedPosition';
 import { albumArtOrNothing } from '../../lib/artwork';
+import { lookupShowCover } from '../../lib/showCoverRegistry';
 import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
 import { CachedImage } from '../CachedImage';
 import { MarqueeText } from '../MarqueeText';
@@ -28,13 +29,29 @@ const formatTime = (secs: number): string => {
  * toggle was removed in this redesign).
  */
 export const NowPlayingCard: FC<Props> = ({ onOpenNowPlaying, nowPlayingOpen }) => {
-  const { track, status, positionSecs, isLiked, applyOptimistic, markSeek } =
-    usePlayerState();
+  const {
+    track,
+    status,
+    positionSecs,
+    isLiked,
+    applyOptimistic,
+    markSeek,
+    activePlaylistId,
+  } = usePlayerState();
   const isPlaying = status === 'playing';
   const counterpartArtwork = useAudioCounterpartArtwork(
     track?.videoId,
     track?.artworkUrl,
   );
+  // Same fallback as NowPlaying overlay: when a podcast / show is the
+  // active source, prefer the show's channel art (registered by
+  // PlaylistDetailPage when the user opened the show). The bridge
+  // emits an `i.ytimg.com/vi/...` video thumbnail for episodes which
+  // `albumArtOrNothing` rejects, leaving the card with a placeholder.
+  const isPodcastContext = (activePlaylistId ?? '').startsWith('MPSP');
+  const showCoverUrl = isPodcastContext
+    ? lookupShowCover(activePlaylistId)
+    : undefined;
 
   const handleToggleLike = () => {
     applyOptimistic({ isLiked: !isLiked });
@@ -57,7 +74,9 @@ export const NowPlayingCard: FC<Props> = ({ onOpenNowPlaying, nowPlayingOpen }) 
     duration > 0 ? Math.min(1, Math.max(0, safePosition / duration)) : 0;
   const remaining = Math.max(0, duration - safePosition);
 
-  const artUrl = albumArtOrNothing(counterpartArtwork ?? track?.artworkUrl ?? null);
+  const artUrl =
+    showCoverUrl ??
+    albumArtOrNothing(counterpartArtwork ?? track?.artworkUrl ?? null);
 
   return (
     <div

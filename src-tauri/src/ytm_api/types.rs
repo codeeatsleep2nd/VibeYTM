@@ -9,6 +9,11 @@ pub struct SearchResults {
     pub albums: Vec<AlbumSummary>,
     pub artists: Vec<ArtistSummary>,
     pub playlists: Vec<PlaylistSummary>,
+    /// Podcast / show shelves from the search response. Populated only when
+    /// the caller passes the podcasts filter param; absent in the unified
+    /// (no-filter) search view since the user picks the surface explicitly.
+    #[serde(default)]
+    pub podcasts: Vec<PodcastSummary>,
     /// First real album surfaced from an unfiltered search response. Used by
     /// the unified search view to render the "Top result" album hero. None
     /// when no album was found or when the search was filtered.
@@ -108,6 +113,13 @@ pub struct PlaylistDetail {
     /// playlists, charts, mood mixes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub year: Option<String>,
+    /// Artist / creator from the responsive-header subtitle. For albums
+    /// this is the credited artist (frequently absent from per-track
+    /// rows since the album header already carries it). Skipped for
+    /// shows / podcasts and for playlists where the subtitle has no
+    /// artist run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

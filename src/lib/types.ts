@@ -98,6 +98,9 @@ export interface PlaylistDetail {
   /** Release year — present for albums / EPs / singles, absent for
    *  most playlists, charts, and mood mixes. */
   year?: string;
+  /** Header-credited artist (album response often omits per-track
+   *  artist, so this is the canonical fallback). */
+  artist?: string;
 }
 
 export interface SearchResults {
@@ -105,6 +108,9 @@ export interface SearchResults {
   albums: AlbumSummary[];
   artists: ArtistSummary[];
   playlists: PlaylistSummary[];
+  /** Podcast / show shelves — populated only when the caller passes the
+   *  podcasts filter param; absent in the unified (no-filter) view. */
+  podcasts?: PodcastSummary[];
   /**
    * First real album surfaced from an unfiltered search response. Used by the
    * unified search view to render an AlbumCard hero with a 3-track preview.
