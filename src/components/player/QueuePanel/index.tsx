@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { usePlayerState } from '../../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../../hooks/useAudioCounterpartArtwork';
+import { useExternalCoverFallback } from '../../../hooks/useExternalCoverFallback';
 import {
   lookupTrackArtwork,
   rememberTrackArtworks,
@@ -56,6 +57,14 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
     track?.videoId,
     track?.artworkUrl,
   );
+  // Issue #65 — UGC fallback for the queue's now-playing row.
+  const liveExternalCover = useExternalCoverFallback({
+    videoId: track?.videoId,
+    artist: track?.artist,
+    title: track?.title,
+    durationSecs: track?.durationSecs,
+    bridgeArtworkUrl: liveCounterpartArtwork ?? track?.artworkUrl,
+  });
   const [fetchedUpcoming, setFetchedUpcoming] = useState<TrackInfo[]>([]);
   // Overlaid on top of PlayerState.track while YTM is still navigating to a
   // clicked queue row. Gives instant "now playing" feedback so the panel
@@ -629,7 +638,13 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
                 nowPlaying
                 liveTrack={
                   track
-                    ? { ...track, artworkUrl: liveCounterpartArtwork ?? track.artworkUrl }
+                    ? {
+                        ...track,
+                        artworkUrl:
+                          liveCounterpartArtwork
+                          ?? track.artworkUrl
+                          ?? liveExternalCover,
+                      }
                     : null
                 }
               />

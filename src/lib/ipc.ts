@@ -248,6 +248,19 @@ export const browseApi = {
   getPlaylist: (playlistId: string) => invoke<PlaylistDetail>('get_playlist', { playlistId }),
   getArtist: (channelId: string) =>
     invoke<ArtistDetail>('get_artist', { channelId }),
+  /** Issue #65 — UGC cover-art fallback. Returns an Apple Music
+   *  cover URL keyed on (artist, title, duration), or null when
+   *  iTunes Search produced no usable match. */
+  getExternalCoverArt: (params: {
+    artist: string;
+    title: string;
+    durationSecs?: number | null;
+  }) =>
+    invoke<string | null>('get_external_cover_art', {
+      artist: params.artist,
+      title: params.title,
+      durationSecs: params.durationSecs ?? null,
+    }),
   getLibraryPlaylists: () => invoke<PlaylistSummary[]>('get_library_playlists'),
   getLibrarySongs: () => invoke<TrackInfo[]>('get_library_songs'),
   getLibraryAlbums: () => invoke<AlbumSummary[]>('get_library_albums'),

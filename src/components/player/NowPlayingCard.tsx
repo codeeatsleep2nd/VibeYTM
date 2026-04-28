@@ -1,6 +1,7 @@
 import { type FC } from 'react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
+import { useExternalCoverFallback } from '../../hooks/useExternalCoverFallback';
 import { useSmoothedPosition } from '../../hooks/useSmoothedPosition';
 import { albumArtOrNothing } from '../../lib/artwork';
 import { lookupShowCover } from '../../lib/showCoverRegistry';
@@ -43,6 +44,18 @@ export const NowPlayingCard: FC<Props> = ({ onOpenNowPlaying, nowPlayingOpen }) 
     track?.videoId,
     track?.artworkUrl,
   );
+  // Issue #65 — UGC fan uploads have no audio counterpart and the
+  // bridge artwork is a YouTube video thumbnail (filtered out). Look
+  // up an Apple Music cover via iTunes Search keyed on artist+title+
+  // duration. Returns undefined when the existing chain already has
+  // a real album cover, so `??`-chaining preserves the prior priority.
+  const externalCover = useExternalCoverFallback({
+    videoId: track?.videoId,
+    artist: track?.artist,
+    title: track?.title,
+    durationSecs: track?.durationSecs,
+    bridgeArtworkUrl: counterpartArtwork ?? track?.artworkUrl,
+  });
   // Same fallback as NowPlaying overlay: when a podcast / show is the
   // active source, prefer the show's channel art (registered by
   // PlaylistDetailPage when the user opened the show). The bridge
@@ -76,7 +89,8 @@ export const NowPlayingCard: FC<Props> = ({ onOpenNowPlaying, nowPlayingOpen }) 
 
   const artUrl =
     showCoverUrl ??
-    albumArtOrNothing(counterpartArtwork ?? track?.artworkUrl ?? null);
+    albumArtOrNothing(counterpartArtwork ?? track?.artworkUrl ?? null) ??
+    externalCover;
 
   return (
     <div

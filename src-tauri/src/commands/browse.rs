@@ -150,6 +150,33 @@ pub async fn get_playlist(
     Ok(result)
 }
 
+/// Issue #65 — UGC cover-art fallback via iTunes Search. Called
+/// from the FE when the bridge artwork is filtered out (video
+/// thumbnail) AND the YTM audio counterpart returned no cover. The
+/// IPC is keyed on (artist, title, duration) and returns the best-
+/// matching Apple Music cover URL, or `null` for no hit.
+#[tauri::command]
+pub async fn get_external_cover_art(
+    artist: String,
+    title: String,
+    duration_secs: Option<f64>,
+) -> Result<Option<String>, String> {
+    tracing::info!(
+        artist = %artist,
+        title = %title,
+        duration_secs = ?duration_secs,
+        "browse::get_external_cover_art called"
+    );
+    let result = YtmApi::get_external_cover_art(&artist, &title, duration_secs)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "browse::get_external_cover_art failed");
+            e.to_string()
+        })?;
+    tracing::info!(found = result.is_some(), "browse::get_external_cover_art done");
+    Ok(result)
+}
+
 /// Issue #79 — fetch artist channel detail (bio + avatar) so the
 /// ArtistPage can render an introduction below the title plate. The
 /// FE first finds the artist's `channelId` via the existing search

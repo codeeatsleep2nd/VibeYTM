@@ -288,6 +288,112 @@ impl YtmApi {
         Ok(parse_library_albums(&data))
     }
 
+    /// Issue #65 — for UGC fan uploads, neither the bridge thumbnail
+    /// (a YouTube video frame, filtered by `isAlbumArtUrl`) nor the
+    /// audio counterpart (UGC has none) gives us a real album cover.
+    /// Fall back to the iTunes Search API keyed on (artist, title,
+    /// duration). Returns the highest-resolution Apple Music cover URL
+    /// available, or `None` when the search produces no good match.
+    /// `clean_query_field` is applied to the inputs so noisy YouTube
+    /// titles don't poison the iTunes query.
+    ///
+    /// MusicBrainz / Cover Art Archive is intentionally NOT included
+    /// here — they require a 1 req/sec rate limit and a custom User-
+    /// Agent, and iTunes covers the long tail well enough for the
+    /// motivating cases (CJK / J-pop / drama OST). MB can be added as
+    /// a follow-up source if iTunes proves insufficient.
+    pub async fn get_external_cover_art(
+        artist: &str,
+        title: &str,
+        duration_secs: Option<f64>,
+    ) -> anyhow::Result<Option<String>> {
+        if artist.trim().is_empty() || title.trim().is_empty() {
+            return Ok(None);
+        }
+        let clean_artist = clean_query_field(artist);
+        let clean_title = clean_query_field(title);
+        if clean_artist.is_empty() || clean_title.is_empty() {
+            return Ok(None);
+        }
+
+        // iTunes Search API — no API key, GET-based, JSON response.
+        // `entity=song` so we only get track results (not albums or
+        // music videos). `limit=10` gives a reasonable candidate pool.
+        let term = format!("{} {}", clean_artist, clean_title);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .build()?;
+        let resp = client
+            .get("https://itunes.apple.com/search")
+            .query(&[
+                ("term", term.as_str()),
+                ("entity", "song"),
+                ("limit", "10"),
+            ])
+            .header(
+                "User-Agent",
+                "VibeYTM-CoverFallback/1.0 (https://github.com/codeeatsleep2nd/VibeYTM)",
+            )
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("iTunes search HTTP {}", resp.status());
+        }
+        let body: Value = resp.json().await?;
+        let Some(results) = body.get("results").and_then(|v| v.as_array()) else {
+            return Ok(None);
+        };
+
+        // Score candidates: prefer tracks whose artistName + trackName
+        // match (loose) AND whose duration falls within ±2 s of the
+        // requested duration when known. Without a duration filter we
+        // can still pick a winner via title/artist match alone.
+        let mut best: Option<(f64, String)> = None;
+        for cand in results {
+            let cand_artist = cand
+                .get("artistName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let cand_title = cand
+                .get("trackName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !title_matches(cand_title, &clean_title) {
+                continue;
+            }
+            if !artist_matches(cand_artist, &clean_artist) {
+                continue;
+            }
+            // iTunes returns duration in milliseconds.
+            let cand_dur_ms = cand
+                .get("trackTimeMillis")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let diff = match duration_secs {
+                Some(target) if cand_dur_ms > 0.0 => {
+                    let d = (cand_dur_ms / 1000.0 - target).abs();
+                    if d > LRCLIB_DURATION_TOLERANCE_SECS {
+                        continue;
+                    }
+                    d
+                }
+                _ => f64::INFINITY,
+            };
+            // iTunes' standard `artworkUrl100` is 100×100 JPEG; we
+            // upgrade to 600×600 by string-replace, an Apple-supported
+            // CDN convention. If the path doesn't include the resize
+            // segment we accept the URL as-is.
+            if let Some(url) = cand.get("artworkUrl100").and_then(|v| v.as_str()) {
+                let upgraded = url.replace("100x100bb", "600x600bb");
+                if best.as_ref().map_or(true, |(prev_diff, _)| diff < *prev_diff) {
+                    best = Some((diff, upgraded));
+                }
+            }
+        }
+
+        Ok(best.map(|(_, url)| url))
+    }
+
     /// Fetch artist channel detail (bio + avatar) via the real YTM API
     /// for issue #79. `channel_id` is a UC* identifier obtained from a
     /// search-with-artist-filter response (`SearchResults.artists[].channelId`).
