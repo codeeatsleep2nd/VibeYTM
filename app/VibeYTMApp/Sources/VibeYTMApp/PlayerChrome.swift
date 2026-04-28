@@ -91,7 +91,10 @@ struct PlayerChrome: View {
             LyricsPanel()
         }
         .sheet(isPresented: $showExpanded) {
-            NowPlayingExpanded()
+            // Closure-based dismissal — see the doc comment at the top
+            // of NowPlayingExpanded.swift. We deliberately do NOT use
+            // Environment(\.dismiss) inside the presented view.
+            NowPlayingExpanded(onDismiss: { showExpanded = false })
         }
     }
 }

@@ -1,43 +1,47 @@
 import SwiftUI
+import AppKit
 import PlayerCore
 import YTMBridge
 
 /// Full-screen "expanded" Now Playing surface — large artwork on the
 /// left, title + artist + scrubber + transport on the right.
 ///
-/// **DISMISSAL CONTRACT (regression-prevention):**
-/// This sheet has been broken twice now where it was opened and the
-/// user couldn't close it. Going forward there must always be at
-/// least THREE redundant dismissal paths, each tested independently:
+/// **DISMISSAL CONTRACT (regression-prevention).** This sheet has been
+/// broken THREE times in a row. The dismissal contract is now defensive
+/// to the point of redundancy:
 ///
-///   1. Visible "chevron-down" button at top-leading, bound to the
-///      `.cancelAction` keyboard shortcut (Escape).
-///   2. Visible "Done" button at top-trailing, bound to the
-///      `.defaultAction` keyboard shortcut (Return / Enter).
-///   3. Tap the backdrop area outside the player content to dismiss.
+///   1. Caller passes an explicit `onDismiss` closure that flips its
+///      own presentation state. We do NOT use `@Environment(\.dismiss)`
+///      — it's been observed to fail silently inside sheets that mix
+///      keyboardShortcut bindings with focus-effect modifiers.
+///   2. Visible chevron-down button (top-leading) — calls onDismiss.
+///   3. Visible "Done" button (top-trailing) — calls onDismiss.
+///   4. Tap on the dark backdrop area outside the content layer.
+///   5. Local NSEvent monitor watches for the Esc key while the sheet
+///      is on screen and calls onDismiss directly. This is the safety
+///      net for the case where SwiftUI's `.keyboardShortcut(.cancelAction)`
+///      doesn't reach the button (focus chain interference).
 ///
-/// DO NOT attach nested `.sheet(isPresented:)` modifiers to this view.
-/// Doing so causes SwiftUI to consume the parent sheet's keyboard
-/// shortcuts (only the most-recent .sheet modifier wins), silently
-/// breaking Esc / Return dismissal. If you need to open lyrics or
-/// queue from here, dismiss this sheet first and re-open from
-/// PlayerChrome — or use a separate inspector pattern, not nested
-/// sheets.
+/// DO NOT attach nested `.sheet(isPresented:)` modifiers to this view —
+/// SwiftUI honours only the most recent .sheet on a given subtree, and
+/// nested presentations consume the parent sheet's keyboard shortcuts.
 struct NowPlayingExpanded: View {
+    let onDismiss: () -> Void
+
     @Environment(PlayerStore.self) private var store
     @Environment(AppBootstrap.self) private var bootstrap
-    @Environment(\.dismiss) private var dismiss
+    @State private var escMonitor: Any?
 
     var body: some View {
         let state = store.state
         ZStack(alignment: .top) {
+            // Path 4 — backdrop tap. Sits as the lowest layer so any
+            // tap that doesn't hit the content above falls through to
+            // it. The content layer has its own contentShape +
+            // tapGesture below to swallow taps on interactive area.
             backdrop(track: state.track)
-                // Path 3 — tap backdrop to dismiss. Sits on its own
-                // layer below the content so taps only register when
-                // the user clicks empty space, not on buttons /
-                // sliders / cover art.
                 .contentShape(Rectangle())
-                .onTapGesture { dismiss() }
+                .onTapGesture(perform: onDismiss)
 
             VStack(spacing: 0) {
                 header
@@ -46,23 +50,38 @@ struct NowPlayingExpanded: View {
                     .padding(.horizontal, 40)
                 Spacer(minLength: 24)
             }
-            // Block backdrop tap-to-dismiss when the click lands on
-            // actual interactive content. The backdrop tapGesture is
-            // the OUTER layer; this VStack's contentShape makes it
-            // hit-test as a unit so its onTapGesture (a no-op) wins
-            // over the backdrop's. Without this, every click on a
-            // button or slider would also trigger dismissal.
             .contentShape(Rectangle())
-            .onTapGesture { /* swallow */ }
+            .onTapGesture { /* swallow — keeps backdrop tap from firing
+                               when the user clicks anywhere on the
+                               player content (buttons / slider / cover) */ }
         }
         .frame(minWidth: 880, minHeight: 600, idealHeight: 700)
+        // Path 5 — install a local NSEvent monitor for Esc. The
+        // SwiftUI .cancelAction shortcut is unreliable here; a local
+        // monitor gives us a guaranteed Esc-handler regardless of
+        // focus chain or other modifiers in scope.
+        .onAppear {
+            escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if event.keyCode == 53 {  // 53 = kVK_Escape
+                    onDismiss()
+                    return nil  // consume the event
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let m = escMonitor {
+                NSEvent.removeMonitor(m)
+                escMonitor = nil
+            }
+        }
     }
 
     @ViewBuilder
     private var header: some View {
         HStack(spacing: 12) {
-            // Path 1 — chevron-down + Esc.
-            Button { dismiss() } label: {
+            // Path 2 — chevron-down. Direct closure call.
+            Button(action: onDismiss) {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
@@ -74,8 +93,8 @@ struct NowPlayingExpanded: View {
 
             Spacer()
 
-            // Path 2 — Done + Return.
-            Button("Done") { dismiss() }
+            // Path 3 — Done. Direct closure call.
+            Button("Done", action: onDismiss)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
                 .keyboardShortcut(.defaultAction)
