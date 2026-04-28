@@ -10,7 +10,9 @@ mod logging;
 mod protocols;
 pub mod state;
 mod tray;
-mod updater;
+// `pub` so the integration test in `tests/updater_check_once.rs` can
+// reach `updater::check_once_at` against a local mock server (issue #72).
+pub mod updater;
 mod webview_bridge;
 mod ytm_api;
 
