@@ -474,36 +474,39 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 // mid-transition garbage and skip — the next poll either
                 // resolves to a real track-change (videoId branch above)
                 // or returns to a self-consistent same-videoId state.
-                let snapshot_self_consistent = {
+                // Read `ps.track` ONCE — the consistency check and the
+                // delta evaluation share the same snapshot, so a future
+                // writer can't slip a different track between the two
+                // checks (TOCTOU concern raised in code review of
+                // 12af85d). Returns `false` for both flags when there's
+                // no stored track yet; the videoId branch above handles
+                // the cold-start path.
+                let needs_update = {
                     let ps = player_state.read().await;
-                    ps.track
-                        .as_ref()
-                        .map(|t| {
-                            !bs.video_id.is_empty() && bs.video_id == t.video_id
-                        })
-                        .unwrap_or(false)
-                };
-                let needs_update = if !snapshot_self_consistent {
-                    false
-                } else {
-                    let ps = player_state.read().await;
-                    ps.track
-                        .as_ref()
-                        .map(|t| {
-                            let duration_grew = bs.duration_secs > 0.0
-                                && bs.duration_secs > t.duration_secs + 0.5;
-                            let title_changed =
-                                !bs.title.is_empty() && bs.title != t.title;
-                            let artist_changed =
-                                !bs.artist.is_empty() && bs.artist != t.artist;
-                            let artwork_changed = !bs.artwork_url.is_empty()
-                                && t.artwork_url.as_deref() != Some(bs.artwork_url.as_str());
-                            duration_grew
-                                || title_changed
-                                || artist_changed
-                                || artwork_changed
-                        })
-                        .unwrap_or(false)
+                    match ps.track.as_ref() {
+                        None => false,
+                        Some(t) => {
+                            let consistent =
+                                !bs.video_id.is_empty() && bs.video_id == t.video_id;
+                            if !consistent {
+                                false
+                            } else {
+                                let duration_grew = bs.duration_secs > 0.0
+                                    && bs.duration_secs > t.duration_secs + 0.5;
+                                let title_changed =
+                                    !bs.title.is_empty() && bs.title != t.title;
+                                let artist_changed =
+                                    !bs.artist.is_empty() && bs.artist != t.artist;
+                                let artwork_changed = !bs.artwork_url.is_empty()
+                                    && t.artwork_url.as_deref()
+                                        != Some(bs.artwork_url.as_str());
+                                duration_grew
+                                    || title_changed
+                                    || artist_changed
+                                    || artwork_changed
+                            }
+                        }
+                    }
                 };
                 if needs_update {
                     let updated = {
