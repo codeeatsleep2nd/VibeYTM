@@ -45,16 +45,19 @@ export function useSidebarCollapsed(): {
 
   // Apply on mount + every change. Includes the first render so the
   // CSS var is correct before the layout settles, avoiding a flash.
+  // Persistence rides the same effect so the side-effect fires once
+  // per real state change, not once per setState updater call —
+  // React StrictMode invokes updater functions twice in dev to surface
+  // impure logic, so the localStorage write was previously running
+  // twice. (Idempotent in practice, but the rule is still: no
+  // side-effects inside updaters.)
   useEffect(() => {
     applyWidth(isCollapsed);
+    writePersisted(isCollapsed);
   }, [isCollapsed]);
 
   const toggle = useCallback(() => {
-    setIsCollapsed((prev) => {
-      const next = !prev;
-      writePersisted(next);
-      return next;
-    });
+    setIsCollapsed((prev) => !prev);
   }, []);
 
   return { isCollapsed, toggle };

@@ -273,6 +273,15 @@ interface CollapseToggleProps {
  * a real `<button>` (per the WKWebView click-target rule documented in
  * CLAUDE.md). The chevron rotates 180° between states for an immediate
  * visual cue without swapping icons.
+ *
+ * The button is `position: fixed` with `zIndex: 201` so it sits ABOVE
+ * the title-bar drag region in `AppShell` (`zIndex: 200`). Without
+ * this the drag region intercepted every click as a window-drag
+ * gesture and the toggle never fired. `WebkitAppRegion: 'no-drag'`
+ * additionally tells Tauri/Cocoa not to treat clicks here as window
+ * drags. `left` tracks `--sidebar-width` so the toggle follows the
+ * panel edge as it animates between expanded (240 px) and collapsed
+ * (64 px).
  */
 const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
   <button
@@ -282,9 +291,9 @@ const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
     aria-pressed={isCollapsed}
     title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
     style={{
-      position: 'absolute',
+      position: 'fixed',
       top: 'calc((var(--title-bar-height) - 22px) / 2)',
-      right: 'var(--space-2)',
+      left: 'calc(var(--sidebar-width) - 22px - var(--space-2))',
       width: '22px',
       height: '22px',
       display: 'flex',
@@ -297,8 +306,12 @@ const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
       color: 'var(--color-text-tertiary)',
       cursor: 'pointer',
       transition:
-        'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)',
-      zIndex: 1,
+        'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), left var(--duration-normal) var(--ease-out)',
+      zIndex: 201,
+      // @ts-expect-error -- non-standard WebKit property, opts the
+      // button OUT of Tauri's window-drag region so clicks land here
+      // instead of starting a drag.
+      WebkitAppRegion: 'no-drag',
     }}
     onMouseEnter={(e) => {
       e.currentTarget.style.background = 'oklch(100% 0 0 / 0.06)';

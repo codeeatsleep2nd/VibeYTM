@@ -35,6 +35,11 @@ export const AppShell: FC<AppShellProps> = ({
       gridTemplateRows: '1fr',
       height: '100%',
       overflow: 'hidden',
+      // Animate alongside the sidebar's own width transition (issue #82).
+      // Without this the grid column snaps the moment `--sidebar-width`
+      // changes while the sidebar's content tweens — producing a visible
+      // half-step jump between the panel edge and the main column.
+      transition: 'grid-template-columns var(--duration-normal) var(--ease-out)',
     }}
   >
     {/* Title bar drag region */}
