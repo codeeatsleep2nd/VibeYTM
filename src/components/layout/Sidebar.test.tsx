@@ -149,6 +149,11 @@ describe('Sidebar', () => {
       // the drag region instead of the button.
       expect(toggle.style.zIndex).toBe('201');
       expect(toggle.style.position).toBe('fixed');
+      // NOTE: `WebkitAppRegion: 'no-drag'` is intentionally NOT asserted —
+      // jsdom drops non-standard CSS properties so the value never round-
+      // trips through `style`. The contract is enforced by code review +
+      // CLAUDE.md's WKWebView quirks section; jsdom can't catch a regression
+      // here, only manual verification in the running app can.
       // No `<div role="button">` stand-ins introduced by the new code.
       expect(container.querySelectorAll('div[role="button"]').length).toBe(0);
     });
