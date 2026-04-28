@@ -94,14 +94,16 @@ describe('ytm-player-bridge: volume seed-then-persist contract', () => {
     expect(window.__VIBEYTM_DESIRED_VOLUME_PCT__).toBe(55);
   });
 
-  it('leaves the global undefined when localStorage has no entry', () => {
-    // First-launch / cold-start case. The Rust bridge_just_loaded path
-    // pushes the value via IPC to seed the storage; until then, the
-    // global stays undefined and the volume lock no-ops (matches the
-    // prior behaviour, just bounded to one launch instead of every
-    // track change).
+  it('seeds a safe 50%% default when localStorage has no entry (issue #69)', () => {
+    // First-launch / cold-start case. Previously the global stayed
+    // undefined, the volume lock no-op'd, and YTM's freshly-created
+    // <video> burst at native 100%. Now we seed 50%% so the lock
+    // clamps from frame zero. Rust's session-restore one cycle later
+    // pushes the user's actual persisted volume via set_volume, which
+    // overrides this seed AND writes to localStorage so subsequent
+    // navigations skip the default.
     evalBridge();
-    expect(window.__VIBEYTM_DESIRED_VOLUME_PCT__).toBeUndefined();
+    expect(window.__VIBEYTM_DESIRED_VOLUME_PCT__).toBe(50);
   });
 
   it('clamps a stored value above 100 to 100', () => {

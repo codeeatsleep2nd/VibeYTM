@@ -234,16 +234,21 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
   // not silently swap to the radio behind their back.
   useEffect(() => {
     if (!currentVideoId) return;
-    // Skip the /next HTTP fetch when YTM's DOM queue already has this
-    // track in it. The DOM scrape is the source of truth for the panel
-    // (liveQueue branch is preferred in render), so refetching every
-    // time the user hits Next would be a wasted round-trip — and the
-    // brief "setFetchedUpcoming([])" below would make the panel look
-    // like it's reloading even though liveQueue was perfectly fine.
-    if (liveQueue.some((t) => t.videoId === currentVideoId)) {
-      setIsFetching(false);
-      return;
-    }
+    // Issue #68 — previously we skipped the /next fetch entirely when
+    // YTM's DOM queue already contained the current track, on the
+    // theory that liveQueue was the source of truth. But /next is also
+    // the only source we have for the UPCOMING rows' album-art (the
+    // counterpart-resolved `lh*.googleusercontent.com` URL); without
+    // it those rows fell back to `lookupTrackArtwork` which is empty
+    // for song-radio contexts (the playlist-enrichment effect skips
+    // RDAMVM* IDs at line ~102). Result: most queue rows showed the
+    // music-note placeholder.
+    //
+    // We now ALWAYS fetch — but the per-(videoId, activePlaylist)
+    // `queueCache` short-circuits the network call for tracks already
+    // resolved this session, so the only added cost is the first time
+    // a new track plays. The fetch is also debounced behind the
+    // `BRIDGE_SETTLE_MS` timer below to respect the bridge-settle rule.
     const songRadio = `RDAMVM${currentVideoId}`;
     const isDefaultContext =
       activePlaylist === null || activePlaylist === songRadio;
@@ -254,9 +259,14 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       setIsFetching(false);
       return;
     }
-    // Stale list from the previous track/playlist shouldn't keep rendering
-    // during the in-flight fetch, even if the panel happens to be open.
-    setFetchedUpcoming([]);
+    // Don't flush fetchedUpcoming while the new fetch is in flight —
+    // doing so dropped artwork overrides for the upcoming rows during
+    // the BRIDGE_SETTLE_MS+network window, leaving placeholders on
+    // every track change. The new tracks are written when the fetch
+    // resolves; until then the previous overrides are still better
+    // than nothing for any row whose videoId is in both lists. Only
+    // flush when the activePlaylist itself changes (genuine context
+    // shift) — that's already triggered separately by the dep array.
     let cancelled = false;
     setIsFetching(true);
 
