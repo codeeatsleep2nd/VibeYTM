@@ -522,6 +522,36 @@ impl YtmApi {
             anyhow::anyhow!("YTM did not expose a lyrics tab for this track")
         })?;
 
+        // Issue #75 — kick off the external race (LRCLIB + NetEase) in
+        // parallel with the YTM browse for the lyrics tab. Previously
+        // the YTM browse ran sequentially first; only AFTER it returned
+        // empty did we start the externals, costing the user ~500ms on
+        // every track without YTM-synced lyrics. Now both pipelines fly
+        // at once: when YTM has lyrics we waste the external round-trip
+        // (cheap), and when it doesn't the externals are already mostly
+        // finished by the time we'd otherwise start them.
+        //
+        // The actual external race is spawned via the same helper used
+        // below so the two paths share one source-of-truth. The future
+        // is pinned here and awaited only if YTM browse was empty.
+        let externals_pre = if let (Some(artist), Some(title)) = (
+            effective_artist.as_deref(),
+            effective_title.as_deref(),
+        ) {
+            if artist.trim().is_empty() || title.trim().is_empty() {
+                None
+            } else {
+                Some(spawn_external_lyrics_race(
+                    video_id.to_string(),
+                    clean_query_field(artist),
+                    clean_query_field(title),
+                    effective_duration,
+                ))
+            }
+        } else {
+            None
+        };
+
         let browse_body = serde_json::json!({ "browseId": browse_id }).to_string();
         let browse_raw = ytm_api_call(app, "browse", &browse_body)
             .await
@@ -535,12 +565,15 @@ impl YtmApi {
         // lyrics, please try LRCLIB/NetEase instead"). When forced we
         // discard YTM's synced lines and the plain text and fall through
         // to the race below; the LRCLIB/NetEase result becomes the new
-        // baseline that gets cached.
+        // baseline that gets cached. The pre-flight task we spawned
+        // above is dropped (and aborted) when `externals_pre` goes out
+        // of scope at the end of the function — `tokio::task::JoinHandle`
+        // does NOT auto-abort on drop, so we explicitly call `abort()`
+        // here to stop the wasted work.
         if !force_external && lyrics.lines.as_ref().map_or(false, |l| !l.is_empty()) {
-            // YTM's lyrics tab has no per-track verification; we record the
-            // playing track's metadata so a later cache-read sanity check
-            // can spot a divergence (e.g. videoId got re-bound to a
-            // different audio counterpart on YTM's side).
+            if let Some(handle) = externals_pre {
+                handle.abort();
+            }
             lyrics.matched_artist = effective_artist.clone();
             lyrics.matched_title = effective_title.clone();
             return Ok(lyrics);
@@ -577,121 +610,33 @@ impl YtmApi {
             return Ok(lyrics);
         }
 
-        // Diagnostic — every prior session showed `force_external=true`
-        // logging followed by silence. Confirming what the race actually
-        // sees so we know if it's running or being short-circuited.
         tracing::info!(
             video_id,
             effective_artist = ?effective_artist,
             effective_title = ?effective_title,
             effective_duration = ?effective_duration,
-            "lyrics: about to race LRCLIB/NetEase"
+            "lyrics: awaiting external race result (pre-flight started during YTM browse)"
         );
-        if let (Some(artist), Some(title)) = (effective_artist.as_deref(), effective_title.as_deref()) {
-            if artist.trim().is_empty() || title.trim().is_empty() {
-                tracing::warn!(
-                    video_id,
-                    artist_len = artist.len(),
-                    title_len = title.len(),
-                    "lyrics: artist or title is empty — race would be useless, skipping"
-                );
-            }
-            let clean_artist = clean_query_field(artist);
-            let clean_title = clean_query_field(title);
-            tracing::info!(
-                video_id,
-                clean_artist = %clean_artist,
-                clean_title = %clean_title,
-                "lyrics: cleaned query fields"
-            );
-            let lookup_duration = effective_duration;
 
-            // Race LRCLIB and NetEase in parallel. Whichever returns synced
-            // lyrics first wins; `None` results wait for the other source
-            // before giving up. Different sources win on different catalogs
-            // (LRCLIB for Western, NetEase for CJK), so racing halves the
-            // typical wait instead of trying them one after the other.
-            let artist_l = clean_artist.clone();
-            let title_l = clean_title.clone();
-            let vid_l = video_id.to_string();
-            let lrc_fut = async move {
-                tracing::info!(video_id = %vid_l, "LRCLIB: about to call fetch_lrclib_synced");
-                let r = fetch_lrclib_synced(&artist_l, &title_l, lookup_duration).await;
-                tracing::info!(video_id = %vid_l, ok = r.is_ok(), "LRCLIB: fetch_lrclib_synced returned");
-                match r {
-                    Ok(Some(body)) => {
-                        tracing::info!(video_id = %vid_l, body_len = body.len(), "LRCLIB: returning Some");
-                        Some((body, "LRCLIB"))
-                    }
-                    Ok(None) => {
-                        tracing::info!(video_id = %vid_l, "LRCLIB had no synced lyrics");
-                        None
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "LRCLIB fetch failed");
-                        None
+        // Pre-flight was kicked off above the YTM browse call. By the
+        // time we get here it's typically already finished — we just
+        // join its handle and use the result. When it wasn't spawned
+        // (artist/title missing or empty), fall through with whatever
+        // YTM's lyrics tab gave us (often empty plain text).
+        if let Some(handle) = externals_pre {
+            match handle.await {
+                Ok(Some((body, source_name))) => {
+                    if apply_synced_lrc(&mut lyrics, &body, source_name) {
+                        lyrics.matched_artist = effective_artist.clone();
+                        lyrics.matched_title = effective_title.clone();
+                        return Ok(lyrics);
                     }
                 }
-            };
-
-            let artist_n = clean_artist.clone();
-            let title_n = clean_title.clone();
-            let vid_n = video_id.to_string();
-            let ne_fut = async move {
-                tracing::info!(video_id = %vid_n, "NetEase: about to call fetch_netease_synced");
-                let r = fetch_netease_synced_with_duration(
-                    &artist_n,
-                    &title_n,
-                    lookup_duration,
-                )
-                .await;
-                tracing::info!(video_id = %vid_n, ok = r.is_ok(), "NetEase: fetch_netease_synced returned");
-                match r {
-                    Ok(Some(body)) => {
-                        tracing::info!(video_id = %vid_n, body_len = body.len(), "NetEase: returning Some");
-                        Some((body, "NetEase"))
-                    }
-                    Ok(None) => {
-                        tracing::info!(video_id = %vid_n, "NetEase had no synced lyrics");
-                        None
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "NetEase fetch failed");
-                        None
-                    }
+                Ok(None) => {
+                    tracing::info!(video_id, "external race produced no winner");
                 }
-            };
-
-            tokio::pin!(lrc_fut, ne_fut);
-            let mut lrc_done = false;
-            let mut ne_done = false;
-            let mut winner: Option<(String, &'static str)> = None;
-
-            while winner.is_none() && !(lrc_done && ne_done) {
-                tokio::select! {
-                    r = &mut lrc_fut, if !lrc_done => {
-                        lrc_done = true;
-                        if r.is_some() { winner = r; }
-                    }
-                    r = &mut ne_fut, if !ne_done => {
-                        ne_done = true;
-                        if r.is_some() { winner = r; }
-                    }
-                }
-            }
-
-            if let Some((body, source_name)) = winner {
-                if apply_synced_lrc(&mut lyrics, &body, source_name) {
-                    // Stamp the matched artist/title we asked for. The
-                    // fetch helpers already filtered candidates to ensure
-                    // the response is FOR this track (NetEase by title +
-                    // artist + duration; LRCLIB by duration tolerance), so
-                    // recording the requested values gives the cache-read
-                    // sanity check a stable point of comparison even when
-                    // the user's playing-track metadata refines later.
-                    lyrics.matched_artist = effective_artist.clone();
-                    lyrics.matched_title = effective_title.clone();
-                    return Ok(lyrics);
+                Err(e) => {
+                    tracing::warn!(video_id, error = %e, "external race join failed");
                 }
             }
         }
@@ -831,6 +776,81 @@ fn strip_noise_brackets(
 /// live vs studio, edit vs extended) — the LRC timestamps would be anchored
 /// to a different zero, producing systematic per-track off-sync.
 const LRCLIB_DURATION_TOLERANCE_SECS: f64 = 2.0;
+
+/// Issue #75 — spawn the LRCLIB + NetEase race as a background task so
+/// the caller can run it in parallel with YTM's own lyrics-tab fetch.
+/// The returned `JoinHandle` resolves to the winning `(body, source)`
+/// pair when one source returns synced lyrics, or `None` when both
+/// gave up. The caller is responsible for calling `abort()` on the
+/// handle when YTM's tab has synced lyrics (so we don't waste the
+/// in-flight HTTP requests after we've already decided).
+///
+/// Different catalogs win on different sources — LRCLIB tends to
+/// cover Western tracks, NetEase covers CJK — so racing halves the
+/// typical wait. `tokio::select!` lets the first non-empty result
+/// short-circuit; an empty result waits for its peer.
+fn spawn_external_lyrics_race(
+    video_id: String,
+    clean_artist: String,
+    clean_title: String,
+    lookup_duration: Option<f64>,
+) -> tokio::task::JoinHandle<Option<(String, &'static str)>> {
+    tokio::spawn(async move {
+        let artist_l = clean_artist.clone();
+        let title_l = clean_title.clone();
+        let vid_l = video_id.clone();
+        let lrc_fut = async move {
+            tracing::info!(video_id = %vid_l, "LRCLIB: about to call fetch_lrclib_synced");
+            match fetch_lrclib_synced(&artist_l, &title_l, lookup_duration).await {
+                Ok(Some(body)) => Some((body, "LRCLIB")),
+                Ok(None) => {
+                    tracing::info!(video_id = %vid_l, "LRCLIB had no synced lyrics");
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "LRCLIB fetch failed");
+                    None
+                }
+            }
+        };
+
+        let artist_n = clean_artist;
+        let title_n = clean_title;
+        let vid_n = video_id;
+        let ne_fut = async move {
+            tracing::info!(video_id = %vid_n, "NetEase: about to call fetch_netease_synced");
+            match fetch_netease_synced_with_duration(&artist_n, &title_n, lookup_duration).await {
+                Ok(Some(body)) => Some((body, "NetEase")),
+                Ok(None) => {
+                    tracing::info!(video_id = %vid_n, "NetEase had no synced lyrics");
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "NetEase fetch failed");
+                    None
+                }
+            }
+        };
+
+        tokio::pin!(lrc_fut, ne_fut);
+        let mut lrc_done = false;
+        let mut ne_done = false;
+        let mut winner: Option<(String, &'static str)> = None;
+        while winner.is_none() && !(lrc_done && ne_done) {
+            tokio::select! {
+                r = &mut lrc_fut, if !lrc_done => {
+                    lrc_done = true;
+                    if r.is_some() { winner = r; }
+                }
+                r = &mut ne_fut, if !ne_done => {
+                    ne_done = true;
+                    if r.is_some() { winner = r; }
+                }
+            }
+        }
+        winner
+    })
+}
 
 /// Loose case-insensitive title match used by LRCLIB and NetEase candidate
 /// filtering (issue #67). A short, punctuated title like "APT." otherwise
