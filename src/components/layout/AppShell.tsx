@@ -35,27 +35,15 @@ export const AppShell: FC<AppShellProps> = ({
       gridTemplateRows: '1fr',
       height: '100%',
       overflow: 'hidden',
-      // Animate alongside the sidebar's own width transition (issue #82).
-      // Without this the grid column snaps the moment `--sidebar-width`
-      // changes while the sidebar's content tweens — producing a visible
-      // half-step jump between the panel edge and the main column.
-      transition: 'grid-template-columns var(--duration-normal) var(--ease-out)',
     }}
   >
-    {/*
-      Title bar drag region. `left: var(--sidebar-width)` so the
-      sidebar's x-extent is OUTSIDE the OS-level drag region (issue
-      #92 — the collapse toggle at the right edge of the sidebar was
-      otherwise covered by the drag region and treated every click as
-      a window-drag gesture). The carve reactively follows the
-      collapse animation because both consume `--sidebar-width`.
-    */}
+    {/* Title bar drag region (full width — collapse toggle removed). */}
     <div
       data-tauri-drag-region
       style={{
         position: 'fixed',
         top: 0,
-        left: 'var(--sidebar-width)',
+        left: 0,
         right: 0,
         height: 'var(--title-bar-height)',
         zIndex: 200,

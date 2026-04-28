@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Sidebar } from './Sidebar';
@@ -22,18 +22,6 @@ vi.mock('../../hooks/useAccountInfo', () => ({
 
 vi.mock('../../hooks/useLoginState', () => ({
   useLoginState: () => true,
-}));
-
-// Mutable so individual tests can flip the sidebar between expanded
-// and collapsed without remounting the module. Mirrors the pattern
-// used by `PlayerChrome.test.tsx` for getPlannedNext.
-const sidebarCollapsedState = {
-  isCollapsed: false as boolean,
-  toggle: vi.fn(),
-};
-
-vi.mock('../../hooks/useSidebarCollapsed', () => ({
-  useSidebarCollapsed: () => sidebarCollapsedState,
 }));
 
 // CachedImage's mount-time `Image.decode()` isn't implemented in jsdom
@@ -133,54 +121,13 @@ describe('Sidebar', () => {
     expect(bar.style.pointerEvents).toBe('none');
   });
 
-  // ---- Collapsible sidebar (issue #82) ----
-  describe('collapsed mode', () => {
-    afterEach(() => {
-      sidebarCollapsedState.isCollapsed = false;
-      sidebarCollapsedState.toggle.mockClear();
-    });
-
-    it('renders the expand/collapse toggle as a real <button> with no-drag opt-out', () => {
-      const { container } = render(<Sidebar currentPath="home" onNavigate={noop} />);
-      const toggle = screen.getByRole('button', { name: /Collapse sidebar/i });
-      expect(toggle).toBeInstanceOf(HTMLButtonElement);
-      // The toggle must escape the title-bar drag region (zIndex 200) and
-      // opt out of the WebkitAppRegion drag — without this clicks land on
-      // the drag region instead of the button.
-      expect(toggle.style.zIndex).toBe('201');
-      expect(toggle.style.position).toBe('fixed');
-      // NOTE: `WebkitAppRegion: 'no-drag'` is intentionally NOT asserted —
-      // jsdom drops non-standard CSS properties so the value never round-
-      // trips through `style`. The contract is enforced by code review +
-      // CLAUDE.md's WKWebView quirks section; jsdom can't catch a regression
-      // here, only manual verification in the running app can.
-      // No `<div role="button">` stand-ins introduced by the new code.
-      expect(container.querySelectorAll('div[role="button"]').length).toBe(0);
-    });
-
-    it('clicking the toggle calls the hook toggle function', async () => {
-      render(<Sidebar currentPath="home" onNavigate={noop} />);
-      const toggle = screen.getByRole('button', { name: /Collapse sidebar/i });
-      await userEvent.click(toggle);
-      expect(sidebarCollapsedState.toggle).toHaveBeenCalledTimes(1);
-    });
-
-    it('hides nav labels and the account name when collapsed', () => {
-      sidebarCollapsedState.isCollapsed = true;
-      render(<Sidebar currentPath="home" onNavigate={noop} />);
-      // Labels live as the trailing text node of each NavItem button.
-      // When collapsed they are not rendered — querying by visible text
-      // yields no element. The Library *section header* is also hidden.
-      expect(screen.queryByText('Home')).not.toBeInTheDocument();
-      expect(screen.queryByText('Library')).not.toBeInTheDocument();
-      // Account card avatar still mounted, but the name is gone.
-      expect(screen.queryByText('Jane')).not.toBeInTheDocument();
-      // Toggle button surfaces the destination via aria-label so the
-      // intent stays accessible — pin the inverse text since
-      // isCollapsed=true means the action is now "Expand sidebar".
-      expect(
-        screen.getByRole('button', { name: /Expand sidebar/i }),
-      ).toBeInTheDocument();
-    });
+  it('does NOT render a sidebar collapse/expand toggle (feature removed)', () => {
+    render(<Sidebar currentPath="home" onNavigate={noop} />);
+    expect(
+      screen.queryByRole('button', { name: /Collapse sidebar/i }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /Expand sidebar/i }),
+    ).toBeNull();
   });
 });

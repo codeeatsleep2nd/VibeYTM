@@ -84,10 +84,6 @@
 
   /* Layout */
   --sidebar-width: 240px;
-  /* Issue #92 — constant reference width for the collapse toggle's
-     `left` so the button stays put when `--sidebar-width` collapses
-     to 0. The `useSidebarCollapsed` hook only mutates `--sidebar-width`. */
-  --sidebar-expanded-width: 240px;
   --player-bar-height: 72px;
   --title-bar-height: 38px;
   --now-playing-width: 320px;
