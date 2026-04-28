@@ -291,7 +291,15 @@ final class AppBootstrap {
                 endpoint: "browse",
                 body: ["browseId": browseId]
             )
-            return Innertube.parseShelves(from: data)
+            let shelves = Innertube.parseShelves(from: data)
+            // Diagnostic dump: when an empty shelf list comes back, persist
+            // the raw response so we can inspect the shape and extend the
+            // parser. Filename keyed on browseId (sanitised).
+            if shelves.isEmpty {
+                let safe = browseId.filter { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }
+                try? data.write(to: URL(fileURLWithPath: "/tmp/vibeytm-empty-\(safe.prefix(40)).json"))
+            }
+            return shelves
         } catch {
             return []
         }

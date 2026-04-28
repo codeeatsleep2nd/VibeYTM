@@ -27,11 +27,11 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .home: "Home"
         case .explore: "Explore"
-        case .recentlyPlayed: "Recently Played"
+        case .recentlyPlayed: "History"
         case .artists: "Artists"
         case .albums: "Albums"
         case .songs: "Songs"
-        case .allPlaylists: "All Playlists"
+        case .allPlaylists: "Playlists"
         case .search: "Search"
         }
     }
@@ -40,7 +40,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .home: "house"
         case .explore: "sparkles"
-        case .recentlyPlayed: "clock"
+        case .recentlyPlayed: "clock.arrow.circlepath"
         case .artists: "music.mic"
         case .albums: "square.stack"
         case .songs: "music.note"

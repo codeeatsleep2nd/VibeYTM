@@ -190,7 +190,40 @@ public enum Innertube {
         if let playlistShelf = section["musicPlaylistShelfRenderer"] as? [String: Any] {
             return parsePlaylistShelf(playlistShelf, fallbackId: "playlist-\(index)")
         }
+        if let grid = section["gridRenderer"] as? [String: Any] {
+            return parseGrid(grid, fallbackId: "grid-\(index)")
+        }
+        if let item = section["itemSectionRenderer"] as? [String: Any] {
+            // YTM occasionally wraps a single shelf inside an
+            // itemSectionRenderer. Recurse into its contents to find a
+            // parseable section.
+            let contents = item["contents"] as? [[String: Any]] ?? []
+            for inner in contents {
+                if let shelf = parseSection(inner, index: index) {
+                    return shelf
+                }
+            }
+        }
         return nil
+    }
+
+    /// Library pages (Albums / Artists / Playlists) commonly render as a
+    /// `gridRenderer` instead of a `musicShelfRenderer`. The grid wraps
+    /// `musicTwoRowItemRenderer` items (square cards) and may include a
+    /// header for the title. Without parsing this, the entire library
+    /// section (Albums tab, Artists tab, Saved Playlists tab) is empty.
+    private static func parseGrid(_ grid: [String: Any], fallbackId: String) -> Shelf? {
+        let header = grid["header"] as? [String: Any]
+        let basicHeader = header?["gridHeaderRenderer"] as? [String: Any]
+        let titleObj = basicHeader?["title"] as? [String: Any]
+        let runs = titleObj?["runs"] as? [[String: Any]] ?? []
+        let title = runs.first?["text"] as? String ?? ""
+
+        let rawContents = grid["items"] as? [[String: Any]] ?? []
+        let items = rawContents.compactMap(parseCarouselItem)
+        guard !items.isEmpty else { return nil }
+        let displayTitle = title.isEmpty ? "Library" : title
+        return Shelf(id: fallbackId, title: displayTitle, items: items)
     }
 
     /// Album / playlist track listing. Same item shape as `musicShelfRenderer`

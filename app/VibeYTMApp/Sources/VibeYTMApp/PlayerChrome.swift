@@ -77,6 +77,13 @@ struct PlayerChrome: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
         .glassEffect(in: .capsule)
+        // Suppress the focus ring across every chrome control. macOS
+        // auto-focuses the first focusable button on launch (the
+        // artwork tap-to-expand or the prev button), which draws a
+        // distracting rounded-square selection halo. Users still get
+        // hover and active feedback; only the keyboard focus ring is
+        // hidden.
+        .focusEffectDisabled()
         .sheet(isPresented: $showQueue) {
             QueuePanel()
         }
