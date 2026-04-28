@@ -6,10 +6,17 @@
 // the canonical source — see useAudioCounterpartArtwork hook.
 
 /**
- * True iff `url` points to YouTube's album-art CDN
- * (`lh*.googleusercontent.com` or `yt3.googleusercontent.com`).
- * Signed and unsigned URLs both qualify — the signature only affects
- * expiry, not which image is rendered.
+ * True iff `url` points to a known album-art CDN:
+ *   - `lh*.googleusercontent.com` / `yt3.googleusercontent.com` —
+ *     YouTube Music's own album covers.
+ *   - `is*-ssl.mzstatic.com` — Apple Music CDN, used by the issue
+ *     #65 UGC fallback (`useExternalCoverFallback`). Without this the
+ *     hook's `fallbackNeeded` check classified its OWN cached result
+ *     as "not album art", causing redundant lookups when the result
+ *     happened to flow back through the chain as a bridge artwork.
+ *
+ * Signed and unsigned URLs both qualify for the YouTube CDNs — the
+ * signature only affects expiry, not which image is rendered.
  *
  * False for `i.ytimg.com/vi/...` (the YouTube *video* thumbnail
  * service) and any unknown host.
@@ -18,6 +25,7 @@ export function isAlbumArtUrl(url: string | null | undefined): boolean {
   if (!url) return false;
   if (/^https?:\/\/lh\d+\.googleusercontent\.com\//.test(url)) return true;
   if (/^https?:\/\/yt3\.googleusercontent\.com\//.test(url)) return true;
+  if (/^https?:\/\/is\d+-ssl\.mzstatic\.com\//.test(url)) return true;
   return false;
 }
 

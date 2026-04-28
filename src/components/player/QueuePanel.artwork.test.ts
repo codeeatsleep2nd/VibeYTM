@@ -12,6 +12,15 @@ describe('isAlbumArtUrl', () => {
     expect(isAlbumArtUrl('https://yt3.googleusercontent.com/abc=w512-h512')).toBe(true);
   });
 
+  it('matches Apple Music CDN (issue #65 UGC fallback)', () => {
+    expect(
+      isAlbumArtUrl('https://is1-ssl.mzstatic.com/image/.../600x600bb.jpg'),
+    ).toBe(true);
+    expect(
+      isAlbumArtUrl('https://is2-ssl.mzstatic.com/image/.../600x600bb.jpg'),
+    ).toBe(true);
+  });
+
   it('matches signed album-art URLs too — they are still album art', () => {
     expect(
       isAlbumArtUrl(

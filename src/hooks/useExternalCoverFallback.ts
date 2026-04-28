@@ -11,10 +11,27 @@ import { debug } from '../lib/debug';
 // components share one IPC fetch and the result survives unmount.
 
 const cache = new Map<string, string | null>();
+// Per-videoId failure marker. CLAUDE.md mandates that any
+// background fetch on track-change should be idempotent and bounded
+// — without this set, a transient iTunes outage retried on every
+// re-render of the hook (the deps include artist/title/durationSecs
+// which YTM's bridge refines after the initial track-changed emit).
+// One miss per videoId per session is the contract; user can force
+// a retry by skipping away and back, which clears the in-memory state.
+const failedVideoIds = new Set<string>();
 
 const FETCH_FAILED: unique symbol = Symbol('vibeytm:externalCoverFetchFailed');
 type FetchResult = string | null | typeof FETCH_FAILED;
 const inflight = new Map<string, Promise<FetchResult>>();
+
+// Settle delay before firing the iTunes IPC after a track change.
+// Per the CLAUDE.md "background fetches need a settle delay" rule —
+// YTM's hidden audio webview navigates on every track change and the
+// bridge channel hangs for ~3-15 s during the transition. Firing
+// straight away piles onto the stuck channel and starves user-driven
+// IPCs (`get_playlist`, `search`) that the user is clicking right
+// then. 1.5 s matches the documented value.
+const TRACK_CHANGE_SETTLE_MS = 1500;
 
 interface CoverFallbackInput {
   videoId: string | undefined | null;
@@ -71,39 +88,65 @@ export function useExternalCoverFallback(
   useEffect(() => {
     if (!fallbackNeeded || !videoId) return;
     if (cache.has(videoId)) return;
+    // Don't retry within the same session if a previous attempt failed.
+    // Without this guard a transient iTunes outage was hit again every
+    // time the bridge refined artist/title/durationSecs (which retrigger
+    // this effect through the dep array).
+    if (failedVideoIds.has(videoId)) return;
 
     let cancelled = false;
-    const existing = inflight.get(videoId);
-    const promise: Promise<FetchResult> =
-      existing
-      ?? browseApi
-        .getExternalCoverArt({
-          artist: artist!,
-          title: title!,
-          durationSecs: durationSecs ?? null,
-        })
-        .catch((): FetchResult => FETCH_FAILED);
-    if (!existing) inflight.set(videoId, promise);
-
-    promise.then((result) => {
-      inflight.delete(videoId);
-      if (result === FETCH_FAILED) {
-        debug.warn('useExternalCoverFallback', 'IPC failed', { videoId });
-        return;
-      }
-      cache.set(videoId, result);
-      debug.log('useExternalCoverFallback', 'IPC resolved', {
-        videoId,
-        hasUrl: !!result,
-      });
+    // Track-change settle delay. The IPC fires only after a 1.5 s
+    // window with no further dep changes — debouncing artist/title/
+    // duration refinements that YTM emits during the transition.
+    // Cleanup clears the timer if the videoId changes mid-wait, so we
+    // never fire for a track the user has already skipped.
+    const fireTimer = setTimeout(() => {
       if (cancelled) return;
-      setState((prev) =>
-        prev.videoId === videoId ? { videoId, override: result } : prev,
-      );
-    });
+      // Re-check the cache inside the timer in case a sibling component
+      // populated it during the settle window.
+      if (cache.has(videoId)) return;
+      // The bridge can briefly emit `durationSecs: 0` before YTM's
+      // <video> metadata loads. A `0` duration would force the iTunes
+      // candidate filter to reject every real-length track. Coerce to
+      // null so the Rust side skips duration filtering instead.
+      const safeDuration =
+        durationSecs && durationSecs > 0 ? durationSecs : null;
+      const existing = inflight.get(videoId);
+      const promise: Promise<FetchResult> =
+        existing
+        ?? browseApi
+          .getExternalCoverArt({
+            artist: artist!,
+            title: title!,
+            durationSecs: safeDuration,
+          })
+          .catch((): FetchResult => FETCH_FAILED);
+      if (!existing) inflight.set(videoId, promise);
+
+      promise.then((result) => {
+        inflight.delete(videoId);
+        if (result === FETCH_FAILED) {
+          debug.warn('useExternalCoverFallback', 'IPC failed', { videoId });
+          // Mark this videoId as terminally-failed for the session so
+          // dep-array re-fires don't replay the request.
+          failedVideoIds.add(videoId);
+          return;
+        }
+        cache.set(videoId, result);
+        debug.log('useExternalCoverFallback', 'IPC resolved', {
+          videoId,
+          hasUrl: !!result,
+        });
+        if (cancelled) return;
+        setState((prev) =>
+          prev.videoId === videoId ? { videoId, override: result } : prev,
+        );
+      });
+    }, TRACK_CHANGE_SETTLE_MS);
 
     return () => {
       cancelled = true;
+      clearTimeout(fireTimer);
     };
   }, [videoId, artist, title, durationSecs, fallbackNeeded]);
 

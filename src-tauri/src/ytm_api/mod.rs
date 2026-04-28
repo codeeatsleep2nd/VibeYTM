@@ -319,10 +319,11 @@ impl YtmApi {
         // iTunes Search API — no API key, GET-based, JSON response.
         // `entity=song` so we only get track results (not albums or
         // music videos). `limit=10` gives a reasonable candidate pool.
+        // Reuse the static `reqwest::Client` so we don't spin up a new
+        // connection pool + TLS thread on every UGC track change
+        // (`OnceLock` initialiser below).
         let term = format!("{} {}", clean_artist, clean_title);
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(8))
-            .build()?;
+        let client = itunes_client();
         let resp = client
             .get("https://itunes.apple.com/search")
             .query(&[
@@ -330,10 +331,6 @@ impl YtmApi {
                 ("entity", "song"),
                 ("limit", "10"),
             ])
-            .header(
-                "User-Agent",
-                "VibeYTM-CoverFallback/1.0 (https://github.com/codeeatsleep2nd/VibeYTM)",
-            )
             .send()
             .await?;
         if !resp.status().is_success() {
@@ -1045,6 +1042,25 @@ fn strip_noise_brackets(
 /// live vs studio, edit vs extended) — the LRC timestamps would be anchored
 /// to a different zero, producing systematic per-track off-sync.
 const LRCLIB_DURATION_TOLERANCE_SECS: f64 = 2.0;
+
+/// Shared `reqwest::Client` for the iTunes Search cover-art lookup.
+/// Building a new client per request spawns a fresh connection pool
+/// and TLS thread — wasteful when the IPC fires once per UGC track
+/// change. `std::sync::OnceLock` is async-safe and lock-free after
+/// the first init.
+fn itunes_client() -> &'static reqwest::Client {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .user_agent(
+                "VibeYTM-CoverFallback/1.0 (https://github.com/codeeatsleep2nd/VibeYTM)",
+            )
+            .build()
+            .expect("itunes client init")
+    })
+}
 
 /// Issue #75 — spawn the LRCLIB + NetEase race as a background task so
 /// the caller can run it in parallel with YTM's own lyrics-tab fetch.
