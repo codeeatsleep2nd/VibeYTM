@@ -455,14 +455,37 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 drop(last_vid);
 
                 // Same videoId, but YTM's DOM can still be mid-transition.
-                // Two scenarios this branch has to repair:
+                // Three scenarios this branch has to repair:
                 //   * initial duration was 0 and has now filled in (issue #34)
                 //   * track auto-advanced and our previous emit captured the
                 //     new videoId alongside the OLD title/artwork, so the
                 //     frontend is stuck showing stale metadata (issue #57)
-                // Any meaningful field delta triggers a re-emit of
-                // TRACK_CHANGED with the reconciled data.
-                let needs_update = {
+                //
+                // Issue #57 hardening: when the user seeks to the very end
+                // of a short track, YTM auto-advances mid-poll. The DOM
+                // may briefly report the OLD videoId (or empty) alongside
+                // the NEW track's duration, so the previous version of
+                // this branch wrote the new duration onto the old track —
+                // FE then rendered new-duration + old-cover until the
+                // next cycle delivered the real videoId. The fix: gate
+                // the in-place merge on `bs.video_id` matching the stored
+                // track's videoId AND being non-empty. If they differ
+                // OR bs reports an empty videoId, treat the snapshot as
+                // mid-transition garbage and skip — the next poll either
+                // resolves to a real track-change (videoId branch above)
+                // or returns to a self-consistent same-videoId state.
+                let snapshot_self_consistent = {
+                    let ps = player_state.read().await;
+                    ps.track
+                        .as_ref()
+                        .map(|t| {
+                            !bs.video_id.is_empty() && bs.video_id == t.video_id
+                        })
+                        .unwrap_or(false)
+                };
+                let needs_update = if !snapshot_self_consistent {
+                    false
+                } else {
                     let ps = player_state.read().await;
                     ps.track
                         .as_ref()
