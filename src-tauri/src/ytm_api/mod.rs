@@ -5593,6 +5593,70 @@ mod tests {
         );
     }
 
+    // ---- get_history shape (issue #93) ----------------------------------
+
+    #[test]
+    fn parse_library_songs_handles_history_carousel_shape() {
+        // FEmusic_history wraps tracks in date-grouped
+        // `musicCarouselShelfRenderer` sections ("Today", "Yesterday").
+        // `find_browse_list_items` already extracts items from carousels,
+        // so `parse_library_songs` should pick them up. Pin the shape so
+        // a future change to either fn doesn't silently empty out the
+        // History page (issue #93 follow-up).
+        let data = json!({
+            "contents": {
+                "singleColumnBrowseResultsRenderer": {
+                    "tabs": [{
+                        "tabRenderer": {
+                            "content": {
+                                "sectionListRenderer": {
+                                    "contents": [
+                                        {
+                                            "musicCarouselShelfRenderer": {
+                                                "header": {},
+                                                "contents": [
+                                                    {
+                                                        "musicResponsiveListItemRenderer": {
+                                                            "flexColumns": [
+                                                                {
+                                                                    "musicResponsiveListItemFlexColumnRenderer": {
+                                                                        "text": { "runs": [
+                                                                            {
+                                                                                "text": "Recently Played Song",
+                                                                                "navigationEndpoint": {
+                                                                                    "watchEndpoint": { "videoId": "histVid1" }
+                                                                                }
+                                                                            }
+                                                                        ] }
+                                                                    }
+                                                                },
+                                                                {
+                                                                    "musicResponsiveListItemFlexColumnRenderer": {
+                                                                        "text": { "runs": [
+                                                                            { "text": "Some Artist" }
+                                                                        ] }
+                                                                    }
+                                                                }
+                                                            ]
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }]
+                }
+            }
+        });
+        let tracks = super::parse_library_songs(&data);
+        assert_eq!(tracks.len(), 1, "expected 1 track from carousel shelf");
+        assert_eq!(tracks[0].title, "Recently Played Song");
+        assert_eq!(tracks[0].video_id, "histVid1");
+    }
+
     #[test]
     fn parse_artist_detail_returns_empty_description_when_none_present() {
         let data = json!({ "header": { "musicImmersiveHeaderRenderer": {} } });
