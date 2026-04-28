@@ -1,5 +1,5 @@
 import { type FC, useEffect, useState } from 'react';
-import type { AlbumSummary, SearchResults, TrackInfo } from '../../lib/types';
+import type { AlbumSummary, TrackInfo } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
 import { debug } from '../../lib/debug';
 import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
@@ -67,28 +67,51 @@ export const ArtistPage: FC<ArtistPageProps> = ({
     setAlbums([]);
     setBio('');
 
-    const songsPromise: Promise<SearchResults> = browseApi.search(
-      artistName,
-      SEARCH_FILTER_SONGS,
-    );
-    const albumsPromise: Promise<SearchResults> = browseApi.search(
-      artistName,
-      SEARCH_FILTER_ALBUMS,
-    );
-    // Issue #79: pull the artist channelId from a parallel artist-search,
-    // then fetch the channel's bio. Runs alongside songs/albums so it
-    // doesn't lengthen the page's overall load. Failure is silent — the
-    // shelves still render even if the bio call errors.
-    const bioPromise: Promise<string> = browseApi
+    // Songs + albums are the page's load-bearing data — `setIsLoading`
+    // gates on these two only. The bio fetch (artist-search →
+    // get_artist, ~2× slower) runs INDEPENDENTLY and updates `bio`
+    // when it lands. Earlier this group was stitched into a single
+    // `Promise.all`, which held back the songs/albums UI until the
+    // bio resolved — directly contradicting the "doesn't lengthen
+    // the load" intent flagged in code review (issue #79 follow-up).
+    Promise.all([
+      browseApi.search(artistName, SEARCH_FILTER_SONGS),
+      browseApi.search(artistName, SEARCH_FILTER_ALBUMS),
+    ])
+      .then(([songsRes, albumsRes]) => {
+        if (cancelled) return;
+        const matchedSongs = songsRes.songs.filter((t) =>
+          matchesArtist(t.artist, artistName),
+        );
+        rememberTrackArtworks(matchedSongs);
+        setSongs(matchedSongs.slice(0, TOP_SONGS_DISPLAY_LIMIT));
+        setAlbums(albumsRes.albums.filter((a) => matchesArtist(a.artist, artistName)));
+        setIsLoading(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(`Could not load ${artistName}`);
+        setIsLoading(false);
+        debug.error('ArtistPage', 'load failed', e);
+      });
+
+    // Issue #79 — artist bio. Runs OUT-OF-BAND from the songs/albums
+    // load: the page becomes interactive as soon as those resolve,
+    // and the About block fades in (or stays absent) when the bio
+    // pipeline finishes later. Inner `cancelled` guard avoids firing
+    // get_artist after a navigate-away even when the artist-search
+    // resolved before the user left.
+    browseApi
       .search(artistName, SEARCH_FILTER_ARTISTS)
       .then((res) => {
+        if (cancelled) return '';
         const match = res.artists.find((a) =>
           matchesArtist(a.name, artistName),
         );
         if (!match?.channelId) return '';
         return browseApi
           .getArtist(match.channelId)
-          .then((d) => d.description.trim())
+          .then((d) => (cancelled ? '' : d.description.trim()))
           .catch((e) => {
             debug.error('ArtistPage', 'getArtist failed', e);
             return '';
@@ -97,25 +120,10 @@ export const ArtistPage: FC<ArtistPageProps> = ({
       .catch((e) => {
         debug.error('ArtistPage', 'artist-search for bio failed', e);
         return '';
-      });
-
-    Promise.all([songsPromise, albumsPromise, bioPromise])
-      .then(([songsRes, albumsRes, bioText]) => {
-        if (cancelled) return;
-        const matchedSongs = songsRes.songs.filter((t) =>
-          matchesArtist(t.artist, artistName),
-        );
-        rememberTrackArtworks(matchedSongs);
-        setSongs(matchedSongs.slice(0, TOP_SONGS_DISPLAY_LIMIT));
-        setAlbums(albumsRes.albums.filter((a) => matchesArtist(a.artist, artistName)));
-        setBio(bioText);
-        setIsLoading(false);
       })
-      .catch((e) => {
+      .then((bioText) => {
         if (cancelled) return;
-        setError(`Could not load ${artistName}`);
-        setIsLoading(false);
-        debug.error('ArtistPage', 'load failed', e);
+        if (typeof bioText === 'string') setBio(bioText);
       });
 
     return () => {

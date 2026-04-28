@@ -309,7 +309,11 @@ impl YtmApi {
             app,
             "browse",
             &body,
-            Some(api_cache::ttl::PLAYLIST),
+            // Dedicated 1 h TTL for artist channels — bios change rarely,
+            // so we'd rather skip the round-trip when the same artist
+            // page is reopened. Reusing PLAYLIST (30 min) was the
+            // previous value; the constant already exists in api_cache.
+            Some(api_cache::ttl::ARTIST),
         )
         .await
         .map_err(anyhow::Error::msg)?;
