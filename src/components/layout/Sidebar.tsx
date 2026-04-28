@@ -297,30 +297,23 @@ const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
     title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
     style={{
       position: 'fixed',
-      top: 'calc((var(--title-bar-height) - 26px) / 2)',
+      top: 'calc((var(--title-bar-height) - 22px) / 2)',
       // Stays anchored to the EXPANDED sidebar's right edge (#92
       // follow-up): the user wants the button to remain at its
       // original position after click, while the rest of the sidebar
       // hides. `--sidebar-expanded-width` is a constant 240 px from
       // tokens.css; `--sidebar-width` is what changes during collapse.
-      left: 'calc(var(--sidebar-expanded-width) - 26px - var(--space-2))',
-      width: '26px',
-      height: '26px',
+      left: 'calc(var(--sidebar-expanded-width) - 22px - var(--space-2))',
+      width: '22px',
+      height: '22px',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       padding: 0,
       borderRadius: 'var(--radius-sm)',
-      // Persistent translucent pill so the toggle stays VISIBLE when
-      // the sidebar collapses to 0 width and the button now sits over
-      // whatever page is in the main content area. Without this, the
-      // user couldn't find their way back to the sidebar — the
-      // tertiary-colored glyph blended into bright pages and the
-      // sidebar appeared "permanently disappeared" (user-reported
-      // regression after the hide-the-whole-sidebar refactor).
-      background: 'oklch(100% 0 0 / 0.10)',
-      border: '1px solid var(--glass-rim-mid)',
-      color: 'var(--color-text-secondary)',
+      background: 'transparent',
+      border: 'none',
+      color: 'var(--color-text-tertiary)',
       cursor: 'pointer',
       transition:
         'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)',
@@ -331,12 +324,12 @@ const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
       WebkitAppRegion: 'no-drag',
     }}
     onMouseEnter={(e) => {
-      e.currentTarget.style.background = 'oklch(100% 0 0 / 0.18)';
+      e.currentTarget.style.background = 'oklch(100% 0 0 / 0.06)';
       e.currentTarget.style.color = 'var(--color-text-primary)';
     }}
     onMouseLeave={(e) => {
-      e.currentTarget.style.background = 'oklch(100% 0 0 / 0.10)';
-      e.currentTarget.style.color = 'var(--color-text-secondary)';
+      e.currentTarget.style.background = 'transparent';
+      e.currentTarget.style.color = 'var(--color-text-tertiary)';
     }}
   >
     <svg
