@@ -170,6 +170,12 @@ interface RefreshLyricsButtonProps {
  *  user-facing escape hatch when the matcher returned wrong lyrics in an
  *  earlier session and they got pinned in the persistent caches. */
 const RefreshLyricsButton: FC<RefreshLyricsButtonProps> = ({ onClick, isRefreshing }) => {
+  // Issue #95 — align with the offset −/0/+ buttons in the sticky
+  // bottom row: same padding (`2px 8px`), same `--radius-sm`, same
+  // `--text-xs` font size, same translucent white background. Without
+  // this the refresh pill (with its `--radius-full` border + larger
+  // padding + extra `marginTop`) sat lower and looked like a bigger,
+  // visually-distinct control next to the offset cluster.
   return (
     <button
       type="button"
@@ -177,21 +183,20 @@ const RefreshLyricsButton: FC<RefreshLyricsButtonProps> = ({ onClick, isRefreshi
       disabled={isRefreshing}
       title="Re-fetch lyrics for this track (clears the cached match)"
       style={{
-        marginTop: 'var(--space-3)',
-        padding: 'var(--space-1) var(--space-3)',
-        fontSize: 'var(--text-xs)',
-        fontWeight: 500,
-        background: 'transparent',
-        border: '1px solid oklch(100% 0 0 / 0.14)',
-        borderRadius: 'var(--radius-full)',
+        background: 'oklch(100% 0 0 / 0.06)',
+        border: 'none',
         color: 'var(--color-text-secondary)',
+        fontSize: 'var(--text-xs)',
+        padding: '2px 8px',
+        borderRadius: 'var(--radius-sm)',
         cursor: isRefreshing ? 'progress' : 'pointer',
         opacity: isRefreshing ? 0.6 : 1,
+        lineHeight: 1.4,
         transition:
           'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out)',
       }}
     >
-      {isRefreshing ? 'Refreshing…' : 'Refresh lyrics'}
+      {isRefreshing ? 'Refreshing…' : 'Refresh'}
     </button>
   );
 };

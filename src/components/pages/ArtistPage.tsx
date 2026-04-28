@@ -194,6 +194,14 @@ export const ArtistPage: FC<ArtistPageProps> = ({
           padding: 'var(--space-6)',
         }}
       >
+      {/* Issue #94 — bio sits at the TOP of the content area, ahead of
+          everything else (including the loading-state skeletons). This
+          matches Apple Music's artist-page layout: hero → about →
+          songs → albums. Decoupled from `isLoading` because the bio
+          fetch (#79) runs out-of-band from the songs/albums load and
+          resolves on its own timeline. */}
+      {bio.length > 0 && <ArtistBio text={bio} />}
+
       {isLoading && (
         <>
           <section>
@@ -266,10 +274,6 @@ export const ArtistPage: FC<ArtistPageProps> = ({
         >
           No songs or albums found for {artistName}.
         </p>
-      )}
-
-      {!isLoading && bio.length > 0 && (
-        <ArtistBio text={bio} />
       )}
 
       {!isLoading && songs.length > 0 && (

@@ -262,6 +262,30 @@ impl YtmApi {
         Ok(parse_library_playlists(&data))
     }
 
+    /// Issue #93 — fetch the user's "Recently played" history from
+    /// YouTube Music. The browseId is `FEmusic_history`, the same one
+    /// YTM uses for its own History page on the web. Parsing reuses
+    /// `parse_library_songs` because the response shape is the same
+    /// playlist-shelf-of-tracks structure as the liked-videos endpoint.
+    /// Replaces the locally-tracked playback log added in #83 — the
+    /// follow-up issue requested matching YTM's authoritative history.
+    pub async fn get_history(&self, app: &AppHandle) -> anyhow::Result<Vec<TrackInfo>> {
+        let body = serde_json::json!({ "browseId": "FEmusic_history" }).to_string();
+        // Short TTL — the user's expectation is that "recently played"
+        // reflects the latest plays, so we don't want a stale 5-min
+        // cache hiding tracks they just listened to.
+        let raw = ytm_api_call_cached(
+            app,
+            "browse",
+            &body,
+            Some(std::time::Duration::from_secs(60)),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let data: Value = serde_json::from_str(&raw)?;
+        Ok(parse_library_songs(&data))
+    }
+
     /// Fetch user's liked/library songs via the real YTM API.
     pub async fn get_library_songs(
         &self,

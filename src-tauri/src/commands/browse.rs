@@ -150,6 +150,26 @@ pub async fn get_playlist(
     Ok(result)
 }
 
+/// Issue #93 — pull the user's "Recently played" history from
+/// YouTube Music's own catalog (FEmusic_history browseId). Replaces
+/// the locally-tracked log added in #83 with the authoritative
+/// source the follow-up issue requested.
+#[tauri::command]
+pub async fn get_history(
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+    cache: State<'_, Cache>,
+) -> Result<Vec<TrackInfo>, String> {
+    tracing::info!("browse::get_history called");
+    let mut result = api.get_history(&app).await.map_err(|e| {
+        tracing::error!(error = %e, "browse::get_history failed");
+        e.to_string()
+    })?;
+    enrich_tracks(&cache, &mut result);
+    tracing::info!(tracks = result.len(), "browse::get_history done");
+    Ok(result)
+}
+
 /// Issue #65 — UGC cover-art fallback via iTunes Search. Called
 /// from the FE when the bridge artwork is filtered out (video
 /// thumbnail) AND the YTM audio counterpart returned no cover. The

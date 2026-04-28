@@ -10,7 +10,6 @@ import { LoginPage } from './components/pages/LoginPage';
 import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
 import { ArtistPage } from './components/pages/ArtistPage';
 import { HistoryPage } from './components/pages/HistoryPage';
-import { usePlaybackHistoryRecorder } from './hooks/usePlaybackHistory';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { UpdateBanner } from './components/UpdateBanner';
 import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
@@ -32,11 +31,6 @@ const App: FC = () => {
   // pins down each transition.
   const { phase, isSplashDone, markHomeReady, markManualLogin } =
     useBootState();
-  // Mount the playback-history recorder once at the app root (issue #83).
-  // It listens for TRACK_CHANGED globally, so the History page is
-  // populated even when the user has never opened it. The hook itself
-  // returns nothing — the History page reads via `usePlaybackHistory`.
-  usePlaybackHistoryRecorder();
   const [currentPath, setCurrentPath] = useState('home');
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);

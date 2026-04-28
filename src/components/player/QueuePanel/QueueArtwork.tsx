@@ -3,7 +3,9 @@ import { ArtworkPlaceholder } from '../../ArtworkPlaceholder';
 import { CachedImage } from '../../CachedImage';
 import type { TrackInfo } from '../../../lib/types';
 import { usePlayerState } from '../../../hooks/usePlayerState';
+import { useAudioCounterpartArtwork } from '../../../hooks/useAudioCounterpartArtwork';
 import { lookupShowCover } from '../../../lib/showCoverRegistry';
+import { isAlbumArtUrl } from '../../../lib/artwork';
 import { artworkChain } from './artwork';
 
 interface QueueArtworkProps {
@@ -49,7 +51,27 @@ export const QueueArtwork: FC<QueueArtworkProps> = ({ track, liveTrack }) => {
     ? lookupShowCover(activePlaylistId)
     : undefined;
   const baseChain = artworkChain(sourceTrack);
-  const chain = showCoverUrl ? [showCoverUrl, ...baseChain] : baseChain;
+  // Issue #96 — when /next didn't return album-art for this row (UGC
+  // tracks, song-radio rows missing their counterpart), lazily resolve
+  // it via `useAudioCounterpartArtwork`. The hook is module-cached and
+  // de-duped across rows, so opening the queue produces at most one
+  // IPC per upcoming videoId we haven't seen, and zero on subsequent
+  // re-mounts. We only inject the result when it's a real album-art
+  // URL — defensive against the hook returning the bridge fallback
+  // unchanged.
+  const counterpart = useAudioCounterpartArtwork(
+    sourceTrack.videoId,
+    sourceTrack.artworkUrl,
+  );
+  const counterpartChain =
+    isAlbumArtUrl(counterpart) && !baseChain.includes(counterpart!)
+      ? [counterpart!]
+      : [];
+  const chain = [
+    ...(showCoverUrl ? [showCoverUrl] : []),
+    ...baseChain,
+    ...counterpartChain,
+  ];
   const [chainIdx, setChainIdx] = useState(0);
   useEffect(() => {
     setChainIdx(0);

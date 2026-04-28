@@ -1,34 +1,46 @@
-import { type FC, useState } from 'react';
-import { usePlaybackHistory } from '../../hooks/usePlaybackHistory';
-import { clearHistory } from '../../lib/playbackHistory';
+import { type FC, useEffect, useState } from 'react';
+import type { TrackInfo } from '../../lib/types';
+import { browseApi } from '../../lib/ipc';
+import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
+import { debug } from '../../lib/debug';
 import { SongRow } from '../browse/SongRow';
+import { SkeletonRow } from '../Skeleton';
 
-// Issue #83 — Recently Played view. Mirrors the visual structure of
-// LibraryPage (sticky title plate + scrolling list) so the user sees
-// History as a peer of the existing library tabs.
+// Issue #83 + #93 — Recently Played page. Originally backed by a
+// locally-tracked log; the follow-up (#93) moved the data source to
+// YouTube Music's own `FEmusic_history` endpoint, which matches what
+// the user sees on YTM's web History page. Layout mirrors LibraryPage:
+// sticky title plate + 3-column SongRow grid.
 
 const HISTORY_PAGE_SECTION_LABEL = 'RECENTLY PLAYED';
 
 export const HistoryPage: FC = () => {
-  const entries = usePlaybackHistory();
-  // After Clear, suppress every entry whose `playedAt` predates the
-  // wall-clock instant of the click. Storing the cut-off as a timestamp
-  // (instead of a `showAll` boolean) means a NEW track played after
-  // Clear naturally surfaces — its `playedAt` will be larger than the
-  // cut-off, so the filter passes it through. A boolean would have
-  // permanently hidden the page until app remount (issue caught in
-  // code review of ba71fb0).
-  const [clearedAt, setClearedAt] = useState<number | null>(null);
+  const [tracks, setTracks] = useState<TrackInfo[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleClear = () => {
-    clearHistory();
-    setClearedAt(Date.now());
-  };
-
-  const visible =
-    clearedAt === null
-      ? entries
-      : entries.filter((e) => e.playedAt > clearedAt);
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+    browseApi
+      .getHistory()
+      .then((data) => {
+        if (cancelled) return;
+        rememberTrackArtworks(data);
+        setTracks(data);
+        setIsLoading(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError('Could not load history');
+        setIsLoading(false);
+        debug.error('HistoryPage', 'getHistory failed', e);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <section
@@ -54,57 +66,61 @@ export const HistoryPage: FC = () => {
           borderRadius: 'var(--radius-lg)',
           border: '1px solid var(--glass-rim-mid)',
           display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-          gap: 'var(--space-3)',
+          flexDirection: 'column',
+          gap: 'var(--space-1)',
         }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-          <span
-            style={{
-              fontSize: 'var(--text-xs)',
-              fontWeight: 600,
-              color: 'var(--color-text-tertiary)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-            }}
-          >
-            {HISTORY_PAGE_SECTION_LABEL}
-          </span>
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 'var(--text-2xl)',
-              fontWeight: 700,
-              color: 'var(--color-text-primary)',
-              letterSpacing: '-0.02em',
-            }}
-          >
-            History
-          </h1>
-        </div>
-
-        {visible.length > 0 && (
-          <button
-            type="button"
-            onClick={handleClear}
-            style={{
-              background: 'transparent',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-full)',
-              padding: 'var(--space-2) var(--space-4)',
-              fontSize: 'var(--text-sm)',
-              color: 'var(--color-text-secondary)',
-              cursor: 'pointer',
-              flexShrink: 0,
-            }}
-          >
-            Clear
-          </button>
-        )}
+        <span
+          style={{
+            fontSize: 'var(--text-xs)',
+            fontWeight: 600,
+            color: 'var(--color-text-tertiary)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+          }}
+        >
+          {HISTORY_PAGE_SECTION_LABEL}
+        </span>
+        <h1
+          style={{
+            margin: 0,
+            fontSize: 'var(--text-2xl)',
+            fontWeight: 700,
+            color: 'var(--color-text-primary)',
+            letterSpacing: '-0.02em',
+          }}
+        >
+          History
+        </h1>
       </div>
 
-      {visible.length === 0 ? (
+      {isLoading && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+            columnGap: 'var(--space-4)',
+            rowGap: 'var(--space-1)',
+          }}
+        >
+          {Array.from({ length: 9 }).map((_, i) => (
+            <SkeletonRow key={i} />
+          ))}
+        </div>
+      )}
+
+      {!isLoading && error && (
+        <p
+          style={{
+            color: 'var(--color-text-tertiary)',
+            fontSize: 'var(--text-base)',
+          }}
+        >
+          {error}
+        </p>
+      )}
+
+      {!isLoading && !error && tracks.length === 0 && (
         <div
           style={{
             display: 'flex',
@@ -122,7 +138,9 @@ export const HistoryPage: FC = () => {
             No recently played tracks yet — start a song and it will appear here.
           </p>
         </div>
-      ) : (
+      )}
+
+      {!isLoading && !error && tracks.length > 0 && (
         <div
           style={{
             display: 'grid',
@@ -131,10 +149,10 @@ export const HistoryPage: FC = () => {
             rowGap: 'var(--space-1)',
           }}
         >
-          {visible.map((entry) => (
+          {tracks.map((track, i) => (
             <SongRow
-              key={entry.track.videoId + ':' + entry.playedAt}
-              track={entry.track}
+              key={(track.videoId || 'history') + ':' + i}
+              track={track}
             />
           ))}
         </div>

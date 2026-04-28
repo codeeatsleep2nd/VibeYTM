@@ -263,6 +263,9 @@ export const browseApi = {
     }),
   getLibraryPlaylists: () => invoke<PlaylistSummary[]>('get_library_playlists'),
   getLibrarySongs: () => invoke<TrackInfo[]>('get_library_songs'),
+  /** Issue #93 — recently-played history sourced from YTM's own
+   *  `FEmusic_history` endpoint. */
+  getHistory: () => invoke<TrackInfo[]>('get_history'),
   getLibraryAlbums: () => invoke<AlbumSummary[]>('get_library_albums'),
   getLibraryArtists: () => invoke<ArtistSummary[]>('get_library_artists'),
   getLibraryPodcasts: () => invoke<PodcastSummary[]>('get_library_podcasts'),

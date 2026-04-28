@@ -42,13 +42,24 @@ export const AppShell: FC<AppShellProps> = ({
       transition: 'grid-template-columns var(--duration-normal) var(--ease-out)',
     }}
   >
-    {/* Title bar drag region */}
+    {/*
+      Title bar drag region.
+      `left: var(--sidebar-width)` so the sidebar's x-extent is OUTSIDE
+      the OS-level drag region (issue #92). The collapsible-sidebar
+      toggle (#82) lives at the same vertical row as the macOS traffic-
+      lights but on the right edge of the sidebar; with the previous
+      `left: 0` the OS treated every click there as a window-drag
+      gesture, so the button was unreachable. Carving out the sidebar
+      keeps drag-from-titlebar working everywhere except over the
+      sidebar — the traffic-lights themselves are managed by macOS
+      and unaffected by this CSS region.
+    */}
     <div
       data-tauri-drag-region
       style={{
         position: 'fixed',
         top: 0,
-        left: 0,
+        left: 'var(--sidebar-width)',
         right: 0,
         height: 'var(--title-bar-height)',
         zIndex: 200,

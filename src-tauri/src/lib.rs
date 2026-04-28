@@ -383,6 +383,7 @@ pub fn run() {
             commands::browse::get_explore,
             commands::browse::get_playlist,
             commands::browse::get_artist,
+            commands::browse::get_history,
             commands::browse::get_external_cover_art,
             commands::browse::get_library_playlists,
             commands::browse::get_library_songs,
