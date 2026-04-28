@@ -308,18 +308,40 @@ const TimedLyrics: FC<TimedLyricsProps> = ({
           );
         })}
       </div>
+      {/*
+        Sticky-bottom control row (issue #66). The container is
+        `overflowY: auto`, so without `position: sticky` this row
+        scrolled out of view exactly when the user wanted to nudge
+        the offset while listening. Sticking it to the visible
+        bottom keeps it reachable; the translucent gradient + blur
+        shrouds any lyric line that scrolls underneath so the
+        controls stay legible. Bottom inset matches the container's
+        `var(--space-6)` padding so the row sits on the panel's
+        natural bottom edge instead of touching the rounded border.
+      */}
       <div
         style={{
+          position: 'sticky',
+          bottom: 'calc(var(--space-6) * -1)',
           marginTop: 'var(--space-3)',
+          marginBottom: 'calc(var(--space-6) * -1)',
+          marginInline: 'calc(var(--space-6) * -1)',
+          padding: 'var(--space-3) var(--space-6) var(--space-4)',
           fontSize: 'var(--text-xs)',
           color: 'var(--color-text-tertiary)',
           borderTop: '1px solid oklch(100% 0 0 / 0.06)',
-          paddingTop: 'var(--space-2)',
+          // Frosted-glass hood so lyric lines underneath read as a
+          // soft blur rather than fighting the controls for focus.
+          background:
+            'linear-gradient(180deg, oklch(0% 0 0 / 0) 0%, oklch(0% 0 0 / 0.45) 70%, oklch(0% 0 0 / 0.55) 100%)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 'var(--space-2)',
           flexShrink: 0,
+          zIndex: 1,
         }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

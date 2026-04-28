@@ -799,6 +799,54 @@ fn strip_noise_brackets(
 /// to a different zero, producing systematic per-track off-sync.
 const LRCLIB_DURATION_TOLERANCE_SECS: f64 = 2.0;
 
+/// Loose case-insensitive title match used by LRCLIB and NetEase candidate
+/// filtering (issue #67). A short, punctuated title like "APT." otherwise
+/// substring-matches dozens of unrelated tracks ("Adapt", "Aptitude",
+/// "Apartheid", …). Strategy:
+///
+/// * Normalize both sides — lowercase, trim, strip ASCII punctuation, collapse
+///   whitespace. So "APT." and "Apt" both become "apt".
+/// * For short normalized requests (<= 4 chars) require an EXACT match — those
+///   are the cases where a substring is dangerously permissive.
+/// * For longer requests, allow either direction of substring match — handles
+///   parenthetical suffixes ("Stayin' Alive (Remastered)" vs "Stayin' Alive").
+fn lyrics_normalize(s: &str) -> String {
+    let lower = s.to_lowercase();
+    let mut out = String::with_capacity(lower.len());
+    let mut last_space = true;
+    for ch in lower.chars() {
+        if ch.is_alphanumeric() {
+            out.push(ch);
+            last_space = false;
+        } else if !last_space {
+            out.push(' ');
+            last_space = true;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn title_matches(candidate: &str, requested: &str) -> bool {
+    let cand = lyrics_normalize(candidate);
+    let req = lyrics_normalize(requested);
+    if cand.is_empty() || req.is_empty() {
+        return false;
+    }
+    if req.chars().count() <= 4 {
+        return cand == req;
+    }
+    cand.contains(&req) || req.contains(&cand)
+}
+
+fn artist_matches(candidate: &str, requested: &str) -> bool {
+    let cand = lyrics_normalize(candidate);
+    let req = lyrics_normalize(requested);
+    if cand.is_empty() || req.is_empty() {
+        return false;
+    }
+    cand.contains(&req) || req.contains(&cand)
+}
+
 /// Ask LRCLIB (https://lrclib.net) for synced LRC-format lyrics. Returns the
 /// raw LRC body on success, `None` when LRCLIB has no match (or no match
 /// within duration tolerance), `Err` on transport failure. LRCLIB is a free,
@@ -852,6 +900,14 @@ async fn fetch_lrclib_synced(
     // Pick the candidate whose recorded duration is closest to YTM's, but
     // only if it falls inside the tolerance window. Anything further away
     // is a different recording with mismatched timing.
+    //
+    // Short-title hardening (issue #67): a 4-char title like "APT." can
+    // match LRCLIB candidates whose title merely starts with "Apt" (e.g.
+    // "Aptitude", "Aptitudes"). We additionally require the candidate's
+    // title to loosely match the requested title — at least one direction
+    // of substring must hold AND the candidate title's word boundaries
+    // must align with the request for short queries. Without this an
+    // unrelated 3-min track within ±2 s of "APT."'s duration would win.
     let mut best: Option<(f64, &Value)> = None;
     for cand in &candidates {
         let cand_dur = cand
@@ -871,6 +927,20 @@ async fn fetch_lrclib_synced(
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
         {
+            continue;
+        }
+        let cand_title = cand
+            .get("trackName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let cand_artist = cand
+            .get("artistName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !title_matches(cand_title, title) {
+            continue;
+        }
+        if !artist_matches(cand_artist, artist) {
             continue;
         }
         let synced = cand
@@ -1011,14 +1081,14 @@ async fn fetch_netease_synced_with_duration(
     // the candidate to be within tolerance. Drop the first-result
     // fallback entirely — better to surface "no lyrics" than to ship the
     // wrong song's text.
-    let want_title = title.to_lowercase();
-    let want_artist = artist.to_lowercase();
+    // Short-title hardening (issue #67): fall through `title_matches` so
+    // a 4-char title like "APT." requires an exact normalized equality
+    // instead of accepting any candidate name that contains "apt" as a
+    // substring (which yielded "Adapt" / "Aptitude" / etc.).
     let mut best: Option<(f64, u64)> = None;
     for s in songs {
-        let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-        let title_ok = !name.is_empty()
-            && (name.contains(&want_title) || want_title.contains(&name));
-        if !title_ok {
+        let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if !title_matches(name, title) {
             continue;
         }
         let artist_ok = s
@@ -1026,13 +1096,8 @@ async fn fetch_netease_synced_with_duration(
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter().any(|a| {
-                    let an = a
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_lowercase();
-                    !an.is_empty()
-                        && (an.contains(&want_artist) || want_artist.contains(&an))
+                    let an = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    artist_matches(an, artist)
                 })
             })
             .unwrap_or(false);
@@ -4873,5 +4938,59 @@ mod tests {
         assert_eq!(parse_episode_duration_text(""), 0.0);
         assert_eq!(parse_episode_duration_text("   "), 0.0);
         assert_eq!(parse_episode_duration_text("not a duration"), 0.0);
+    }
+
+    // ---- lyrics title/artist match (issue #67) ---------------------------
+
+    #[test]
+    fn lyrics_normalize_strips_punctuation_and_lowercases() {
+        assert_eq!(super::lyrics_normalize("APT."), "apt");
+        assert_eq!(super::lyrics_normalize("  Stayin' Alive  "), "stayin alive");
+        assert_eq!(
+            super::lyrics_normalize("Stayin' Alive (Remastered)"),
+            "stayin alive remastered"
+        );
+        assert_eq!(super::lyrics_normalize("周杰倫"), "周杰倫");
+    }
+
+    #[test]
+    fn title_matches_short_title_requires_exact_normalized_equality() {
+        // "APT." (4 chars normalized: "apt") must NOT match "Adapt" /
+        // "Aptitude" / "Apartheid" — those return wrong lyrics today.
+        assert!(super::title_matches("APT.", "APT."));
+        assert!(super::title_matches("Apt", "APT."));
+        assert!(!super::title_matches("Adapt", "APT."));
+        assert!(!super::title_matches("Aptitude", "APT."));
+        assert!(!super::title_matches("Apartheid", "APT."));
+    }
+
+    #[test]
+    fn title_matches_longer_title_allows_substring_either_direction() {
+        // Bidirectional substring is required for parenthetical suffixes:
+        // YTM may pass "Stayin' Alive" while LRCLIB has "Stayin' Alive
+        // (Remastered)" — and vice versa.
+        assert!(super::title_matches(
+            "Stayin' Alive (Remastered)",
+            "Stayin' Alive"
+        ));
+        assert!(super::title_matches(
+            "Stayin' Alive",
+            "Stayin' Alive (Remastered)"
+        ));
+        assert!(!super::title_matches("Bohemian Rhapsody", "Stayin' Alive"));
+    }
+
+    #[test]
+    fn artist_matches_handles_collab_and_partial_credits() {
+        // "ROSÉ & Bruno Mars" loosely matches "ROSÉ" and vice versa.
+        assert!(super::artist_matches("ROSÉ & Bruno Mars", "ROSÉ"));
+        assert!(super::artist_matches("ROSÉ", "ROSÉ & Bruno Mars"));
+        assert!(!super::artist_matches("BTS", "ROSÉ"));
+    }
+
+    #[test]
+    fn title_matches_rejects_empty_either_side() {
+        assert!(!super::title_matches("", "APT."));
+        assert!(!super::title_matches("Apt", ""));
     }
 }
