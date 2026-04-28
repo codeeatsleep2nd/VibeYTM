@@ -163,11 +163,14 @@ final class AppBootstrap {
             object: nil,
             queue: .main
         ) { [weak self] note in
-            // Pull the relevant fields off the (non-Sendable) note BEFORE
-            // hopping back onto the actor — Swift 6 strict concurrency
-            // refuses to capture `note` across the boundary.
+            // Sample the (non-Sendable) NSWindow's properties INLINE
+            // before hopping onto the actor — Swift 6 won't let us
+            // ferry the reference across. Since the queue is `.main`
+            // the closure already runs on the main thread, where
+            // NSWindow access is safe.
+            let window = note.object as? NSWindow
             let isMainVisible: Bool = {
-                guard let window = note.object as? NSWindow else { return false }
+                guard let window else { return false }
                 return window.alphaValue > 0 && window.canBecomeMain
             }()
             guard isMainVisible else { return }
@@ -343,6 +346,31 @@ final class AppBootstrap {
 
     func getLibraryPlaylistsShelves() async -> [Shelf] {
         await getBrowseShelves(browseId: "FEmusic_liked_playlists")
+    }
+
+    /// Library podcasts. Tries the dedicated non-music-audio endpoint
+    /// first (matches the upstream React/Tauri tree) and falls back to
+    /// the older landing-page endpoint for accounts that don't yet
+    /// have the dedicated tab.
+    func getLibraryPodcastsShelves() async -> [Shelf] {
+        let primary = await getBrowseShelves(browseId: "FEmusic_library_non_music_audio_list")
+        if !primary.isEmpty { return primary }
+        return await getBrowseShelves(browseId: "FEmusic_library_landing")
+    }
+
+    /// Fetch the full browse response (header + shelves) for an album,
+    /// playlist, artist, or show. Drives `BrowseDetailView`'s hero.
+    func getBrowseDetail(browseId: String) async -> BrowseResponse {
+        guard let bridge else { return BrowseResponse(header: nil, shelves: []) }
+        do {
+            let data = try await bridge.callYTMAPI(
+                endpoint: "browse",
+                body: ["browseId": browseId]
+            )
+            return Innertube.parseBrowseResponse(from: data)
+        } catch {
+            return BrowseResponse(header: nil, shelves: [])
+        }
     }
 
     /// Fetch + parse any browseId. Used by the Home/Library wrappers as

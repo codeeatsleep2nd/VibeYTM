@@ -17,7 +17,7 @@ import YTMBridge
 /// persisted in a follow-up batch.
 enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
     case home, explore
-    case recentlyPlayed, artists, albums, songs
+    case recentlyPlayed, artists, albums, songs, podcasts
     case allPlaylists
     case search
     case settings
@@ -32,6 +32,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .artists: "Artists"
         case .albums: "Albums"
         case .songs: "Songs"
+        case .podcasts: "Podcasts"
         case .allPlaylists: "Playlists"
         case .search: "Search"
         case .settings: "Settings"
@@ -46,6 +47,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .artists: "music.mic"
         case .albums: "square.stack"
         case .songs: "music.note"
+        case .podcasts: "headphones"
         case .allPlaylists: "rectangle.stack"
         case .search: "magnifyingglass"
         case .settings: "gearshape"
@@ -72,6 +74,7 @@ struct SidebarView: View {
                     row(.artists)
                     row(.albums)
                     row(.songs)
+                    row(.podcasts)
                 }
                 Section("Playlists") {
                     row(.allPlaylists)

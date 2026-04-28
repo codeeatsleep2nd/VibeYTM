@@ -13,6 +13,7 @@ enum SearchFilter: String, CaseIterable, Identifiable, Hashable {
     case artists
     case playlists
     case videos
+    case podcasts
 
     var id: String { rawValue }
 
@@ -24,6 +25,7 @@ enum SearchFilter: String, CaseIterable, Identifiable, Hashable {
         case .artists: "Artists"
         case .playlists: "Playlists"
         case .videos: "Videos"
+        case .podcasts: "Podcasts"
         }
     }
 
@@ -35,6 +37,7 @@ enum SearchFilter: String, CaseIterable, Identifiable, Hashable {
         case .artists: "EgWKAQIgAWoMEA4QChADEAQQCRAF"
         case .playlists: "EgWKAQIoAWoMEA4QChADEAQQCRAF"
         case .videos: "EgWKAQIQAWoMEA4QChADEAQQCRAF"
+        case .podcasts: "EgWKAQJQAWoMEA4QChADEAQQCRAF"
         }
     }
 }

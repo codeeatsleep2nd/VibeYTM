@@ -18,14 +18,8 @@ struct BrowseDetailView: View {
 
     @Environment(AppBootstrap.self) private var bootstrap
     @State private var shelves: [Shelf] = []
+    @State private var detailHeader: DetailHeader?
     @State private var loading = true
-    /// Save-to-library state (#54 / #55). Tri-state: `nil` = unsaved
-    /// (initial), `true` = saved, `false` = saved-then-removed in
-    /// this session. We don't parse YTM's response for the initial
-    /// like-status yet — that's a per-renderer extraction job. The
-    /// button starts as "Save" and toggles on click; if the user
-    /// already had this album saved, hitting Save again is a no-op
-    /// on the YTM side (idempotent).
     @State private var savedToLibrary: Bool = false
     @State private var savePending: Bool = false
 
@@ -53,22 +47,31 @@ struct BrowseDetailView: View {
 
     @ViewBuilder
     private var header: some View {
+        // Prefer the parsed `DetailHeader` from the response — title,
+        // subtitle, and cover come from the page's actual header
+        // renderer (musicResponsiveHeaderRenderer / musicDetailHeader-
+        // Renderer). Fall back to lead-track metadata only when the
+        // response shape didn't surface a header (search-result browse,
+        // some artist pages).
         let lead = leadItem()
+        let displayTitle = detailHeader?.title.isEmpty == false ? detailHeader!.title : title
+        let displaySubtitle = detailHeader?.subtitle ?? (lead?.subtitle ?? "")
+        let displayArtwork = detailHeader?.artworkUrl ?? lead?.artworkUrl
         HStack(alignment: .bottom, spacing: 24) {
-            cover(url: lead?.artworkUrl)
+            cover(url: displayArtwork)
                 .frame(width: 220, height: 220)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
 
             VStack(alignment: .leading, spacing: 12) {
-                Text(title)
+                Text(displayTitle)
                     .font(.system(size: 36, weight: .bold))
                     .lineLimit(2)
-                if let subtitle = lead?.subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
+                if !displaySubtitle.isEmpty {
+                    Text(displaySubtitle)
                         .font(.title3)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
                 if lead?.videoId != nil || lead?.playlistId != nil {
                     HStack(spacing: 12) {
@@ -92,18 +95,20 @@ struct BrowseDetailView: View {
                         }
                         .buttonStyle(.bordered)
 
-                        // Save / Remove from Library (#54 / #55) — only
-                        // for browseIds that map to a saveable playlist
-                        // (albums + community playlists). Artist /
-                        // search-result browseIds don't have a single
-                        // playlistId we can like, so the button is
-                        // hidden for those.
-                        if let pid = lead?.playlistId, isLibrarySaveable {
+                        // Save / Remove from Library (#54 / #55).
+                        // Prefers the playlistId extracted from the
+                        // page's own header (canonical for the album /
+                        // playlist / show), falling back to the lead
+                        // track's playlistId if the header parser
+                        // didn't surface one. Hidden for browseIds
+                        // that don't map to a saveable target (artist
+                        // pages, search shells).
+                        if let pid = saveTargetPlaylistId, isLibrarySaveable {
                             Button {
                                 Task { await toggleSave(playlistId: pid) }
                             } label: {
                                 Label(
-                                    savedToLibrary ? "Remove from Library" : "Save to Library",
+                                    saveButtonLabel,
                                     systemImage: savedToLibrary ? "minus" : "plus"
                                 )
                                 .font(.headline)
@@ -183,8 +188,37 @@ struct BrowseDetailView: View {
 
     private func load() async {
         loading = true
-        shelves = await bootstrap.getBrowseShelves(browseId: browseId)
+        let response = await bootstrap.getBrowseDetail(browseId: browseId)
+        detailHeader = response.header
+        shelves = response.shelves
         loading = false
+    }
+
+    /// Canonical save target — the playlistId from the page's header
+    /// renderer if available (the album's OLAK auto-playlist / the
+    /// playlist's own id / the show's audio playlist), otherwise the
+    /// lead track's playlist context as a fallback.
+    private var saveTargetPlaylistId: String? {
+        detailHeader?.audioPlaylistId ?? leadItem()?.playlistId
+    }
+
+    /// Button label varies by surface: shows on a podcast page get
+    /// Subscribe / Unsubscribe (matches the React tree's #88 work);
+    /// everything else gets Save / Remove from Library.
+    private var saveButtonLabel: String {
+        if isPodcast {
+            return savedToLibrary ? "Unsubscribe" : "Subscribe"
+        }
+        return savedToLibrary ? "Remove from Library" : "Save to Library"
+    }
+
+    /// Heuristic: podcast browse ids start with `MPSP` (show) or
+    /// `UCSh` (channel-as-show). The detection is conservative — false
+    /// negatives just mean the button reads "Save" instead of
+    /// "Subscribe", same underlying like_playlist call.
+    private var isPodcast: Bool {
+        let upper = browseId.uppercased()
+        return upper.hasPrefix("MPSP")
     }
 
     /// Whether this browse page corresponds to something the user can

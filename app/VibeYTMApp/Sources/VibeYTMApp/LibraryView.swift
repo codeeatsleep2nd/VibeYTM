@@ -74,3 +74,17 @@ struct AllPlaylistsView: View {
         )
     }
 }
+
+struct LibraryPodcastsView: View {
+    @Environment(AppBootstrap.self) private var bootstrap
+    var body: some View {
+        ShelvesView(
+            emptyStateIcon: "headphones",
+            emptyStateTitle: "No subscribed podcasts",
+            emptyStateBody: "Subscribe to a podcast on YouTube Music — it'll appear here.",
+            loadingLabel: "Loading podcasts…",
+            cacheKey: "library_podcasts",
+            fetch: bootstrap.getLibraryPodcastsShelves
+        )
+    }
+}

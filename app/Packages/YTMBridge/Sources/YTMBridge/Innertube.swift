@@ -23,6 +23,42 @@ public struct Shelf: Sendable, Equatable, Identifiable {
     }
 }
 
+/// Album / playlist / show / artist page header. Extracted from the
+/// browse response's `musicResponsiveHeaderRenderer` (two-column pages)
+/// or `musicDetailHeaderRenderer` (legacy / artist pages). Drives the
+/// hero image, title, subtitle, and Save button on `BrowseDetailView`.
+/// Optional fields default to nil/empty when the response shape doesn't
+/// surface them — caller falls back to lead-track metadata.
+public struct DetailHeader: Sendable, Equatable {
+    public let title: String
+    public let subtitle: String
+    public let artworkUrl: String?
+    /// The audio playlistId associated with the page — for albums this
+    /// is the OLAK auto-playlist; for playlists, the playlist's own id.
+    /// Drives the Save / Subscribe button's target.
+    public let audioPlaylistId: String?
+
+    public init(title: String, subtitle: String, artworkUrl: String?, audioPlaylistId: String?) {
+        self.title = title
+        self.subtitle = subtitle
+        self.artworkUrl = artworkUrl
+        self.audioPlaylistId = audioPlaylistId
+    }
+}
+
+/// Combined parse output — header (when present) plus the section list.
+/// `parseShelves` returns this; existing callers that just use the
+/// shelves can read `.shelves` and ignore the header.
+public struct BrowseResponse: Sendable, Equatable {
+    public let header: DetailHeader?
+    public let shelves: [Shelf]
+
+    public init(header: DetailHeader?, shelves: [Shelf]) {
+        self.header = header
+        self.shelves = shelves
+    }
+}
+
 public struct ShelfItem: Sendable, Equatable, Identifiable {
     public let id: String
     public let title: String
@@ -81,10 +117,27 @@ public enum Innertube {
         return shelves
     }
 
+    /// Full parse — returns both the page header and the section list.
+    /// New callers (BrowseDetailView) want the header for the hero
+    /// banner; existing callers can use `parseShelves` (below) which
+    /// returns just the section list.
+    public static func parseBrowseResponse(from data: Data) -> BrowseResponse {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return BrowseResponse(header: nil, shelves: [])
+        }
+        let header = parseDetailHeader(root: root)
+        let shelves = parseShelves(rootDict: root)
+        return BrowseResponse(header: header, shelves: shelves)
+    }
+
     public static func parseShelves(from data: Data) -> [Shelf] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return []
         }
+        return parseShelves(rootDict: root)
+    }
+
+    private static func parseShelves(rootDict root: [String: Any]) -> [Shelf] {
         let topContents = root["contents"] as? [String: Any]
 
         // Collect every `sectionListRenderer.contents[]` array we can find
@@ -382,5 +435,101 @@ public enum Innertube {
             ?? ((endpoint?["watchPlaylistEndpoint"] as? [String: Any])?["playlistId"] as? String)
         let browse = (endpoint?["browseEndpoint"] as? [String: Any])?["browseId"] as? String
         return (video, playlist, browse)
+    }
+
+    /// Walks the response for a header renderer — `musicResponsiveHeaderRenderer`
+    /// (two-column album / playlist / show pages) or `musicDetailHeaderRenderer`
+    /// (legacy / artist pages). Returns title, subtitle (joined runs),
+    /// the largest thumbnail URL, and the audio playlistId — the latter
+    /// drives the Save / Subscribe button.
+    private static func parseDetailHeader(root: [String: Any]) -> DetailHeader? {
+        guard let renderer = findHeaderRenderer(root) else { return nil }
+        let titleRuns = (renderer["title"] as? [String: Any])?["runs"] as? [[String: Any]] ?? []
+        let title = textFromRuns(titleRuns)
+        let subtitleRuns = (renderer["subtitle"] as? [String: Any])?["runs"] as? [[String: Any]] ?? []
+        let subtitle = textFromRuns(subtitleRuns)
+
+        // Thumbnail: musicResponsiveHeaderRenderer wraps it in
+        // `thumbnail.musicThumbnailRenderer.thumbnail.thumbnails[]`.
+        let thumbWrap = renderer["thumbnail"] as? [String: Any]
+        let thumbRenderer = thumbWrap?["musicThumbnailRenderer"] as? [String: Any]
+        let artwork = firstThumbnail(in: thumbRenderer?["thumbnail"] as? [String: Any])
+
+        // Audio playlistId: try the `buttons` (Play button's
+        // watchPlaylistEndpoint) first, then `endpoint.watchEndpoint`.
+        let audioPlaylistId = findAudioPlaylistId(renderer)
+
+        guard !title.isEmpty || artwork != nil else { return nil }
+        return DetailHeader(
+            title: title,
+            subtitle: subtitle,
+            artworkUrl: artwork,
+            audioPlaylistId: audioPlaylistId
+        )
+    }
+
+    private static func findHeaderRenderer(_ root: [String: Any]) -> [String: Any]? {
+        // Two-column page header lives at
+        // `contents.twoColumnBrowseResultsRenderer.tabs[0].tabRenderer
+        //   .content.sectionListRenderer.contents[0].musicResponsiveHeaderRenderer`.
+        if let contents = root["contents"] as? [String: Any],
+           let two = contents["twoColumnBrowseResultsRenderer"] as? [String: Any],
+           let tabs = two["tabs"] as? [[String: Any]],
+           let tab = tabs.first,
+           let tabRenderer = tab["tabRenderer"] as? [String: Any],
+           let tabContent = tabRenderer["content"] as? [String: Any],
+           let list = tabContent["sectionListRenderer"] as? [String: Any],
+           let listContents = list["contents"] as? [[String: Any]] {
+            for section in listContents {
+                if let header = section["musicResponsiveHeaderRenderer"] as? [String: Any] {
+                    return header
+                }
+            }
+        }
+        // Legacy / artist: top-level `header.musicDetailHeaderRenderer`
+        // or `header.musicImmersiveHeaderRenderer`.
+        if let topHeader = root["header"] as? [String: Any] {
+            if let detail = topHeader["musicDetailHeaderRenderer"] as? [String: Any] {
+                return detail
+            }
+            if let immersive = topHeader["musicImmersiveHeaderRenderer"] as? [String: Any] {
+                return immersive
+            }
+            if let responsive = topHeader["musicResponsiveHeaderRenderer"] as? [String: Any] {
+                return responsive
+            }
+        }
+        return nil
+    }
+
+    private static func findAudioPlaylistId(_ renderer: [String: Any]) -> String? {
+        // Walk every nested `watchEndpoint.playlistId` we can find inside
+        // the header (Play button, Shuffle button, etc.) — the first hit
+        // is canonical for the page's audio context.
+        var found: String?
+        func visit(_ node: Any) {
+            if found != nil { return }
+            if let dict = node as? [String: Any] {
+                if let watch = dict["watchEndpoint"] as? [String: Any],
+                   let pid = watch["playlistId"] as? String {
+                    found = pid
+                    return
+                }
+                if let watchPl = dict["watchPlaylistEndpoint"] as? [String: Any],
+                   let pid = watchPl["playlistId"] as? String {
+                    found = pid
+                    return
+                }
+                for (_, v) in dict {
+                    visit(v)
+                }
+            } else if let arr = node as? [Any] {
+                for v in arr {
+                    visit(v)
+                }
+            }
+        }
+        visit(renderer)
+        return found
     }
 }
