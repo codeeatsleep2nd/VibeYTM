@@ -2,6 +2,7 @@ import { type FC } from 'react';
 import { LiquidGlass } from '@liquidglass/react';
 import { usePlayerState } from '../../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../../hooks/useAudioCounterpartArtwork';
+import { useExternalCoverFallback } from '../../../hooks/useExternalCoverFallback';
 import { useCoverColors } from '../../../hooks/useCoverColors';
 import { albumArtOrNothing } from '../../../lib/artwork';
 import { lookupTrackArtwork } from '../../../lib/trackArtworkRegistry';
@@ -260,7 +261,17 @@ const TitleBlock: FC<TitleBlockProps> = ({
 };
 
 interface CoverProps {
-  track: { title: string; videoId?: string; artworkUrl?: string };
+  // Issue #65 — added artist + durationSecs so the external cover
+  // fallback (`useExternalCoverFallback`) can key its iTunes Search
+  // query on (artist, title, duration). Both optional so existing
+  // call sites that don't have the data don't have to add it.
+  track: {
+    title: string;
+    videoId?: string;
+    artworkUrl?: string;
+    artist?: string;
+    durationSecs?: number;
+  };
   /** `full`: largest square that fits the viewport.
    *  `split`: fixed medium size used alongside the lyrics panel. */
   size: 'full' | 'split';
@@ -287,6 +298,14 @@ const Cover: FC<CoverProps> = ({ track, size, activePlaylistId }) => {
     track.videoId,
     track.artworkUrl,
   );
+  // Issue #65 — UGC fallback (see hook docstring).
+  const externalCover = useExternalCoverFallback({
+    videoId: track.videoId,
+    artist: track.artist,
+    title: track.title,
+    durationSecs: track.durationSecs,
+    bridgeArtworkUrl: counterpartArtwork ?? track.artworkUrl,
+  });
   const isPodcastContext = (activePlaylistId ?? '').startsWith('MPSP');
   const showCoverUrl = isPodcastContext
     ? lookupShowCover(activePlaylistId)
@@ -344,7 +363,8 @@ const Cover: FC<CoverProps> = ({ track, size, activePlaylistId }) => {
               showCoverUrl ??
               albumArtOrNothing(counterpartArtwork) ??
               albumArtOrNothing(track.artworkUrl) ??
-              albumArtOrNothing(lookupTrackArtwork(track.videoId));
+              albumArtOrNothing(lookupTrackArtwork(track.videoId)) ??
+              externalCover;
             if (!url) return <ArtworkPlaceholder size={500} />;
             return (
               <CachedImage

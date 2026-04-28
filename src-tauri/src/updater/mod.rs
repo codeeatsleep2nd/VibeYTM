@@ -72,7 +72,7 @@ fn is_newer(latest: &str, current: &str) -> bool {
     l > c
 }
 
-async fn fetch_latest_release() -> Result<GitHubRelease, String> {
+async fn fetch_latest_release(api_url: &str) -> Result<GitHubRelease, String> {
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(REQUEST_TIMEOUT)
@@ -80,7 +80,7 @@ async fn fetch_latest_release() -> Result<GitHubRelease, String> {
         .map_err(|e| format!("build http client: {e}"))?;
 
     let resp = client
-        .get(RELEASE_API)
+        .get(api_url)
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
@@ -98,7 +98,20 @@ async fn fetch_latest_release() -> Result<GitHubRelease, String> {
 /// Run a single check against the GitHub API. Returns `Ok(UpdateInfo)` even
 /// when no update exists — `update_available` will be `false`.
 pub async fn check_once(current_version: &str) -> Result<UpdateInfo, String> {
-    let release = fetch_latest_release().await?;
+    check_once_at(RELEASE_API, current_version).await
+}
+
+/// Same as `check_once` but with the API URL plumbed through. Lets the
+/// integration tests in `tests/updater_check_once.rs` point the function
+/// at a local `wiremock` server instead of api.github.com so the
+/// draft/prerelease guard (lines 103-113) and the release-notes fallback
+/// (lines 124-128) can be covered end-to-end (issue #72). Production
+/// always calls `check_once`, which hard-codes the GitHub URL.
+pub async fn check_once_at(
+    api_url: &str,
+    current_version: &str,
+) -> Result<UpdateInfo, String> {
+    let release = fetch_latest_release(api_url).await?;
 
     if release.draft || release.prerelease {
         return Ok(UpdateInfo {

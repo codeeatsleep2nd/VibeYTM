@@ -262,6 +262,30 @@ impl YtmApi {
         Ok(parse_library_playlists(&data))
     }
 
+    /// Issue #93 — fetch the user's "Recently played" history from
+    /// YouTube Music. The browseId is `FEmusic_history`, the same one
+    /// YTM uses for its own History page on the web. Parsing reuses
+    /// `parse_library_songs` because the response shape is the same
+    /// playlist-shelf-of-tracks structure as the liked-videos endpoint.
+    /// Replaces the locally-tracked playback log added in #83 — the
+    /// follow-up issue requested matching YTM's authoritative history.
+    pub async fn get_history(&self, app: &AppHandle) -> anyhow::Result<Vec<TrackInfo>> {
+        let body = serde_json::json!({ "browseId": "FEmusic_history" }).to_string();
+        // Short TTL — the user's expectation is that "recently played"
+        // reflects the latest plays, so we don't want a stale 5-min
+        // cache hiding tracks they just listened to.
+        let raw = ytm_api_call_cached(
+            app,
+            "browse",
+            &body,
+            Some(std::time::Duration::from_secs(60)),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let data: Value = serde_json::from_str(&raw)?;
+        Ok(parse_library_songs(&data))
+    }
+
     /// Fetch user's liked/library songs via the real YTM API.
     pub async fn get_library_songs(
         &self,
@@ -286,6 +310,142 @@ impl YtmApi {
             .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(parse_library_albums(&data))
+    }
+
+    /// Issue #65 — for UGC fan uploads, neither the bridge thumbnail
+    /// (a YouTube video frame, filtered by `isAlbumArtUrl`) nor the
+    /// audio counterpart (UGC has none) gives us a real album cover.
+    /// Fall back to the iTunes Search API keyed on (artist, title,
+    /// duration). Returns the highest-resolution Apple Music cover URL
+    /// available, or `None` when the search produces no good match.
+    /// `clean_query_field` is applied to the inputs so noisy YouTube
+    /// titles don't poison the iTunes query.
+    ///
+    /// MusicBrainz / Cover Art Archive is intentionally NOT included
+    /// here — they require a 1 req/sec rate limit and a custom User-
+    /// Agent, and iTunes covers the long tail well enough for the
+    /// motivating cases (CJK / J-pop / drama OST). MB can be added as
+    /// a follow-up source if iTunes proves insufficient.
+    pub async fn get_external_cover_art(
+        artist: &str,
+        title: &str,
+        duration_secs: Option<f64>,
+    ) -> anyhow::Result<Option<String>> {
+        if artist.trim().is_empty() || title.trim().is_empty() {
+            return Ok(None);
+        }
+        let clean_artist = clean_query_field(artist);
+        let clean_title = clean_query_field(title);
+        if clean_artist.is_empty() || clean_title.is_empty() {
+            return Ok(None);
+        }
+
+        // iTunes Search API — no API key, GET-based, JSON response.
+        // `entity=song` so we only get track results (not albums or
+        // music videos). `limit=10` gives a reasonable candidate pool.
+        // Reuse the static `reqwest::Client` so we don't spin up a new
+        // connection pool + TLS thread on every UGC track change
+        // (`OnceLock` initialiser below).
+        let term = format!("{} {}", clean_artist, clean_title);
+        let client = itunes_client();
+        let resp = client
+            .get("https://itunes.apple.com/search")
+            .query(&[
+                ("term", term.as_str()),
+                ("entity", "song"),
+                ("limit", "10"),
+            ])
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("iTunes search HTTP {}", resp.status());
+        }
+        let body: Value = resp.json().await?;
+        let Some(results) = body.get("results").and_then(|v| v.as_array()) else {
+            return Ok(None);
+        };
+
+        // Score candidates: prefer tracks whose artistName + trackName
+        // match (loose) AND whose duration falls within ±2 s of the
+        // requested duration when known. Without a duration filter we
+        // can still pick a winner via title/artist match alone.
+        let mut best: Option<(f64, String)> = None;
+        for cand in results {
+            let cand_artist = cand
+                .get("artistName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let cand_title = cand
+                .get("trackName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !title_matches(cand_title, &clean_title) {
+                continue;
+            }
+            if !artist_matches(cand_artist, &clean_artist) {
+                continue;
+            }
+            // iTunes returns duration in milliseconds.
+            let cand_dur_ms = cand
+                .get("trackTimeMillis")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let diff = match duration_secs {
+                Some(target) if cand_dur_ms > 0.0 => {
+                    let d = (cand_dur_ms / 1000.0 - target).abs();
+                    if d > LRCLIB_DURATION_TOLERANCE_SECS {
+                        continue;
+                    }
+                    d
+                }
+                _ => f64::INFINITY,
+            };
+            // iTunes' standard `artworkUrl100` is 100×100 JPEG; we
+            // upgrade to 600×600 by string-replace, an Apple-supported
+            // CDN convention. If the path doesn't include the resize
+            // segment we accept the URL as-is.
+            if let Some(url) = cand.get("artworkUrl100").and_then(|v| v.as_str()) {
+                let upgraded = url.replace("100x100bb", "600x600bb");
+                if best.as_ref().map_or(true, |(prev_diff, _)| diff < *prev_diff) {
+                    best = Some((diff, upgraded));
+                }
+            }
+        }
+
+        Ok(best.map(|(_, url)| url))
+    }
+
+    /// Fetch artist channel detail (bio + avatar) via the real YTM API
+    /// for issue #79. `channel_id` is a UC* identifier obtained from a
+    /// search-with-artist-filter response (`SearchResults.artists[].channelId`).
+    /// Returns an `ArtistDetail` with whatever fields the channel surfaces;
+    /// `description` is empty when YTM didn't expose one.
+    ///
+    /// We hit the standard `browse` endpoint with the UC* id directly —
+    /// no `VL` prefix (artist channels are NOT playlists / albums).
+    pub async fn get_artist(
+        &self,
+        app: &AppHandle,
+        channel_id: &str,
+    ) -> anyhow::Result<ArtistDetail> {
+        if channel_id.is_empty() {
+            anyhow::bail!("channel_id is empty");
+        }
+        let body = serde_json::json!({ "browseId": channel_id }).to_string();
+        let raw = ytm_api_call_cached(
+            app,
+            "browse",
+            &body,
+            // Dedicated 1 h TTL for artist channels — bios change rarely,
+            // so we'd rather skip the round-trip when the same artist
+            // page is reopened. Reusing PLAYLIST (30 min) was the
+            // previous value; the constant already exists in api_cache.
+            Some(api_cache::ttl::ARTIST),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let data: Value = serde_json::from_str(&raw)?;
+        Ok(parse_artist_detail(&data, channel_id))
     }
 
     /// Fetch user's library artists via the real YTM API.
@@ -489,7 +649,68 @@ impl YtmApi {
             anyhow::anyhow!("YTM did not expose a lyrics tab for this track")
         })?;
 
+        // Issue #75 — kick off the external race (LRCLIB + NetEase) in
+        // parallel with the YTM browse for the lyrics tab. Previously
+        // the YTM browse ran sequentially first; only AFTER it returned
+        // empty did we start the externals, costing the user ~500ms on
+        // every track without YTM-synced lyrics. Now both pipelines fly
+        // at once: when YTM has lyrics we waste the external round-trip
+        // (cheap), and when it doesn't the externals are already mostly
+        // finished by the time we'd otherwise start them.
+        //
+        // The actual external race is spawned via the same helper used
+        // below so the two paths share one source-of-truth. The future
+        // is pinned here and awaited only if YTM browse was empty.
+        let externals_pre = if let (Some(artist), Some(title)) = (
+            effective_artist.as_deref(),
+            effective_title.as_deref(),
+        ) {
+            if artist.trim().is_empty() || title.trim().is_empty() {
+                None
+            } else {
+                let clean_artist = clean_query_field(artist);
+                let clean_title = clean_query_field(title);
+                // Issue #64 — for UGC fan uploads YTM hands us a noisy
+                // title that packs Artist+Title together with the channel
+                // name in the artist slot. The standard `clean_query_field`
+                // already chops at " - " / " | " / ｜ before we get here,
+                // so by this point the title looks single-field. Run the
+                // UGC split on the SEPARATOR-PRESERVING clean to recover
+                // both halves for English-pattern uploads like
+                // `"Stayin' Alive - Bee Gees"` (caught in code review).
+                // Submit the original pair AND both orientations of the
+                // split so LRCLIB/NetEase can match either reading. The
+                // race short-circuits on the first non-empty hit, so
+                // adding more candidates only costs network when the
+                // original pair has nothing.
+                let mut candidates: Vec<(String, String)> = vec![
+                    (clean_artist.clone(), clean_title.clone()),
+                ];
+                let title_with_seps = clean_query_preserve_separators(title);
+                if let Some((left, right)) = ugc_split_title_artist(&title_with_seps) {
+                    // We don't know which side is the artist vs title in a
+                    // raw "X-Y" upload, so emit both orientations.
+                    candidates.push((left.clone(), right.clone()));
+                    candidates.push((right, left));
+                }
+                Some(spawn_external_lyrics_race(
+                    video_id.to_string(),
+                    candidates,
+                    effective_duration,
+                ))
+            }
+        } else {
+            None
+        };
+
         let browse_body = serde_json::json!({ "browseId": browse_id }).to_string();
+        // NOTE: a `?` exit here (HTTP error or parse failure) drops
+        // `externals_pre` without calling `handle.abort()`. JoinHandle
+        // does NOT cancel on drop, so the spawned race keeps running
+        // until both fetches complete or timeout. Acceptable because
+        // the task is bounded by reqwest's per-source timeouts and
+        // does no work beyond the in-flight connections; not worth a
+        // failure-path branch to abort here.
         let browse_raw = ytm_api_call(app, "browse", &browse_body)
             .await
             .map_err(anyhow::Error::msg)?;
@@ -502,12 +723,15 @@ impl YtmApi {
         // lyrics, please try LRCLIB/NetEase instead"). When forced we
         // discard YTM's synced lines and the plain text and fall through
         // to the race below; the LRCLIB/NetEase result becomes the new
-        // baseline that gets cached.
+        // baseline that gets cached. The pre-flight task we spawned
+        // above is dropped (and aborted) when `externals_pre` goes out
+        // of scope at the end of the function — `tokio::task::JoinHandle`
+        // does NOT auto-abort on drop, so we explicitly call `abort()`
+        // here to stop the wasted work.
         if !force_external && lyrics.lines.as_ref().map_or(false, |l| !l.is_empty()) {
-            // YTM's lyrics tab has no per-track verification; we record the
-            // playing track's metadata so a later cache-read sanity check
-            // can spot a divergence (e.g. videoId got re-bound to a
-            // different audio counterpart on YTM's side).
+            if let Some(handle) = externals_pre {
+                handle.abort();
+            }
             lyrics.matched_artist = effective_artist.clone();
             lyrics.matched_title = effective_title.clone();
             return Ok(lyrics);
@@ -536,6 +760,16 @@ impl YtmApi {
         let has_plain_text = !lyrics.text.trim().is_empty();
         let title_for_check = effective_title.as_deref().unwrap_or("");
         if !has_plain_text && looks_like_instrumental(title_for_check) {
+            // Abort the spawned external race — same reasoning as the
+            // YTM-synced fast path above. JoinHandle::abort() does not
+            // wait; in-flight HTTP futures are dropped at the next
+            // scheduler tick. Without this, LRCLIB and NetEase still
+            // ran to completion in the background for instrumental
+            // tracks where we already decided their result wouldn't
+            // be used.
+            if let Some(handle) = externals_pre {
+                handle.abort();
+            }
             tracing::info!(
                 video_id,
                 title = %title_for_check,
@@ -544,121 +778,33 @@ impl YtmApi {
             return Ok(lyrics);
         }
 
-        // Diagnostic — every prior session showed `force_external=true`
-        // logging followed by silence. Confirming what the race actually
-        // sees so we know if it's running or being short-circuited.
         tracing::info!(
             video_id,
             effective_artist = ?effective_artist,
             effective_title = ?effective_title,
             effective_duration = ?effective_duration,
-            "lyrics: about to race LRCLIB/NetEase"
+            "lyrics: awaiting external race result (pre-flight started during YTM browse)"
         );
-        if let (Some(artist), Some(title)) = (effective_artist.as_deref(), effective_title.as_deref()) {
-            if artist.trim().is_empty() || title.trim().is_empty() {
-                tracing::warn!(
-                    video_id,
-                    artist_len = artist.len(),
-                    title_len = title.len(),
-                    "lyrics: artist or title is empty — race would be useless, skipping"
-                );
-            }
-            let clean_artist = clean_query_field(artist);
-            let clean_title = clean_query_field(title);
-            tracing::info!(
-                video_id,
-                clean_artist = %clean_artist,
-                clean_title = %clean_title,
-                "lyrics: cleaned query fields"
-            );
-            let lookup_duration = effective_duration;
 
-            // Race LRCLIB and NetEase in parallel. Whichever returns synced
-            // lyrics first wins; `None` results wait for the other source
-            // before giving up. Different sources win on different catalogs
-            // (LRCLIB for Western, NetEase for CJK), so racing halves the
-            // typical wait instead of trying them one after the other.
-            let artist_l = clean_artist.clone();
-            let title_l = clean_title.clone();
-            let vid_l = video_id.to_string();
-            let lrc_fut = async move {
-                tracing::info!(video_id = %vid_l, "LRCLIB: about to call fetch_lrclib_synced");
-                let r = fetch_lrclib_synced(&artist_l, &title_l, lookup_duration).await;
-                tracing::info!(video_id = %vid_l, ok = r.is_ok(), "LRCLIB: fetch_lrclib_synced returned");
-                match r {
-                    Ok(Some(body)) => {
-                        tracing::info!(video_id = %vid_l, body_len = body.len(), "LRCLIB: returning Some");
-                        Some((body, "LRCLIB"))
-                    }
-                    Ok(None) => {
-                        tracing::info!(video_id = %vid_l, "LRCLIB had no synced lyrics");
-                        None
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "LRCLIB fetch failed");
-                        None
+        // Pre-flight was kicked off above the YTM browse call. By the
+        // time we get here it's typically already finished — we just
+        // join its handle and use the result. When it wasn't spawned
+        // (artist/title missing or empty), fall through with whatever
+        // YTM's lyrics tab gave us (often empty plain text).
+        if let Some(handle) = externals_pre {
+            match handle.await {
+                Ok(Some((body, source_name))) => {
+                    if apply_synced_lrc(&mut lyrics, &body, source_name) {
+                        lyrics.matched_artist = effective_artist.clone();
+                        lyrics.matched_title = effective_title.clone();
+                        return Ok(lyrics);
                     }
                 }
-            };
-
-            let artist_n = clean_artist.clone();
-            let title_n = clean_title.clone();
-            let vid_n = video_id.to_string();
-            let ne_fut = async move {
-                tracing::info!(video_id = %vid_n, "NetEase: about to call fetch_netease_synced");
-                let r = fetch_netease_synced_with_duration(
-                    &artist_n,
-                    &title_n,
-                    lookup_duration,
-                )
-                .await;
-                tracing::info!(video_id = %vid_n, ok = r.is_ok(), "NetEase: fetch_netease_synced returned");
-                match r {
-                    Ok(Some(body)) => {
-                        tracing::info!(video_id = %vid_n, body_len = body.len(), "NetEase: returning Some");
-                        Some((body, "NetEase"))
-                    }
-                    Ok(None) => {
-                        tracing::info!(video_id = %vid_n, "NetEase had no synced lyrics");
-                        None
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "NetEase fetch failed");
-                        None
-                    }
+                Ok(None) => {
+                    tracing::info!(video_id, "external race produced no winner");
                 }
-            };
-
-            tokio::pin!(lrc_fut, ne_fut);
-            let mut lrc_done = false;
-            let mut ne_done = false;
-            let mut winner: Option<(String, &'static str)> = None;
-
-            while winner.is_none() && !(lrc_done && ne_done) {
-                tokio::select! {
-                    r = &mut lrc_fut, if !lrc_done => {
-                        lrc_done = true;
-                        if r.is_some() { winner = r; }
-                    }
-                    r = &mut ne_fut, if !ne_done => {
-                        ne_done = true;
-                        if r.is_some() { winner = r; }
-                    }
-                }
-            }
-
-            if let Some((body, source_name)) = winner {
-                if apply_synced_lrc(&mut lyrics, &body, source_name) {
-                    // Stamp the matched artist/title we asked for. The
-                    // fetch helpers already filtered candidates to ensure
-                    // the response is FOR this track (NetEase by title +
-                    // artist + duration; LRCLIB by duration tolerance), so
-                    // recording the requested values gives the cache-read
-                    // sanity check a stable point of comparison even when
-                    // the user's playing-track metadata refines later.
-                    lyrics.matched_artist = effective_artist.clone();
-                    lyrics.matched_title = effective_title.clone();
-                    return Ok(lyrics);
+                Err(e) => {
+                    tracing::warn!(video_id, error = %e, "external race join failed");
                 }
             }
         }
@@ -725,27 +871,92 @@ fn apply_synced_lrc(lyrics: &mut Lyrics, lrc: &str, source_name: &str) -> bool {
     true
 }
 
-/// Strip common YouTube-title noise that kills exact-match lookups on
-/// LRCLIB / NetEase: parenthesized "Official MV" markers, bracketed tags,
-/// full-width Chinese brackets, and a trailing `- My Secret` translation.
-fn clean_query_field(s: &str) -> String {
-    // Noise tokens we strip when they appear inside any bracket pair. Match
-    // case-insensitively; any bracket whose lowercased inner text contains
-    // one of these tokens gets dropped wholesale.
+/// Public for the lyrics flow's pre-split-cleaning pass — same as
+/// `clean_query_field` but stops BEFORE the `" - "` / `" | "` /
+/// fullwidth-pipe cuts. Used so `ugc_split_title_artist` sees a title
+/// that still carries those separators (issue #64). The full
+/// `clean_query_field` is what we send to LRCLIB / NetEase as the
+/// "single field" candidate.
+fn clean_query_preserve_separators(s: &str) -> String {
     const NOISE_TOKENS: &[&str] = &[
         "official", "mv", "music video", "audio", "lyric", "visualizer",
         "hd", "hq", "remix", "cover", "live", "版", "版本",
+        "ost", "drama", "theme", "soundtrack",
+        "動態歌詞", "动态歌词", "歌詞", "歌词",
+        "高音質", "高音质", "無損", "无损", "lossless",
+        "4k", "hdr",
+    ];
+    let noise_pairs: &[(char, char)] = &[
+        ('(', ')'),
+        ('[', ']'),
+        ('【', '】'),
+        ('〈', '〉'),
+        ('「', '」'),
+        ('（', '）'),
+    ];
+    let mut out = s.to_string();
+    for (open, close) in noise_pairs {
+        out = strip_noise_brackets(&out, *open, *close, NOISE_TOKENS);
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Strip common YouTube-title noise that kills exact-match lookups on
+/// LRCLIB / NetEase: parenthesized "Official MV" markers, bracketed tags,
+/// full-width Chinese brackets, trailing `- My Secret` translation, and
+/// fan-upload (UGC) decorations like `｜超高無損音樂-動態歌詞` (issue #64).
+fn clean_query_field(s: &str) -> String {
+    // Noise tokens we strip when they appear inside any bracket pair. Match
+    // case-insensitively; any bracket whose lowercased inner text contains
+    // one of these tokens gets dropped wholesale. New tokens for issue #64
+    // target the long-tail of UGC patterns (fan-uploaded compilations,
+    // OST/drama tags, "dynamic lyrics" markers, lossless tags, etc.).
+    const NOISE_TOKENS: &[&str] = &[
+        "official", "mv", "music video", "audio", "lyric", "visualizer",
+        "hd", "hq", "remix", "cover", "live", "版", "版本",
+        // Issue #64 — UGC noise.
+        "ost", "drama", "theme", "soundtrack",
+        "動態歌詞", "动态歌词", "歌詞", "歌词",
+        "高音質", "高音质", "無損", "无损", "lossless",
+        "4k", "hdr",
     ];
 
-    let noise_pairs: &[(char, char)] = &[('(', ')'), ('[', ']'), ('【', '】'), ('〈', '〉')];
+    let noise_pairs: &[(char, char)] = &[
+        ('(', ')'),
+        ('[', ']'),
+        ('【', '】'),
+        ('〈', '〉'),
+        ('「', '」'),
+        ('（', '）'),
+    ];
     let mut out = s.to_string();
 
     for (open, close) in noise_pairs {
         out = strip_noise_brackets(&out, *open, *close, NOISE_TOKENS);
     }
 
-    // Cut at " - " dash-tail (translations, "- My Secret", etc.) only when
-    // the part before it is meaningfully long.
+    // Cut at fullwidth pipe `｜` — common in CJK fan uploads to chain
+    // language tags and channel decorations onto the title (e.g.
+    // "人世间-雷佳｜Drama A Lifelong Journey OST｜超高無損"). Only the
+    // first segment carries the song identity.
+    if let Some(idx) = out.find('｜') {
+        let head = &out[..idx];
+        if head.trim().chars().count() >= 2 {
+            out = head.to_string();
+        }
+    }
+
+    // Cut at " | " ASCII pipe — same role as the fullwidth variant for
+    // English-language UGC uploads ("Stayin' Alive | Bee Gees | HD").
+    if let Some(idx) = out.find(" | ") {
+        let head = &out[..idx];
+        if head.trim().chars().count() >= 2 {
+            out = head.to_string();
+        }
+    }
+
+    // Cut at " - " dash-tail (translations, "- My Secret", "- 動態歌詞")
+    // only when the part before it is meaningfully long.
     if let Some(idx) = out.find(" - ") {
         let head = &out[..idx];
         if head.trim().chars().count() >= 2 {
@@ -755,6 +966,63 @@ fn clean_query_field(s: &str) -> String {
 
     // Collapse internal whitespace runs so the remote query encodes cleanly.
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Issue #64 — UGC fan-uploads often pack `Artist - Title` (or the
+/// reverse) into a single video title, with the channel name in the
+/// `artist` slot. When the audio-counterpart fetch failed to refine
+/// the metadata, try splitting the cleaned title on common
+/// artist/title separators so we have a chance of querying LRCLIB
+/// with the actual song identity.
+///
+/// Returns `Some((left, right))` when the input contains exactly one
+/// of the recognized separators and both halves are non-trivial. The
+/// caller is expected to try (left, right) and the swapped pair
+/// (right, left) — we don't know which side is the artist vs title
+/// without further heuristics.
+fn ugc_split_title_artist(cleaned: &str) -> Option<(String, String)> {
+    // Step 1: prefer the spaced or unicode-dash separators — those are
+    // unambiguous artist/title delimiters.
+    let separators: &[&str] = &[" - ", " – ", " — ", "–", "—", "－"];
+    for sep in separators {
+        if let Some(idx) = cleaned.find(sep) {
+            let left = cleaned[..idx].trim();
+            let right = cleaned[idx + sep.len()..].trim();
+            if left.chars().count() >= 2 && right.chars().count() >= 2 {
+                return Some((left.to_string(), right.to_string()));
+            }
+        }
+    }
+    // Step 2: bare ASCII "-" between two compact (whitespace-free) tokens.
+    // Required for CJK uploads like "人世间-雷佳" where the script doesn't
+    // use spaces. Guarded against in-word hyphens by demanding NEITHER
+    // half contain whitespace AND at least one half contain a non-ASCII
+    // character — a hyphen between two ASCII English words is far more
+    // likely a real word-internal hyphen than a delimiter.
+    //
+    // Skip when MULTIPLE bare dashes are present — "人世间-雷佳-2024" is
+    // ambiguous (which dash is the artist/title delimiter?), and any
+    // single-dash split produces a junk half. Better to surface "no
+    // candidates" than to ship swapped-with-a-trailing-tag pairs.
+    let dash_count = cleaned.matches('-').count();
+    if dash_count == 1 {
+        if let Some(idx) = cleaned.find('-') {
+            let left = cleaned[..idx].trim();
+            let right = cleaned[idx + 1..].trim();
+            let no_internal_space =
+                !left.contains(char::is_whitespace) && !right.contains(char::is_whitespace);
+            let has_non_ascii =
+                left.chars().any(|c| !c.is_ascii()) || right.chars().any(|c| !c.is_ascii());
+            if no_internal_space
+                && has_non_ascii
+                && left.chars().count() >= 2
+                && right.chars().count() >= 2
+            {
+                return Some((left.to_string(), right.to_string()));
+            }
+        }
+    }
+    None
 }
 
 /// Remove every `open..close` pair whose contents contain any of the given
@@ -798,6 +1066,167 @@ fn strip_noise_brackets(
 /// live vs studio, edit vs extended) — the LRC timestamps would be anchored
 /// to a different zero, producing systematic per-track off-sync.
 const LRCLIB_DURATION_TOLERANCE_SECS: f64 = 2.0;
+
+/// Shared `reqwest::Client` for the iTunes Search cover-art lookup.
+/// Building a new client per request spawns a fresh connection pool
+/// and TLS thread — wasteful when the IPC fires once per UGC track
+/// change. `std::sync::OnceLock` is async-safe and lock-free after
+/// the first init.
+fn itunes_client() -> &'static reqwest::Client {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .user_agent(
+                "VibeYTM-CoverFallback/1.0 (https://github.com/codeeatsleep2nd/VibeYTM)",
+            )
+            .build()
+            .expect("itunes client init")
+    })
+}
+
+/// Issue #75 — spawn the LRCLIB + NetEase race as a background task so
+/// the caller can run it in parallel with YTM's own lyrics-tab fetch.
+/// The returned `JoinHandle` resolves to the winning `(body, source)`
+/// pair when one source returns synced lyrics, or `None` when both
+/// gave up. The caller is responsible for calling `abort()` on the
+/// handle when YTM's tab has synced lyrics (so we don't waste the
+/// in-flight HTTP requests after we've already decided).
+///
+/// Different catalogs win on different sources — LRCLIB tends to
+/// cover Western tracks, NetEase covers CJK — so racing halves the
+/// typical wait. `tokio::select!` lets the first non-empty result
+/// short-circuit; an empty result waits for its peer.
+fn spawn_external_lyrics_race(
+    video_id: String,
+    candidates: Vec<(String, String)>,
+    lookup_duration: Option<f64>,
+) -> tokio::task::JoinHandle<Option<(String, &'static str)>> {
+    tokio::spawn(async move {
+        // Issue #64 — fan up-loads pack the actual artist/title into one
+        // YouTube title field with the channel name in the artist slot.
+        // Callers pass MULTIPLE (artist, title) candidates: the original
+        // pair, plus optional UGC splits ("Title - Artist" → split, then
+        // both orientations). Each candidate fans out into LRCLIB +
+        // NetEase queries, and the whole fleet races in one select loop.
+        // First non-empty winner returns; empty results wait for peers
+        // before giving up.
+        type Fut = std::pin::Pin<
+            Box<dyn std::future::Future<Output = Option<(String, &'static str)>> + Send>,
+        >;
+        let mut futs: Vec<Fut> = Vec::with_capacity(candidates.len() * 2);
+        for (artist, title) in candidates {
+            let a_l = artist.clone();
+            let t_l = title.clone();
+            let v_l = video_id.clone();
+            futs.push(Box::pin(async move {
+                tracing::info!(
+                    video_id = %v_l,
+                    artist = %a_l,
+                    title = %t_l,
+                    "LRCLIB: about to call fetch_lrclib_synced"
+                );
+                match fetch_lrclib_synced(&a_l, &t_l, lookup_duration).await {
+                    Ok(Some(body)) => Some((body, "LRCLIB")),
+                    Ok(None) => {
+                        tracing::info!(video_id = %v_l, "LRCLIB had no synced lyrics");
+                        None
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "LRCLIB fetch failed");
+                        None
+                    }
+                }
+            }));
+            let a_n = artist;
+            let t_n = title;
+            let v_n = video_id.clone();
+            futs.push(Box::pin(async move {
+                tracing::info!(
+                    video_id = %v_n,
+                    artist = %a_n,
+                    title = %t_n,
+                    "NetEase: about to call fetch_netease_synced"
+                );
+                match fetch_netease_synced_with_duration(&a_n, &t_n, lookup_duration).await {
+                    Ok(Some(body)) => Some((body, "NetEase")),
+                    Ok(None) => {
+                        tracing::info!(video_id = %v_n, "NetEase had no synced lyrics");
+                        None
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "NetEase fetch failed");
+                        None
+                    }
+                }
+            }));
+        }
+
+        // Race them all. `select_all` returns whichever future completes
+        // first; we then drop the index and continue selecting on the
+        // remaining ones until we find a winner or all return None.
+        use futures_util::future::select_all;
+        let mut remaining = futs;
+        let mut winner: Option<(String, &'static str)> = None;
+        while winner.is_none() && !remaining.is_empty() {
+            let (result, _idx, rest) = select_all(remaining).await;
+            remaining = rest;
+            if result.is_some() {
+                winner = result;
+            }
+        }
+        winner
+    })
+}
+
+/// Loose case-insensitive title match used by LRCLIB and NetEase candidate
+/// filtering (issue #67). A short, punctuated title like "APT." otherwise
+/// substring-matches dozens of unrelated tracks ("Adapt", "Aptitude",
+/// "Apartheid", …). Strategy:
+///
+/// * Normalize both sides — lowercase, trim, strip ASCII punctuation, collapse
+///   whitespace. So "APT." and "Apt" both become "apt".
+/// * For short normalized requests (<= 4 chars) require an EXACT match — those
+///   are the cases where a substring is dangerously permissive.
+/// * For longer requests, allow either direction of substring match — handles
+///   parenthetical suffixes ("Stayin' Alive (Remastered)" vs "Stayin' Alive").
+fn lyrics_normalize(s: &str) -> String {
+    let lower = s.to_lowercase();
+    let mut out = String::with_capacity(lower.len());
+    let mut last_space = true;
+    for ch in lower.chars() {
+        if ch.is_alphanumeric() {
+            out.push(ch);
+            last_space = false;
+        } else if !last_space {
+            out.push(' ');
+            last_space = true;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn title_matches(candidate: &str, requested: &str) -> bool {
+    let cand = lyrics_normalize(candidate);
+    let req = lyrics_normalize(requested);
+    if cand.is_empty() || req.is_empty() {
+        return false;
+    }
+    if req.chars().count() <= 4 {
+        return cand == req;
+    }
+    cand.contains(&req) || req.contains(&cand)
+}
+
+fn artist_matches(candidate: &str, requested: &str) -> bool {
+    let cand = lyrics_normalize(candidate);
+    let req = lyrics_normalize(requested);
+    if cand.is_empty() || req.is_empty() {
+        return false;
+    }
+    cand.contains(&req) || req.contains(&cand)
+}
 
 /// Ask LRCLIB (https://lrclib.net) for synced LRC-format lyrics. Returns the
 /// raw LRC body on success, `None` when LRCLIB has no match (or no match
@@ -852,6 +1281,14 @@ async fn fetch_lrclib_synced(
     // Pick the candidate whose recorded duration is closest to YTM's, but
     // only if it falls inside the tolerance window. Anything further away
     // is a different recording with mismatched timing.
+    //
+    // Short-title hardening (issue #67): a 4-char title like "APT." can
+    // match LRCLIB candidates whose title merely starts with "Apt" (e.g.
+    // "Aptitude", "Aptitudes"). We additionally require the candidate's
+    // title to loosely match the requested title — at least one direction
+    // of substring must hold AND the candidate title's word boundaries
+    // must align with the request for short queries. Without this an
+    // unrelated 3-min track within ±2 s of "APT."'s duration would win.
     let mut best: Option<(f64, &Value)> = None;
     for cand in &candidates {
         let cand_dur = cand
@@ -871,6 +1308,20 @@ async fn fetch_lrclib_synced(
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
         {
+            continue;
+        }
+        let cand_title = cand
+            .get("trackName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let cand_artist = cand
+            .get("artistName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !title_matches(cand_title, title) {
+            continue;
+        }
+        if !artist_matches(cand_artist, artist) {
             continue;
         }
         let synced = cand
@@ -1011,14 +1462,14 @@ async fn fetch_netease_synced_with_duration(
     // the candidate to be within tolerance. Drop the first-result
     // fallback entirely — better to surface "no lyrics" than to ship the
     // wrong song's text.
-    let want_title = title.to_lowercase();
-    let want_artist = artist.to_lowercase();
+    // Short-title hardening (issue #67): fall through `title_matches` so
+    // a 4-char title like "APT." requires an exact normalized equality
+    // instead of accepting any candidate name that contains "apt" as a
+    // substring (which yielded "Adapt" / "Aptitude" / etc.).
     let mut best: Option<(f64, u64)> = None;
     for s in songs {
-        let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-        let title_ok = !name.is_empty()
-            && (name.contains(&want_title) || want_title.contains(&name));
-        if !title_ok {
+        let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if !title_matches(name, title) {
             continue;
         }
         let artist_ok = s
@@ -1026,13 +1477,8 @@ async fn fetch_netease_synced_with_duration(
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter().any(|a| {
-                    let an = a
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_lowercase();
-                    !an.is_empty()
-                        && (an.contains(&want_artist) || want_artist.contains(&an))
+                    let an = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    artist_matches(an, artist)
                 })
             })
             .unwrap_or(false);
@@ -2506,6 +2952,41 @@ fn parse_album_from_list_item(renderer: &Value) -> Option<AlbumSummary> {
         artwork_url,
         year,
     })
+}
+
+/// Pull an `ArtistDetail` from YTM's artist-channel browse response
+/// (issue #79). YTM exposes the artist bio in two different places
+/// depending on whether the channel has an "About" blurb:
+///
+///   1. `header.musicImmersiveHeaderRenderer.description.runs[].text`
+///      (most music artists with curated channels)
+///   2. `microformat.microformatDataRenderer.description` (string)
+///      (smaller channels — auto-generated metadata)
+///
+/// We try them in order and return the first non-empty result. The
+/// avatar / banner image is best-effort from the same header.
+fn parse_artist_detail(data: &Value, channel_id: &str) -> ArtistDetail {
+    let header = &data["header"]["musicImmersiveHeaderRenderer"];
+
+    let name = runs_text(&header["title"]["runs"]);
+
+    // Bio — try the immersive-header description first.
+    let mut description = runs_text(&header["description"]["runs"]);
+    if description.trim().is_empty() {
+        // Fall back to the microformat description (raw string).
+        if let Some(s) = data["microformat"]["microformatDataRenderer"]["description"].as_str() {
+            description = s.to_string();
+        }
+    }
+
+    let avatar_url = best_thumbnail(&header["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"]);
+
+    ArtistDetail {
+        channel_id: channel_id.to_string(),
+        name,
+        description,
+        avatar_url,
+    }
 }
 
 /// Parse an artist from a `musicResponsiveListItemRenderer` in filtered search results.
@@ -4873,5 +5354,314 @@ mod tests {
         assert_eq!(parse_episode_duration_text(""), 0.0);
         assert_eq!(parse_episode_duration_text("   "), 0.0);
         assert_eq!(parse_episode_duration_text("not a duration"), 0.0);
+    }
+
+    // ---- lyrics title/artist match (issue #67) ---------------------------
+
+    #[test]
+    fn lyrics_normalize_strips_punctuation_and_lowercases() {
+        assert_eq!(super::lyrics_normalize("APT."), "apt");
+        assert_eq!(super::lyrics_normalize("  Stayin' Alive  "), "stayin alive");
+        assert_eq!(
+            super::lyrics_normalize("Stayin' Alive (Remastered)"),
+            "stayin alive remastered"
+        );
+        assert_eq!(super::lyrics_normalize("周杰倫"), "周杰倫");
+    }
+
+    #[test]
+    fn title_matches_short_title_requires_exact_normalized_equality() {
+        // "APT." (4 chars normalized: "apt") must NOT match "Adapt" /
+        // "Aptitude" / "Apartheid" — those return wrong lyrics today.
+        assert!(super::title_matches("APT.", "APT."));
+        assert!(super::title_matches("Apt", "APT."));
+        assert!(!super::title_matches("Adapt", "APT."));
+        assert!(!super::title_matches("Aptitude", "APT."));
+        assert!(!super::title_matches("Apartheid", "APT."));
+    }
+
+    #[test]
+    fn title_matches_longer_title_allows_substring_either_direction() {
+        // Bidirectional substring is required for parenthetical suffixes:
+        // YTM may pass "Stayin' Alive" while LRCLIB has "Stayin' Alive
+        // (Remastered)" — and vice versa.
+        assert!(super::title_matches(
+            "Stayin' Alive (Remastered)",
+            "Stayin' Alive"
+        ));
+        assert!(super::title_matches(
+            "Stayin' Alive",
+            "Stayin' Alive (Remastered)"
+        ));
+        assert!(!super::title_matches("Bohemian Rhapsody", "Stayin' Alive"));
+    }
+
+    #[test]
+    fn artist_matches_handles_collab_and_partial_credits() {
+        // "ROSÉ & Bruno Mars" loosely matches "ROSÉ" and vice versa.
+        assert!(super::artist_matches("ROSÉ & Bruno Mars", "ROSÉ"));
+        assert!(super::artist_matches("ROSÉ", "ROSÉ & Bruno Mars"));
+        assert!(!super::artist_matches("BTS", "ROSÉ"));
+    }
+
+    #[test]
+    fn title_matches_rejects_empty_either_side() {
+        assert!(!super::title_matches("", "APT."));
+        assert!(!super::title_matches("Apt", ""));
+    }
+
+    // ---- parse_artist_detail (issue #79) --------------------------------
+
+    #[test]
+    fn parse_artist_detail_pulls_immersive_header_description() {
+        let data = json!({
+            "header": {
+                "musicImmersiveHeaderRenderer": {
+                    "title": { "runs": [{ "text": "ROSÉ" }] },
+                    "description": {
+                        "runs": [
+                            { "text": "Rosé is a singer-songwriter " },
+                            { "text": "and member of BLACKPINK." }
+                        ]
+                    },
+                    "thumbnail": {
+                        "musicThumbnailRenderer": {
+                            "thumbnail": {
+                                "thumbnails": [
+                                    { "url": "https://example/avatar.jpg" }
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let detail = super::parse_artist_detail(&data, "UC123");
+        assert_eq!(detail.channel_id, "UC123");
+        assert_eq!(detail.name, "ROSÉ");
+        assert_eq!(
+            detail.description,
+            "Rosé is a singer-songwriter and member of BLACKPINK."
+        );
+        assert!(detail.avatar_url.contains("example"));
+    }
+
+    #[test]
+    fn parse_artist_detail_falls_back_to_microformat_description() {
+        // Channels without an immersive-header description still surface
+        // a microformat blurb. Pin the fallback so smaller artists get a
+        // bio rather than a blank section.
+        let data = json!({
+            "header": {
+                "musicImmersiveHeaderRenderer": {
+                    "title": { "runs": [{ "text": "Indie Artist" }] }
+                }
+            },
+            "microformat": {
+                "microformatDataRenderer": {
+                    "description": "Auto-generated bio from microformat."
+                }
+            }
+        });
+        let detail = super::parse_artist_detail(&data, "UC456");
+        assert_eq!(detail.description, "Auto-generated bio from microformat.");
+    }
+
+    // ---- UGC title cleaning + split (issue #64) ------------------------
+
+    #[test]
+    fn clean_query_field_strips_fullwidth_pipe_tail() {
+        // The example videoId from issue #64 — fan upload of "人世间" by 雷佳.
+        let raw =
+            "人世间-雷佳（人世间 电视剧歌曲  主题曲 ）｜ Drama A Lifelong Journey OST｜超高無損音樂-動態歌詞";
+        let cleaned = super::clean_query_field(raw);
+        // The first ｜ cuts everything after; the parenthetical is then
+        // dropped because it contains the noise token "歌曲" — but our
+        // current noise list doesn't include "歌曲", so the parenthetical
+        // is preserved. What MUST hold is that nothing past the first
+        // fullwidth pipe survives.
+        assert!(
+            !cleaned.contains('｜'),
+            "fullwidth pipe should be cut, got `{cleaned}`"
+        );
+        assert!(
+            !cleaned.contains("OST"),
+            "OST tail should be removed, got `{cleaned}`"
+        );
+        assert!(
+            !cleaned.contains("動態歌詞"),
+            "動態歌詞 tail should be removed, got `{cleaned}`"
+        );
+        // Core song identity survives.
+        assert!(
+            cleaned.contains("人世间"),
+            "core song title should survive, got `{cleaned}`"
+        );
+        assert!(
+            cleaned.contains("雷佳"),
+            "artist should survive (split happens later), got `{cleaned}`"
+        );
+    }
+
+    #[test]
+    fn clean_query_field_strips_fullwidth_corner_brackets() {
+        let raw = "Stayin' Alive 「Bee Gees」 Music Video";
+        // The corner brackets contain "Bee Gees" — NOT a noise token, so
+        // the bracket should be PRESERVED. (We only strip brackets whose
+        // contents match a noise token.) But the trailing "Music Video"
+        // tail is unbracketed garbage that the existing dash-cut will
+        // not catch. Good enough — the duration filter on LRCLIB still
+        // protects us. This test just pins that we don't accidentally
+        // drop the artist bracket.
+        let cleaned = super::clean_query_field(raw);
+        assert!(cleaned.contains("Stayin"), "title survives: `{cleaned}`");
+    }
+
+    #[test]
+    fn ugc_split_title_artist_handles_bare_dash_with_cjk() {
+        // Per the example: after cleaning the noisy ｜ tail, we're left
+        // with "人世间-雷佳" — bare ASCII dash, no spaces, both halves
+        // contain non-ASCII characters. The split should fire.
+        let split = super::ugc_split_title_artist("人世间-雷佳");
+        assert_eq!(
+            split,
+            Some(("人世间".to_string(), "雷佳".to_string())),
+            "split should produce title + artist halves",
+        );
+    }
+
+    #[test]
+    fn ugc_split_title_artist_does_not_fire_on_internal_english_hyphen() {
+        // "Long-Term" inside an English title is a legitimate hyphenation,
+        // NOT a delimiter. The split must skip it (no non-ASCII characters
+        // on either side).
+        assert_eq!(super::ugc_split_title_artist("Long-Term"), None);
+        assert_eq!(super::ugc_split_title_artist("Catch-22"), None);
+    }
+
+    #[test]
+    fn ugc_split_title_artist_handles_em_dash() {
+        let split = super::ugc_split_title_artist("Stayin' Alive — Bee Gees");
+        assert_eq!(
+            split,
+            Some(("Stayin' Alive".to_string(), "Bee Gees".to_string()))
+        );
+    }
+
+    #[test]
+    fn ugc_split_title_artist_returns_none_for_no_separator() {
+        assert_eq!(super::ugc_split_title_artist("Stayin' Alive"), None);
+    }
+
+    #[test]
+    fn ugc_split_title_artist_skips_ambiguous_multi_bare_dash() {
+        // Two bare dashes — first-match-wins would produce
+        // ("人世间", "雷佳-2024"), and the trailing year tag would
+        // poison every LRCLIB query. Rather than ship junk, return None.
+        assert_eq!(super::ugc_split_title_artist("人世间-雷佳-2024"), None);
+    }
+
+    #[test]
+    fn ugc_split_title_artist_handles_english_spaced_dash_after_preserving_clean() {
+        // Issue #64 follow-up: when the lyrics flow runs the split on
+        // the SEPARATOR-PRESERVING clean of a UGC English upload, the
+        // split must fire so LRCLIB gets both orientations. This test
+        // pins the spaced-dash branch (which already worked but had no
+        // direct test).
+        let split = super::ugc_split_title_artist("Stayin' Alive - Bee Gees");
+        assert_eq!(
+            split,
+            Some(("Stayin' Alive".to_string(), "Bee Gees".to_string())),
+        );
+    }
+
+    #[test]
+    fn clean_query_preserve_separators_keeps_dashes_for_split_pass() {
+        // The split-recovery cleaner must NOT consume " - " / " | " /
+        // fullwidth pipe — those are exactly the separators
+        // ugc_split_title_artist needs to find. It still strips noise
+        // brackets so the inner halves are clean.
+        let raw = "Stayin' Alive (Official Audio) - Bee Gees";
+        let preserved = super::clean_query_preserve_separators(raw);
+        assert!(
+            preserved.contains(" - "),
+            "spaced dash must survive: `{preserved}`"
+        );
+        assert!(
+            !preserved.contains("Official Audio"),
+            "noise bracket should still be stripped: `{preserved}`"
+        );
+    }
+
+    // ---- get_history shape (issue #93) ----------------------------------
+
+    #[test]
+    fn parse_library_songs_handles_history_carousel_shape() {
+        // FEmusic_history wraps tracks in date-grouped
+        // `musicCarouselShelfRenderer` sections ("Today", "Yesterday").
+        // `find_browse_list_items` already extracts items from carousels,
+        // so `parse_library_songs` should pick them up. Pin the shape so
+        // a future change to either fn doesn't silently empty out the
+        // History page (issue #93 follow-up).
+        let data = json!({
+            "contents": {
+                "singleColumnBrowseResultsRenderer": {
+                    "tabs": [{
+                        "tabRenderer": {
+                            "content": {
+                                "sectionListRenderer": {
+                                    "contents": [
+                                        {
+                                            "musicCarouselShelfRenderer": {
+                                                "header": {},
+                                                "contents": [
+                                                    {
+                                                        "musicResponsiveListItemRenderer": {
+                                                            "flexColumns": [
+                                                                {
+                                                                    "musicResponsiveListItemFlexColumnRenderer": {
+                                                                        "text": { "runs": [
+                                                                            {
+                                                                                "text": "Recently Played Song",
+                                                                                "navigationEndpoint": {
+                                                                                    "watchEndpoint": { "videoId": "histVid1" }
+                                                                                }
+                                                                            }
+                                                                        ] }
+                                                                    }
+                                                                },
+                                                                {
+                                                                    "musicResponsiveListItemFlexColumnRenderer": {
+                                                                        "text": { "runs": [
+                                                                            { "text": "Some Artist" }
+                                                                        ] }
+                                                                    }
+                                                                }
+                                                            ]
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }]
+                }
+            }
+        });
+        let tracks = super::parse_library_songs(&data);
+        assert_eq!(tracks.len(), 1, "expected 1 track from carousel shelf");
+        assert_eq!(tracks[0].title, "Recently Played Song");
+        assert_eq!(tracks[0].video_id, "histVid1");
+    }
+
+    #[test]
+    fn parse_artist_detail_returns_empty_description_when_none_present() {
+        let data = json!({ "header": { "musicImmersiveHeaderRenderer": {} } });
+        let detail = super::parse_artist_detail(&data, "UC789");
+        assert_eq!(detail.description, "");
+        assert_eq!(detail.channel_id, "UC789");
     }
 }

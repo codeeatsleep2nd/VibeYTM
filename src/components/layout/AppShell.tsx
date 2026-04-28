@@ -37,7 +37,7 @@ export const AppShell: FC<AppShellProps> = ({
       overflow: 'hidden',
     }}
   >
-    {/* Title bar drag region */}
+    {/* Title bar drag region (full width — collapse toggle removed). */}
     <div
       data-tauri-drag-region
       style={{

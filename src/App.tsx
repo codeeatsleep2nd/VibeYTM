@@ -9,6 +9,7 @@ import { SettingsPage } from './components/pages/SettingsPage';
 import { LoginPage } from './components/pages/LoginPage';
 import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
 import { ArtistPage } from './components/pages/ArtistPage';
+import { HistoryPage } from './components/pages/HistoryPage';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { UpdateBanner } from './components/UpdateBanner';
 import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
@@ -269,6 +270,7 @@ const App: FC = () => {
         />
       );
     }
+    if (currentPath === 'history') return <HistoryPage />;
     if (currentPath === 'settings') return <SettingsPage />;
     if (currentPath.startsWith('library')) {
       // library, library/playlists, library/songs, library/albums,

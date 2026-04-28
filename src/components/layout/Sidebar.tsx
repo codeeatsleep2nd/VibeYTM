@@ -6,6 +6,7 @@ import {
   AlbumsIcon,
   ArtistsIcon,
   ExploreIcon,
+  HistoryIcon,
   HomeIcon,
   PlaylistsIcon,
   PodcastsIcon,
@@ -122,12 +123,16 @@ const NAV_ITEMS: { path: string; label: string; icon: ReactNode }[] = [
   { path: 'explore', label: 'Explore', icon: <ExploreIcon size={16} /> },
 ];
 
+// Issue #93 — History moved from the top nav into the Library group
+// (sits below Podcasts, above any future "Saved" item). Apple Music
+// puts "Recently Played" in the same section as the user's library.
 const LIBRARY_ITEMS: { path: string; label: string; icon: ReactNode }[] = [
   { path: 'library/playlists', label: 'Playlists', icon: <PlaylistsIcon size={16} /> },
   { path: 'library/songs', label: 'Songs', icon: <SongsIcon size={16} /> },
   { path: 'library/albums', label: 'Albums', icon: <AlbumsIcon size={16} /> },
   { path: 'library/artists', label: 'Artists', icon: <ArtistsIcon size={16} /> },
   { path: 'library/podcasts', label: 'Podcasts', icon: <PodcastsIcon size={16} /> },
+  { path: 'history', label: 'History', icon: <HistoryIcon size={16} /> },
 ];
 
 const SectionLabel: FC<{ children: ReactNode }> = ({ children }) => (

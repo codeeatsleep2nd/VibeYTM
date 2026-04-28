@@ -10,7 +10,9 @@ mod logging;
 mod protocols;
 pub mod state;
 mod tray;
-mod updater;
+// `pub` so the integration test in `tests/updater_check_once.rs` can
+// reach `updater::check_once_at` against a local mock server (issue #72).
+pub mod updater;
 mod webview_bridge;
 mod ytm_api;
 
@@ -380,6 +382,9 @@ pub fn run() {
             commands::browse::get_home,
             commands::browse::get_explore,
             commands::browse::get_playlist,
+            commands::browse::get_artist,
+            commands::browse::get_history,
+            commands::browse::get_external_cover_art,
             commands::browse::get_library_playlists,
             commands::browse::get_library_songs,
             commands::browse::get_library_albums,

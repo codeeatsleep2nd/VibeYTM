@@ -455,32 +455,58 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 drop(last_vid);
 
                 // Same videoId, but YTM's DOM can still be mid-transition.
-                // Two scenarios this branch has to repair:
+                // Three scenarios this branch has to repair:
                 //   * initial duration was 0 and has now filled in (issue #34)
                 //   * track auto-advanced and our previous emit captured the
                 //     new videoId alongside the OLD title/artwork, so the
                 //     frontend is stuck showing stale metadata (issue #57)
-                // Any meaningful field delta triggers a re-emit of
-                // TRACK_CHANGED with the reconciled data.
+                //
+                // Issue #57 hardening: when the user seeks to the very end
+                // of a short track, YTM auto-advances mid-poll. The DOM
+                // may briefly report the OLD videoId (or empty) alongside
+                // the NEW track's duration, so the previous version of
+                // this branch wrote the new duration onto the old track —
+                // FE then rendered new-duration + old-cover until the
+                // next cycle delivered the real videoId. The fix: gate
+                // the in-place merge on `bs.video_id` matching the stored
+                // track's videoId AND being non-empty. If they differ
+                // OR bs reports an empty videoId, treat the snapshot as
+                // mid-transition garbage and skip — the next poll either
+                // resolves to a real track-change (videoId branch above)
+                // or returns to a self-consistent same-videoId state.
+                // Read `ps.track` ONCE — the consistency check and the
+                // delta evaluation share the same snapshot, so a future
+                // writer can't slip a different track between the two
+                // checks (TOCTOU concern raised in code review of
+                // 12af85d). Returns `false` for both flags when there's
+                // no stored track yet; the videoId branch above handles
+                // the cold-start path.
                 let needs_update = {
                     let ps = player_state.read().await;
-                    ps.track
-                        .as_ref()
-                        .map(|t| {
-                            let duration_grew = bs.duration_secs > 0.0
-                                && bs.duration_secs > t.duration_secs + 0.5;
-                            let title_changed =
-                                !bs.title.is_empty() && bs.title != t.title;
-                            let artist_changed =
-                                !bs.artist.is_empty() && bs.artist != t.artist;
-                            let artwork_changed = !bs.artwork_url.is_empty()
-                                && t.artwork_url.as_deref() != Some(bs.artwork_url.as_str());
-                            duration_grew
-                                || title_changed
-                                || artist_changed
-                                || artwork_changed
-                        })
-                        .unwrap_or(false)
+                    match ps.track.as_ref() {
+                        None => false,
+                        Some(t) => {
+                            let consistent =
+                                !bs.video_id.is_empty() && bs.video_id == t.video_id;
+                            if !consistent {
+                                false
+                            } else {
+                                let duration_grew = bs.duration_secs > 0.0
+                                    && bs.duration_secs > t.duration_secs + 0.5;
+                                let title_changed =
+                                    !bs.title.is_empty() && bs.title != t.title;
+                                let artist_changed =
+                                    !bs.artist.is_empty() && bs.artist != t.artist;
+                                let artwork_changed = !bs.artwork_url.is_empty()
+                                    && t.artwork_url.as_deref()
+                                        != Some(bs.artwork_url.as_str());
+                                duration_grew
+                                    || title_changed
+                                    || artist_changed
+                                    || artwork_changed
+                            }
+                        }
+                    }
                 };
                 if needs_update {
                     let updated = {

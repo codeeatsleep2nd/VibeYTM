@@ -120,4 +120,14 @@ describe('Sidebar', () => {
     const bar = homeBtn.querySelector('span[aria-hidden]') as HTMLElement;
     expect(bar.style.pointerEvents).toBe('none');
   });
+
+  it('does NOT render a sidebar collapse/expand toggle (feature removed)', () => {
+    render(<Sidebar currentPath="home" onNavigate={noop} />);
+    expect(
+      screen.queryByRole('button', { name: /Collapse sidebar/i }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /Expand sidebar/i }),
+    ).toBeNull();
+  });
 });

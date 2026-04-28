@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary, PodcastSummary, PodcastLastEpisode, Lyrics } from './types';
+import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary, ArtistDetail, PodcastSummary, PodcastLastEpisode, Lyrics } from './types';
 import type { RepeatMode } from './types';
 
 export interface CacheStats {
@@ -246,8 +246,26 @@ export const browseApi = {
   getHome: () => invoke<Shelf[]>('get_home'),
   getExplore: () => invoke<Shelf[]>('get_explore'),
   getPlaylist: (playlistId: string) => invoke<PlaylistDetail>('get_playlist', { playlistId }),
+  getArtist: (channelId: string) =>
+    invoke<ArtistDetail>('get_artist', { channelId }),
+  /** Issue #65 — UGC cover-art fallback. Returns an Apple Music
+   *  cover URL keyed on (artist, title, duration), or null when
+   *  iTunes Search produced no usable match. */
+  getExternalCoverArt: (params: {
+    artist: string;
+    title: string;
+    durationSecs?: number | null;
+  }) =>
+    invoke<string | null>('get_external_cover_art', {
+      artist: params.artist,
+      title: params.title,
+      durationSecs: params.durationSecs ?? null,
+    }),
   getLibraryPlaylists: () => invoke<PlaylistSummary[]>('get_library_playlists'),
   getLibrarySongs: () => invoke<TrackInfo[]>('get_library_songs'),
+  /** Issue #93 — recently-played history sourced from YTM's own
+   *  `FEmusic_history` endpoint. */
+  getHistory: () => invoke<TrackInfo[]>('get_history'),
   getLibraryAlbums: () => invoke<AlbumSummary[]>('get_library_albums'),
   getLibraryArtists: () => invoke<ArtistSummary[]>('get_library_artists'),
   getLibraryPodcasts: () => invoke<PodcastSummary[]>('get_library_podcasts'),

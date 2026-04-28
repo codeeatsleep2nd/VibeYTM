@@ -170,6 +170,12 @@ interface RefreshLyricsButtonProps {
  *  user-facing escape hatch when the matcher returned wrong lyrics in an
  *  earlier session and they got pinned in the persistent caches. */
 const RefreshLyricsButton: FC<RefreshLyricsButtonProps> = ({ onClick, isRefreshing }) => {
+  // Issue #95 — align with the offset −/0/+ buttons in the sticky
+  // bottom row: same padding (`2px 8px`), same `--radius-sm`, same
+  // `--text-xs` font size, same translucent white background. Without
+  // this the refresh pill (with its `--radius-full` border + larger
+  // padding + extra `marginTop`) sat lower and looked like a bigger,
+  // visually-distinct control next to the offset cluster.
   return (
     <button
       type="button"
@@ -177,21 +183,20 @@ const RefreshLyricsButton: FC<RefreshLyricsButtonProps> = ({ onClick, isRefreshi
       disabled={isRefreshing}
       title="Re-fetch lyrics for this track (clears the cached match)"
       style={{
-        marginTop: 'var(--space-3)',
-        padding: 'var(--space-1) var(--space-3)',
-        fontSize: 'var(--text-xs)',
-        fontWeight: 500,
-        background: 'transparent',
-        border: '1px solid oklch(100% 0 0 / 0.14)',
-        borderRadius: 'var(--radius-full)',
+        background: 'oklch(100% 0 0 / 0.06)',
+        border: 'none',
         color: 'var(--color-text-secondary)',
+        fontSize: 'var(--text-xs)',
+        padding: '2px 8px',
+        borderRadius: 'var(--radius-sm)',
         cursor: isRefreshing ? 'progress' : 'pointer',
         opacity: isRefreshing ? 0.6 : 1,
+        lineHeight: 1.4,
         transition:
           'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out)',
       }}
     >
-      {isRefreshing ? 'Refreshing…' : 'Refresh lyrics'}
+      {isRefreshing ? 'Refreshing…' : 'Refresh'}
     </button>
   );
 };
@@ -308,18 +313,40 @@ const TimedLyrics: FC<TimedLyricsProps> = ({
           );
         })}
       </div>
+      {/*
+        Sticky-bottom control row (issue #66). The container is
+        `overflowY: auto`, so without `position: sticky` this row
+        scrolled out of view exactly when the user wanted to nudge
+        the offset while listening. Sticking it to the visible
+        bottom keeps it reachable; the translucent gradient + blur
+        shrouds any lyric line that scrolls underneath so the
+        controls stay legible. Bottom inset matches the container's
+        `var(--space-6)` padding so the row sits on the panel's
+        natural bottom edge instead of touching the rounded border.
+      */}
       <div
         style={{
+          position: 'sticky',
+          bottom: 'calc(var(--space-6) * -1)',
           marginTop: 'var(--space-3)',
+          marginBottom: 'calc(var(--space-6) * -1)',
+          marginInline: 'calc(var(--space-6) * -1)',
+          padding: 'var(--space-3) var(--space-6) var(--space-4)',
           fontSize: 'var(--text-xs)',
           color: 'var(--color-text-tertiary)',
           borderTop: '1px solid oklch(100% 0 0 / 0.06)',
-          paddingTop: 'var(--space-2)',
+          // Frosted-glass hood so lyric lines underneath read as a
+          // soft blur rather than fighting the controls for focus.
+          background:
+            'linear-gradient(180deg, oklch(0% 0 0 / 0) 0%, oklch(0% 0 0 / 0.45) 70%, oklch(0% 0 0 / 0.55) 100%)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 'var(--space-2)',
           flexShrink: 0,
+          zIndex: 1,
         }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

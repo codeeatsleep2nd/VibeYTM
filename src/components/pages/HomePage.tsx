@@ -1,6 +1,7 @@
 import { type FC, useCallback, useEffect, useState } from 'react';
 import type { Shelf, TrackInfo } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
+import { debug } from '../../lib/debug';
 import { useTauriEvent } from '../../hooks/useTauriEvent';
 import { readCache, writeCache, clearCache } from '../../lib/persistentCache';
 import { ShelfRow } from '../browse/ShelfRow';
@@ -104,7 +105,7 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
         onReady?.();
       })
       .catch((e) => {
-        console.error('[HomePage] getHome failed:', e);
+        debug.error('HomePage', 'getHome failed', e);
         setIsLoading(false);
         // Still dismiss the welcome splash — users shouldn't get stuck on
         // it if the first fetch fails.

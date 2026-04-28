@@ -25,15 +25,71 @@
   // of YTM's <video> creation so the lock clamps from frame zero.
   try {
     var raw = localStorage.getItem('__VIBEYTM_VOLUME_PCT__');
-    if (raw !== null) {
-      var n = Number(raw);
-      if (Number.isFinite(n)) {
-        window.__VIBEYTM_DESIRED_VOLUME_PCT__ = Math.max(0, Math.min(100, Math.round(n)));
-      }
+    var n = raw !== null ? Number(raw) : NaN;
+    if (Number.isFinite(n)) {
+      window.__VIBEYTM_DESIRED_VOLUME_PCT__ = Math.max(0, Math.min(100, Math.round(n)));
+    } else {
+      // Issue #69 — first launch OR a corrupted entry (e.g. `"NaN"`,
+      // `"undefined"`): seed a safe 50% default so YTM's freshly-
+      // created <video> can't burst at its native 100%. Rust's
+      // session-restore pushes the user's real volume one cycle later
+      // via set_volume, which overrides this seed AND writes a clean
+      // localStorage value so subsequent navigations take the if-
+      // branch instead.
+      window.__VIBEYTM_DESIRED_VOLUME_PCT__ = 50;
     }
   } catch (e) {
     // localStorage unavailable; the Rust-pushed volume one cycle later
     // is the safety net.
+  }
+
+  // Issue #91 — same seed-then-persist pattern for the account info.
+  // YTM destroys the page context on every track navigation, wiping
+  // `__VIBEYTM_ACCOUNT__` to null. The bridge then re-fetches via
+  // checkAccountInfo / fetchAccountFromApi which lands a slightly
+  // different avatar URL (DOM-scrape uses `=s96-c`; the API returns
+  // the raw signed thumbnails URL). The mismatch made the Rust diff
+  // emit `player:account-changed`, which re-rendered AccountCard
+  // and forced CachedImage to re-decode — visible flicker on next/
+  // prev. Seeding from localStorage at the top of every navigation
+  // means the global is non-null and stable from frame zero, so the
+  // diff returns equal and no event fires.
+  //
+  // We ALSO check the SAPISID cookie: when it's gone the user has
+  // signed out (or session expired) regardless of whether YTM has
+  // rendered a sign-in anchor on the current page. Drop the persisted
+  // account in that case so the next user's avatar doesn't seed.
+  try {
+    var rawAcc = localStorage.getItem('__VIBEYTM_ACCOUNT__');
+    var sapisidPresent = (function () {
+      try {
+        var cookies = document.cookie.split(';');
+        for (var i = 0; i < cookies.length; i++) {
+          var kv = cookies[i].split('=');
+          var k = kv[0].trim();
+          if (k === '__Secure-3PAPISID' || k === 'SAPISID') return true;
+        }
+      } catch (e) {}
+      return false;
+    })();
+    if (!sapisidPresent && rawAcc !== null) {
+      // Cookie gone → user signed out (or session expired). Drop the
+      // stale entry so a different account doesn't get seeded with
+      // the previous user's avatar.
+      localStorage.removeItem('__VIBEYTM_ACCOUNT__');
+    } else if (rawAcc !== null) {
+      var parsed = JSON.parse(rawAcc);
+      if (
+        parsed
+        && typeof parsed === 'object'
+        && typeof parsed.name === 'string'
+        && typeof parsed.avatarUrl === 'string'
+      ) {
+        window.__VIBEYTM_ACCOUNT__ = parsed;
+      }
+    }
+  } catch (e) {
+    // localStorage / JSON parse failure — fall through to live re-fetch.
   }
 
   function log(msg) {
@@ -749,6 +805,16 @@
         window.__VIBEYTM_LOGGED_IN__ = true;
       } else if (signIn) {
         window.__VIBEYTM_LOGGED_IN__ = false;
+        // Drop the persisted account so a sign-back-in doesn't seed
+        // the previous user's avatar (issue #91 follow-up).
+        if (window.__VIBEYTM_ACCOUNT__) {
+          window.__VIBEYTM_ACCOUNT__ = null;
+          try {
+            localStorage.removeItem('__VIBEYTM_ACCOUNT__');
+          } catch (e) {
+            // best-effort
+          }
+        }
       }
     } catch (e) {
       // Leave last-known value in place on transient DOM errors.
@@ -900,12 +966,28 @@
     return (node && node.simpleText) || '';
   }
 
+  function persistAccountInfo() {
+    try {
+      if (window.__VIBEYTM_ACCOUNT__) {
+        localStorage.setItem(
+          '__VIBEYTM_ACCOUNT__',
+          JSON.stringify(window.__VIBEYTM_ACCOUNT__),
+        );
+      }
+    } catch (e) {
+      // best-effort
+    }
+  }
+
   function applyAccountInfo(info) {
     var prevAvatar = (window.__VIBEYTM_ACCOUNT__ && window.__VIBEYTM_ACCOUNT__.avatarUrl) || '';
     window.__VIBEYTM_ACCOUNT__ = {
       name: info.name,
       avatarUrl: info.avatarUrl || prevAvatar || readAvatarFromDom(),
     };
+    // Issue #91 — persist so the next page navigation can seed
+    // immediately and avoid an avatar flicker.
+    persistAccountInfo();
   }
 
   function checkAccountInfo() {
@@ -917,8 +999,10 @@
     var prev = window.__VIBEYTM_ACCOUNT__;
     if (!prev) {
       window.__VIBEYTM_ACCOUNT__ = { name: '', avatarUrl: avatar };
+      persistAccountInfo();
     } else if (!prev.avatarUrl) {
       window.__VIBEYTM_ACCOUNT__ = { name: prev.name || '', avatarUrl: avatar };
+      persistAccountInfo();
     }
     if (!window.__VIBEYTM_ACCOUNT__.name) {
       fetchAccountFromApi();

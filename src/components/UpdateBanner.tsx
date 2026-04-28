@@ -2,6 +2,7 @@ import { type FC, useEffect, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useTauriEvent } from '../hooks/useTauriEvent';
 import { updateApi, type UpdateInfo } from '../lib/ipc';
+import { debug } from '../lib/debug';
 
 const DISMISS_KEY = 'vibeytm:update-dismissed-version';
 
@@ -43,7 +44,7 @@ export const UpdateBanner: FC = () => {
         if (readDismissedVersion() === payload.latestVersion) return;
         setInfo(payload);
       })
-      .catch((e) => console.error('updateApi.check failed', e));
+      .catch((e) => debug.error('UpdateBanner', 'updateApi.check failed', e));
     return () => {
       cancelled = true;
     };
@@ -58,7 +59,9 @@ export const UpdateBanner: FC = () => {
   if (!info) return null;
 
   const handleOpen = () => {
-    openUrl(info.releaseUrl).catch((e) => console.error('open release url failed', e));
+    openUrl(info.releaseUrl).catch((e) =>
+      debug.error('UpdateBanner', 'open release url failed', e),
+    );
   };
 
   const handleDismiss = () => {

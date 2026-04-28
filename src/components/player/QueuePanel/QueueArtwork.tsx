@@ -3,7 +3,10 @@ import { ArtworkPlaceholder } from '../../ArtworkPlaceholder';
 import { CachedImage } from '../../CachedImage';
 import type { TrackInfo } from '../../../lib/types';
 import { usePlayerState } from '../../../hooks/usePlayerState';
+import { useAudioCounterpartArtwork } from '../../../hooks/useAudioCounterpartArtwork';
+import { BRIDGE_SETTLE_MS } from '../../../hooks/useBridgeSafeFetch';
 import { lookupShowCover } from '../../../lib/showCoverRegistry';
+import { isAlbumArtUrl } from '../../../lib/artwork';
 import { artworkChain } from './artwork';
 
 interface QueueArtworkProps {
@@ -49,7 +52,39 @@ export const QueueArtwork: FC<QueueArtworkProps> = ({ track, liveTrack }) => {
     ? lookupShowCover(activePlaylistId)
     : undefined;
   const baseChain = artworkChain(sourceTrack);
-  const chain = showCoverUrl ? [showCoverUrl, ...baseChain] : baseChain;
+  // Issue #96 — when /next didn't return album-art for this row (UGC
+  // tracks, song-radio rows missing their counterpart), lazily resolve
+  // it via `useAudioCounterpartArtwork`. The hook is module-cached and
+  // de-duped across rows, so opening the queue produces at most one
+  // IPC per upcoming videoId we haven't seen, and zero on subsequent
+  // re-mounts.
+  //
+  // Settle gating (#96 follow-up): the hook itself doesn't respect the
+  // CLAUDE.md "background fetches need ~1.5-2 s after track-change"
+  // rule. With a 10-row queue, opening the panel during a track change
+  // would fan out 10 simultaneous getAudioCounterpartArtwork IPCs and
+  // starve user-driven IPCs (get_playlist, search). We delay the hook
+  // mount by `BRIDGE_SETTLE_MS` so the fan-out only fires once the
+  // bridge has settled.
+  const [readyForCounterpart, setReadyForCounterpart] = useState(false);
+  useEffect(() => {
+    setReadyForCounterpart(false);
+    const t = setTimeout(() => setReadyForCounterpart(true), BRIDGE_SETTLE_MS);
+    return () => clearTimeout(t);
+  }, [sourceTrack.videoId]);
+  const counterpart = useAudioCounterpartArtwork(
+    readyForCounterpart ? sourceTrack.videoId : undefined,
+    sourceTrack.artworkUrl,
+  );
+  const counterpartChain =
+    isAlbumArtUrl(counterpart) && !baseChain.includes(counterpart!)
+      ? [counterpart!]
+      : [];
+  const chain = [
+    ...(showCoverUrl ? [showCoverUrl] : []),
+    ...baseChain,
+    ...counterpartChain,
+  ];
   const [chainIdx, setChainIdx] = useState(0);
   useEffect(() => {
     setChainIdx(0);

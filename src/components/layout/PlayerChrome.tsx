@@ -262,8 +262,14 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   // sees the new track synchronously and lands the now-playing-bars
   // animation before the IPC round-trip lands. Falls back to YTM's
   // previous/next when no planned track is available (cold start).
+  //
+  // SHUFFLE EXCEPTION (issue #81): when shuffle is on, the planned queue
+  // mirrors the visible (playlist) order — playing the "next" planned
+  // track would defeat shuffle and play the linearly-next song. Fall
+  // through to YTM's `nextVideo()` which respects YTM's internal shuffle
+  // cursor and picks a random upcoming track. Same for previous.
   const handlePrev = () => {
-    const prev = getPlannedPrevious();
+    const prev = isShuffled ? null : getPlannedPrevious();
     if (prev?.videoId) {
       setPredictedTrack(prev);
       applyOptimistic({ track: prev, positionSecs: 0 });
@@ -274,7 +280,7 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
     }
   };
   const handleNext = () => {
-    const next = getPlannedNext();
+    const next = isShuffled ? null : getPlannedNext();
     if (next?.videoId) {
       setPredictedTrack(next);
       applyOptimistic({ track: next, positionSecs: 0 });

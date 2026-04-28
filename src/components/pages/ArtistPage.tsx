@@ -1,6 +1,7 @@
 import { type FC, useEffect, useState } from 'react';
-import type { AlbumSummary, SearchResults, TrackInfo } from '../../lib/types';
+import type { AlbumSummary, TrackInfo } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
+import { debug } from '../../lib/debug';
 import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
 import { useCoverColors } from '../../hooks/useCoverColors';
 import { albumArtOrNothing } from '../../lib/artwork';
@@ -24,8 +25,12 @@ interface ArtistPageProps {
 // SearchPage's constants.
 const SEARCH_FILTER_SONGS = 'EgWKAQIIAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 const SEARCH_FILTER_ALBUMS = 'EgWKAQIYAWoSEA4QCRAKEAUQBBADEBUQEBAR';
+const SEARCH_FILTER_ARTISTS = 'EgWKAQIgAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 
 const TOP_SONGS_DISPLAY_LIMIT = 8;
+// Bio fetch failures (no channelId, empty description, network error)
+// are silently downgraded to "no bio shown" — the existing songs/albums
+// shelves still render. We never surface a bio-specific error toast.
 
 /**
  * Artist landing page — name, top songs, top albums. Replaces the
@@ -51,6 +56,7 @@ export const ArtistPage: FC<ArtistPageProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [songs, setSongs] = useState<TrackInfo[]>([]);
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
+  const [bio, setBio] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,17 +65,19 @@ export const ArtistPage: FC<ArtistPageProps> = ({
     setError(null);
     setSongs([]);
     setAlbums([]);
+    setBio('');
 
-    const songsPromise: Promise<SearchResults> = browseApi.search(
-      artistName,
-      SEARCH_FILTER_SONGS,
-    );
-    const albumsPromise: Promise<SearchResults> = browseApi.search(
-      artistName,
-      SEARCH_FILTER_ALBUMS,
-    );
-
-    Promise.all([songsPromise, albumsPromise])
+    // Songs + albums are the page's load-bearing data — `setIsLoading`
+    // gates on these two only. The bio fetch (artist-search →
+    // get_artist, ~2× slower) runs INDEPENDENTLY and updates `bio`
+    // when it lands. Earlier this group was stitched into a single
+    // `Promise.all`, which held back the songs/albums UI until the
+    // bio resolved — directly contradicting the "doesn't lengthen
+    // the load" intent flagged in code review (issue #79 follow-up).
+    Promise.all([
+      browseApi.search(artistName, SEARCH_FILTER_SONGS),
+      browseApi.search(artistName, SEARCH_FILTER_ALBUMS),
+    ])
       .then(([songsRes, albumsRes]) => {
         if (cancelled) return;
         const matchedSongs = songsRes.songs.filter((t) =>
@@ -84,7 +92,38 @@ export const ArtistPage: FC<ArtistPageProps> = ({
         if (cancelled) return;
         setError(`Could not load ${artistName}`);
         setIsLoading(false);
-        console.error('[ArtistPage] load failed:', e);
+        debug.error('ArtistPage', 'load failed', e);
+      });
+
+    // Issue #79 — artist bio. Runs OUT-OF-BAND from the songs/albums
+    // load: the page becomes interactive as soon as those resolve,
+    // and the About block fades in (or stays absent) when the bio
+    // pipeline finishes later. Inner `cancelled` guard avoids firing
+    // get_artist after a navigate-away even when the artist-search
+    // resolved before the user left.
+    browseApi
+      .search(artistName, SEARCH_FILTER_ARTISTS)
+      .then((res) => {
+        if (cancelled) return '';
+        const match = res.artists.find((a) =>
+          matchesArtist(a.name, artistName),
+        );
+        if (!match?.channelId) return '';
+        return browseApi
+          .getArtist(match.channelId)
+          .then((d) => (cancelled ? '' : d.description.trim()))
+          .catch((e) => {
+            debug.error('ArtistPage', 'getArtist failed', e);
+            return '';
+          });
+      })
+      .catch((e) => {
+        debug.error('ArtistPage', 'artist-search for bio failed', e);
+        return '';
+      })
+      .then((bioText) => {
+        if (cancelled) return;
+        if (typeof bioText === 'string') setBio(bioText);
       });
 
     return () => {
@@ -155,6 +194,14 @@ export const ArtistPage: FC<ArtistPageProps> = ({
           padding: 'var(--space-6)',
         }}
       >
+      {/* Issue #94 — bio sits at the TOP of the content area, ahead of
+          everything else (including the loading-state skeletons). This
+          matches Apple Music's artist-page layout: hero → about →
+          songs → albums. Decoupled from `isLoading` because the bio
+          fetch (#79) runs out-of-band from the songs/albums load and
+          resolves on its own timeline. */}
+      {bio.length > 0 && <ArtistBio text={bio} />}
+
       {isLoading && (
         <>
           <section>
@@ -291,6 +338,64 @@ export const ArtistPage: FC<ArtistPageProps> = ({
         </section>
       )}
       </div>
+    </section>
+  );
+};
+
+/**
+ * Bio block — sits between the hero and the Top Songs shelf.
+ * YTM artist descriptions are often long (sometimes 1000+ chars); we
+ * collapse to ~300 chars by default and reveal the full text behind a
+ * "Show more / Show less" toggle so the page doesn't push everything
+ * else below the fold.
+ */
+const BIO_PREVIEW_CHARS = 300;
+
+const ArtistBio: FC<{ text: string }> = ({ text }) => {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > BIO_PREVIEW_CHARS;
+  const visible =
+    !isLong || expanded ? text : text.slice(0, BIO_PREVIEW_CHARS).trimEnd() + '…';
+  return (
+    <section>
+      <h2
+        style={{
+          fontSize: 'var(--text-lg)',
+          margin: '0 0 var(--space-3) 0',
+          color: 'var(--color-text-primary)',
+        }}
+      >
+        About
+      </h2>
+      <p
+        style={{
+          margin: 0,
+          fontSize: 'var(--text-sm)',
+          lineHeight: 1.6,
+          color: 'var(--color-text-secondary)',
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {visible}
+      </p>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          style={{
+            marginTop: 'var(--space-2)',
+            background: 'transparent',
+            border: 'none',
+            padding: 0,
+            fontSize: 'var(--text-sm)',
+            fontWeight: 500,
+            color: 'var(--color-accent)',
+            cursor: 'pointer',
+          }}
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
     </section>
   );
 };

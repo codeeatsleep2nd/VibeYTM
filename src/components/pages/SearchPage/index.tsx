@@ -491,9 +491,9 @@ export const SearchPage: FC<SearchPageProps> = ({
                 <h2
                   style={{
                     margin: 0,
-                    fontSize: 'var(--text-sm)',
+                    fontSize: 'var(--text-xs)',
                     fontWeight: 600,
-                    color: 'var(--color-text-secondary)',
+                    color: 'var(--color-text-tertiary)',
                     textTransform: 'uppercase',
                     letterSpacing: '0.08em',
                   }}
@@ -515,6 +515,11 @@ export const SearchPage: FC<SearchPageProps> = ({
                   Clear
                 </button>
               </div>
+              {/* Pill chips that match the inactive category-tab style
+                  above (transparent fill, --color-border outline, pill
+                  radius, accent-on-hover). Replaces the old surface-2
+                  filled chips that read as a different visual system
+                  from the rest of the search page (issue #80). */}
               <div
                 style={{
                   display: 'flex',
@@ -527,15 +532,29 @@ export const SearchPage: FC<SearchPageProps> = ({
                     key={kw}
                     type="button"
                     onClick={() => submitQuery(kw)}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background =
+                        'oklch(100% 0 0 / 0.06)';
+                      e.currentTarget.style.color =
+                        'var(--color-text-primary)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color =
+                        'var(--color-text-secondary)';
+                    }}
                     style={{
                       padding: 'var(--space-2) var(--space-4)',
                       fontSize: 'var(--text-sm)',
-                      background: 'var(--color-surface-2)',
-                      border: '1px solid oklch(100% 0 0 / 0.08)',
+                      fontWeight: 500,
+                      background: 'transparent',
+                      border: '1px solid var(--color-border)',
                       borderRadius: 'var(--radius-full)',
-                      color: 'var(--color-text-primary)',
+                      color: 'var(--color-text-secondary)',
                       cursor: 'pointer',
                       whiteSpace: 'nowrap',
+                      transition: `background var(--duration-fast) var(--ease-out),
+                                   color var(--duration-fast) var(--ease-out)`,
                     }}
                   >
                     {kw}

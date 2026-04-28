@@ -40,6 +40,25 @@ pub struct ArtistSummary {
     pub subscriber_count: Option<String>,
 }
 
+/// Artist channel detail returned from `browse?browseId=UC...`. Issue
+/// #79 — currently only carries the bio/description text so the
+/// ArtistPage can render an introduction below the title plate. Future
+/// expansions (top tracks, albums via the channel itself) can extend
+/// this struct without forcing the FE consumer to refetch.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtistDetail {
+    pub channel_id: String,
+    pub name: String,
+    /// Plain-text bio extracted from the YTM artist channel response.
+    /// Empty when YTM did not expose a description (common for smaller
+    /// artists / channels that haven't authored an "About" blurb).
+    pub description: String,
+    /// Optional banner / hero artwork lifted from the channel header.
+    /// Falls back to empty when YTM doesn't surface one.
+    pub avatar_url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaylistSummary {

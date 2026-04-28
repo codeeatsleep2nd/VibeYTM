@@ -8,6 +8,7 @@ import type {
   PodcastLastEpisode,
 } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
+import { debug } from '../../lib/debug';
 import { readCache, writeCache } from '../../lib/persistentCache';
 import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
 import { AlbumCard } from '../browse/AlbumCard';
@@ -147,7 +148,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
           }
         }
       } catch (e) {
-        console.error('[LibraryPage] fetch failed:', e);
+        debug.error('LibraryPage', 'fetch failed', e);
       } finally {
         if (!cancelled) setIsLoading(false);
       }

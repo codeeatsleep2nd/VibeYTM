@@ -49,6 +49,10 @@ export {
   Mic2 as ArtistsIcon,
   Mic as PodcastsIcon,
   Settings as SettingsIcon,
+  // Apple Music's "Recently Played" sidebar entry uses a clock-style
+  // glyph (SF Symbol `clock.arrow.circlepath`); lucide's `History`
+  // is the closest visual match available.
+  History as HistoryIcon,
 } from 'lucide-react';
 
 import { Heart } from 'lucide-react';

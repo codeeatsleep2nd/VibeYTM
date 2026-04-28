@@ -150,6 +150,76 @@ pub async fn get_playlist(
     Ok(result)
 }
 
+/// Issue #93 — pull the user's "Recently played" history from
+/// YouTube Music's own catalog (FEmusic_history browseId). Replaces
+/// the locally-tracked log added in #83 with the authoritative
+/// source the follow-up issue requested.
+#[tauri::command]
+pub async fn get_history(
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+    cache: State<'_, Cache>,
+) -> Result<Vec<TrackInfo>, String> {
+    tracing::info!("browse::get_history called");
+    let mut result = api.get_history(&app).await.map_err(|e| {
+        tracing::error!(error = %e, "browse::get_history failed");
+        e.to_string()
+    })?;
+    enrich_tracks(&cache, &mut result);
+    tracing::info!(tracks = result.len(), "browse::get_history done");
+    Ok(result)
+}
+
+/// Issue #65 — UGC cover-art fallback via iTunes Search. Called
+/// from the FE when the bridge artwork is filtered out (video
+/// thumbnail) AND the YTM audio counterpart returned no cover. The
+/// IPC is keyed on (artist, title, duration) and returns the best-
+/// matching Apple Music cover URL, or `null` for no hit.
+#[tauri::command]
+pub async fn get_external_cover_art(
+    artist: String,
+    title: String,
+    duration_secs: Option<f64>,
+) -> Result<Option<String>, String> {
+    tracing::info!(
+        artist = %artist,
+        title = %title,
+        duration_secs = ?duration_secs,
+        "browse::get_external_cover_art called"
+    );
+    let result = YtmApi::get_external_cover_art(&artist, &title, duration_secs)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "browse::get_external_cover_art failed");
+            e.to_string()
+        })?;
+    tracing::info!(found = result.is_some(), "browse::get_external_cover_art done");
+    Ok(result)
+}
+
+/// Issue #79 — fetch artist channel detail (bio + avatar) so the
+/// ArtistPage can render an introduction below the title plate. The
+/// FE first finds the artist's `channelId` via the existing search
+/// endpoint, then calls this to pull the description.
+#[tauri::command]
+pub async fn get_artist(
+    channel_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<ArtistDetail, String> {
+    tracing::info!(channel_id = %channel_id, "browse::get_artist called");
+    let result = api.get_artist(&app, &channel_id).await.map_err(|e| {
+        tracing::error!(error = %e, "browse::get_artist failed");
+        e.to_string()
+    })?;
+    tracing::info!(
+        channel_id = %channel_id,
+        has_description = !result.description.is_empty(),
+        "browse::get_artist done"
+    );
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn get_library_playlists(
     app: AppHandle,
@@ -460,16 +530,18 @@ pub async fn get_lyrics(
             e.to_string()
         })?;
 
-    // Persist only meaningful results. Empty stubs are left un-cached so a
-    // later probe (with better title cleaning or once LRCLIB re-indexes)
-    // can still populate the track.
-    let has_text = !result.text.trim().is_empty();
-    let has_lines = result.lines.as_ref().map_or(false, |l| !l.is_empty());
-    if has_text || has_lines {
-        if let Ok(json) = serde_json::to_string(&result) {
-            if let Err(e) = cache.put_lyrics(&video_id, &json) {
-                tracing::warn!(error = %e, "failed to persist lyrics cache");
-            }
+    // Persist BOTH meaningful results AND empty stubs (issue #74).
+    // Lyrics have no time-based TTL (see `cache::get_lyrics` doc); the
+    // negative entry sticks around until LRU eviction or an explicit
+    // refresh. The user's "Refresh lyrics" button in Now Playing
+    // bypasses this via `force_external` so a re-indexed LRCLIB hit
+    // can still surface on demand. Without caching the negative, every
+    // replay of a lyric-less track ran the YTM → LRCLIB → NetEase
+    // pipeline from scratch, costing ~1-3 s per open of the now-playing
+    // view.
+    if let Ok(json) = serde_json::to_string(&result) {
+        if let Err(e) = cache.put_lyrics(&video_id, &json) {
+            tracing::warn!(error = %e, "failed to persist lyrics cache");
         }
     }
 

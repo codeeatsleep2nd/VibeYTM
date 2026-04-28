@@ -1,7 +1,7 @@
 {
   "name": "vibeytm",
   "private": true,
-  "version": "1.1.2",
+  "version": "1.1.21",
   "type": "module",
   "scripts": {
     "dev": "vite",
