@@ -627,4 +627,21 @@ mod tests {
         let got = cache.get_lyrics("vid-old").unwrap();
         assert_eq!(got, Some(r#"{"text":"keep me"}"#.to_string()));
     }
+
+    #[test]
+    fn lyrics_cache_persists_negative_results() {
+        // Issue #74 contract: an empty-payload lyrics entry must round-trip
+        // through `put_lyrics` / `get_lyrics` so the FE can short-circuit
+        // repeated lookups for tracks with no lyrics. Without this, every
+        // replay of a lyric-less track re-ran the YTM → LRCLIB → NetEase
+        // pipeline. Layered on top of `commands/browse.rs::get_lyrics`,
+        // which now writes the empty Lyrics struct to the cache instead
+        // of skipping the put.
+        let (cache, _root) = make_cache();
+        let empty_payload =
+            r#"{"text":"","lines":null,"matched_artist":null,"matched_title":null}"#;
+        cache.put_lyrics("vid-no-lyrics", empty_payload).unwrap();
+        let got = cache.get_lyrics("vid-no-lyrics").unwrap();
+        assert_eq!(got, Some(empty_payload.to_string()));
+    }
 }

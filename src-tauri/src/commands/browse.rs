@@ -460,13 +460,15 @@ pub async fn get_lyrics(
             e.to_string()
         })?;
 
-    // Persist BOTH meaningful results AND empty stubs (issue #74). The
-    // disk cache's 7d+jitter TTL handles freshness for negative results
-    // — if LRCLIB re-indexes or the title parsing improves later, the
-    // entry expires and the next play re-races all sources. Without
-    // this, every replay of a lyric-less track ran the YTM → LRCLIB →
-    // NetEase pipeline from scratch, costing ~1-3 s per open of the
-    // now-playing view.
+    // Persist BOTH meaningful results AND empty stubs (issue #74).
+    // Lyrics have no time-based TTL (see `cache::get_lyrics` doc); the
+    // negative entry sticks around until LRU eviction or an explicit
+    // refresh. The user's "Refresh lyrics" button in Now Playing
+    // bypasses this via `force_external` so a re-indexed LRCLIB hit
+    // can still surface on demand. Without caching the negative, every
+    // replay of a lyric-less track ran the YTM → LRCLIB → NetEase
+    // pipeline from scratch, costing ~1-3 s per open of the now-playing
+    // view.
     if let Ok(json) = serde_json::to_string(&result) {
         if let Err(e) = cache.put_lyrics(&video_id, &json) {
             tracing::warn!(error = %e, "failed to persist lyrics cache");

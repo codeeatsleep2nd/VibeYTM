@@ -25,14 +25,20 @@ const lyricsPreloadMock = vi.fn();
 const counterpartPreloadMock = vi.fn();
 const cacheFetchMock = vi.fn().mockResolvedValue(undefined);
 
+// Mutable holders so individual tests can swap planned next/prev returns
+// without redefining the whole module mock (Vitest hoists vi.mock to the
+// top of the file).
+const plannedNextRef: { current: { videoId: string; title: string } | null } = { current: null };
+const plannedPrevRef: { current: { videoId: string; title: string } | null } = { current: null };
+
 vi.mock('../../lib/ipc', () => ({
   playerApi: new Proxy({}, {
     get: (_t, name) => (playerApiMock as Record<string, unknown>)[name as string],
   }),
   cacheApi: { fetchImage: (...a: unknown[]) => cacheFetchMock(...a) },
   getActivePlaylistId: () => null,
-  getPlannedNext: () => null,
-  getPlannedPrevious: () => null,
+  getPlannedNext: () => plannedNextRef.current,
+  getPlannedPrevious: () => plannedPrevRef.current,
   setPredictedTrack: vi.fn(),
 }));
 
@@ -62,7 +68,7 @@ const mockPlayerState = {
   status: 'paused' as const,
   positionSecs: 30,
   volume: 0.4,
-  isShuffled: false,
+  isShuffled: false as boolean,
   repeatMode: 'none' as const,
   isLiked: false,
   queue: [],
@@ -80,6 +86,10 @@ vi.mock('../player/NowPlayingCard', () => ({
 beforeEach(() => {
   Object.values(playerApiMock).forEach((fn) => (fn as { mockClear?: () => void }).mockClear?.());
   applyOptimistic.mockClear();
+  plannedNextRef.current = null;
+  plannedPrevRef.current = null;
+  // Reset shuffle state to default so each test starts clean.
+  mockPlayerState.isShuffled = false;
 });
 
 const baseProps = {
@@ -115,6 +125,38 @@ describe('PlayerChrome — contract after Liquid-Glass visual refactor', () => {
     render(<PlayerChrome {...baseProps} />);
     await userEvent.click(screen.getByLabelText('Next'));
     expect(playerApiMock.next).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression contract for issue #81. The planned queue mirrors the
+  // visible (DOM) queue order — when shuffle is on, the visible order
+  // is still playlist order; following the planned-next would defeat
+  // shuffle. Bypass the planned queue and forward to YTM's internal
+  // shuffle-aware nextVideo() instead.
+  it('Next bypasses planned queue when shuffle is on (#81)', async () => {
+    plannedNextRef.current = { videoId: 'planned-next', title: 'Planned Next' };
+    mockPlayerState.isShuffled = true;
+    render(<PlayerChrome {...baseProps} />);
+    await userEvent.click(screen.getByLabelText('Next'));
+    expect(playerApiMock.next).toHaveBeenCalledTimes(1);
+    expect(playerApiMock.playTrack).not.toHaveBeenCalled();
+  });
+
+  it('Previous bypasses planned queue when shuffle is on (#81)', async () => {
+    plannedPrevRef.current = { videoId: 'planned-prev', title: 'Planned Prev' };
+    mockPlayerState.isShuffled = true;
+    render(<PlayerChrome {...baseProps} />);
+    await userEvent.click(screen.getByLabelText('Previous'));
+    expect(playerApiMock.previous).toHaveBeenCalledTimes(1);
+    expect(playerApiMock.playTrack).not.toHaveBeenCalled();
+  });
+
+  it('Next uses planned queue when shuffle is OFF (linear navigation)', async () => {
+    plannedNextRef.current = { videoId: 'planned-next', title: 'Planned Next' };
+    mockPlayerState.isShuffled = false;
+    render(<PlayerChrome {...baseProps} />);
+    await userEvent.click(screen.getByLabelText('Next'));
+    expect(playerApiMock.playTrack).toHaveBeenCalledWith('planned-next', undefined);
+    expect(playerApiMock.next).not.toHaveBeenCalled();
   });
 
   it('Repeat button cycles via playerApi.cycleRepeat', async () => {
