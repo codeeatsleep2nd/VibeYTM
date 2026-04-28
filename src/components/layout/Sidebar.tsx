@@ -192,12 +192,6 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
         transition: 'width var(--duration-normal) var(--ease-out)',
       }}
     >
-      {/*
-        Collapse / expand toggle (issue #82). Sits at the same vertical
-        position as the macOS traffic-light row (top of sidebar inside
-        the title-bar reserved space). Right-aligned so it stays "next
-        to the divider" — the natural place for a panel resize handle.
-      */}
       <CollapseToggle isCollapsed={isCollapsed} onToggle={toggle} />
 
       <nav
@@ -273,20 +267,13 @@ interface CollapseToggleProps {
 }
 
 /**
- * Sidebar collapse / expand button. Positioned at the top-right of the
- * sidebar, vertically centered with the macOS traffic-light row. Uses
- * a real `<button>` (per the WKWebView click-target rule documented in
- * CLAUDE.md). The chevron rotates 180° between states for an immediate
- * visual cue without swapping icons.
- *
- * The button is `position: fixed` with `zIndex: 201` so it sits ABOVE
- * the title-bar drag region in `AppShell` (`zIndex: 200`). Without
- * this the drag region intercepted every click as a window-drag
- * gesture and the toggle never fired. `WebkitAppRegion: 'no-drag'`
- * additionally tells Tauri/Cocoa not to treat clicks here as window
- * drags. `left` tracks `--sidebar-width` so the toggle follows the
- * panel edge as it animates between expanded (240 px) and collapsed
- * (64 px).
+ * Sidebar collapse / expand button. `position: fixed` with
+ * `zIndex: 201` so it sits above the AppShell title-bar drag region
+ * (`zIndex: 200`); also marked `WebkitAppRegion: 'no-drag'` so the
+ * macOS title-bar drag handler doesn't swallow the click. `left`
+ * tracks `--sidebar-width` so the toggle follows the panel edge as
+ * it animates between expanded (240 px) and the icon-rail collapsed
+ * width (64 px).
  */
 const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
   <button
@@ -298,12 +285,7 @@ const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
     style={{
       position: 'fixed',
       top: 'calc((var(--title-bar-height) - 22px) / 2)',
-      // Stays anchored to the EXPANDED sidebar's right edge (#92
-      // follow-up): the user wants the button to remain at its
-      // original position after click, while the rest of the sidebar
-      // hides. `--sidebar-expanded-width` is a constant 240 px from
-      // tokens.css; `--sidebar-width` is what changes during collapse.
-      left: 'calc(var(--sidebar-expanded-width) - 22px - var(--space-2))',
+      left: 'calc(var(--sidebar-width) - 22px - var(--space-2))',
       width: '22px',
       height: '22px',
       display: 'flex',
@@ -316,7 +298,7 @@ const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
       color: 'var(--color-text-tertiary)',
       cursor: 'pointer',
       transition:
-        'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)',
+        'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), left var(--duration-normal) var(--ease-out)',
       zIndex: 201,
       // @ts-expect-error -- non-standard WebKit property, opts the
       // button OUT of Tauri's window-drag region so clicks land here
@@ -344,8 +326,6 @@ const CollapseToggle: FC<CollapseToggleProps> = ({ isCollapsed, onToggle }) => (
         transition: 'transform var(--duration-normal) var(--ease-out)',
       }}
     >
-      {/* Apple-Music-ish "sidebar.left" glyph: rectangle with an inner
-          divider, arrow indicating fold direction. */}
       <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
       <line x1="6" y1="3.5" x2="6" y2="12.5" stroke="currentColor" strokeWidth="1.2" />
       <path

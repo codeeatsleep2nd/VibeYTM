@@ -1,22 +1,25 @@
 import { useCallback, useEffect, useState } from 'react';
 
-// Issue #82: collapsible sidebar. Persisted across sessions in
-// localStorage so the user's choice survives a restart. The CSS
-// custom property `--sidebar-width` is the single point of truth —
-// every consumer (AppShell grid, PlayerChrome.left, NowPlaying.left)
-// already reads it, so swapping the value here updates the whole
-// layout without prop drilling. Set on `document.documentElement` so
-// `position: fixed` descendants see the change.
+// Issue #82 — collapsible sidebar (icon-rail variant).
+//
+// History of this hook:
+//   1. Original #82 implementation: 240 px ↔ 64 px icon rail. Reviewer
+//      flagged the toggle as unclickable (drag-region overlap) → #92.
+//   2. User follow-up on #92: collapse should fully hide the sidebar,
+//      not rail. Switched COLLAPSED_WIDTH to '0px'. User then got
+//      stuck with the sidebar hidden because the toggle's transparent
+//      glyph was hard to find against page content.
+//   3. Reverted. Sidebar always visible.
+//   4. Re-implemented per user's "redo" request: the icon-rail variant
+//      from step 1, but with the toggle now reliably clickable
+//      (zIndex 201 + WebkitAppRegion: 'no-drag' + drag region carved
+//      via `--sidebar-width`). The 64 px rail keeps the toggle and
+//      the nav icons visible at all times — no "I can't find it"
+//      regression.
 
 const STORAGE_KEY = 'vibeytm:sidebar-collapsed';
 const EXPANDED_WIDTH = '240px';
-// Hide the entire sidebar (including its nav buttons) when collapsed —
-// the toggle button itself stays at its original viewport position
-// because it reads from `--sidebar-expanded-width` (a constant), not
-// `--sidebar-width` (which collapses to 0). User behaviour: click to
-// hide → main content fills the gained space; click again to bring
-// the sidebar back. Matches the user's #92 follow-up request.
-const COLLAPSED_WIDTH = '0px';
+const COLLAPSED_WIDTH = '64px';
 
 function readPersisted(): boolean {
   try {
@@ -49,14 +52,9 @@ export function useSidebarCollapsed(): {
 } {
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => readPersisted());
 
-  // Apply on mount + every change. Includes the first render so the
-  // CSS var is correct before the layout settles, avoiding a flash.
-  // Persistence rides the same effect so the side-effect fires once
-  // per real state change, not once per setState updater call —
-  // React StrictMode invokes updater functions twice in dev to surface
-  // impure logic, so the localStorage write was previously running
-  // twice. (Idempotent in practice, but the rule is still: no
-  // side-effects inside updaters.)
+  // Apply on mount + every change. Persistence rides the same effect
+  // so the side-effect fires once per real state change, not once per
+  // setState updater call (StrictMode invokes updaters twice in dev).
   useEffect(() => {
     applyWidth(isCollapsed);
     writePersisted(isCollapsed);
