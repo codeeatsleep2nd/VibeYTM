@@ -7,6 +7,7 @@ import {
   AlbumsIcon,
   ArtistsIcon,
   ExploreIcon,
+  HistoryIcon,
   HomeIcon,
   PlaylistsIcon,
   PodcastsIcon,
@@ -134,6 +135,10 @@ const NAV_ITEMS: { path: string; label: string; icon: ReactNode }[] = [
   { path: 'home', label: 'Home', icon: <HomeIcon size={16} /> },
   { path: 'search', label: 'Search', icon: <SearchIcon size={16} /> },
   { path: 'explore', label: 'Explore', icon: <ExploreIcon size={16} /> },
+  // Issue #83: Recently Played view — sits in the top nav (not the
+  // Library section) so it reads as a peer of Home/Search/Explore,
+  // matching Apple Music's "Recently Played" placement.
+  { path: 'history', label: 'History', icon: <HistoryIcon size={16} /> },
 ];
 
 const LIBRARY_ITEMS: { path: string; label: string; icon: ReactNode }[] = [
