@@ -104,10 +104,12 @@ public actor ImageCache {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Trim oldest files when total bytes exceed the ceiling. Runs off
-    /// the actor — safe because the directory only sees writes from this
-    /// actor (atomic) and reads from anywhere (Data(contentsOf:) is
-    /// happy with truncated reads since we always write atomically).
+    /// Trim oldest files when total bytes exceed the ceiling. The
+    /// caller dispatches this onto a `Task.detached` background queue
+    /// so it never blocks the actor; the only correctness assumption
+    /// is that the directory's writers also use atomic writes (we
+    /// do — see `data(for:)` above), which means a concurrent reader
+    /// either sees the old content or the new — never a partial file.
     private static func trim(directory: URL, ceiling: Int64) {
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(

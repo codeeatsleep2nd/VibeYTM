@@ -88,9 +88,6 @@ public struct ShelfItem: Sendable, Equatable, Identifiable {
 }
 
 public enum Innertube {
-    /// Parse a home/explore browse response into shelves. Returns an
-    /// empty array if the response shape doesn't match — see the caller
-    /// for "show empty state" behavior.
     /// Parse a search response — the shape differs from browse: results
     /// land under `contents.tabbedSearchResultsRenderer.tabs[0].tabRenderer.
     /// content.sectionListRenderer.contents[]`. Once the section list is
@@ -130,6 +127,11 @@ public enum Innertube {
         return BrowseResponse(header: header, shelves: shelves)
     }
 
+    /// Parse a home/explore/library browse response into shelves. Returns
+    /// an empty array if the response shape doesn't match — see the
+    /// caller for "show empty state" behavior. Use `parseBrowseResponse`
+    /// instead when the page header (cover/title for albums, playlists,
+    /// shows) is also needed.
     public static func parseShelves(from data: Data) -> [Shelf] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return []

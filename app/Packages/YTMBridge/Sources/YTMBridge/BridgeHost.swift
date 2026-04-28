@@ -1,7 +1,10 @@
 import Foundation
 import PlayerCore
 import AppKit
+import OSLog
 @preconcurrency import WebKit
+
+private let bridgeLog = Logger(subsystem: "com.vibeytm.app", category: "YTMBridge")
 
 // Hidden WKWebView host for YouTube Music. Replaces the Rust-side
 // `webview_bridge` crate from the Tauri tree. WebKit APIs are mostly
@@ -9,17 +12,12 @@ import AppKit
 // alternative (an actor proxying every call to a MainActor host) buys us
 // nothing because the bridge already serializes work through the run loop.
 //
-// What this class does NOT do yet:
-//   • decode `window.__VIBEYTM_STATE__` into a typed `BridgeState`
-//   • run the seek / volume / track-change pipelines on poll output
-//   • expose IPC entry points (`setVolume`, `play`, `next`, etc.)
-//   • show authentication UI
-//
-// Those land in subsequent batches. The job here is the smallest viable
-// loop: load music.youtube.com with the inject script, poll the JS state
-// global on a 150 ms cadence (matching `webview_bridge/poller.rs`), and
-// hand the raw JSON string to a caller-supplied closure. Once we have a
-// proper decoder we'll route through that instead of strings.
+// Architecture: load music.youtube.com with the user-script bridge, poll
+// the JS state global on a 150 ms cadence (matching the Rust poller),
+// decode the merged envelope into a `BridgePollSnapshot`, and hand it
+// to the caller's closure. The IPC entry points (`play`, `setVolume`,
+// `seek`, `navigate`, `callYTMAPI`, …) round-trip through
+// `evaluateJavaScript` with explicit `WKContentWorld.page` targeting.
 
 /// Configuration for the bridge.
 public struct BridgeConfiguration: Sendable {
@@ -88,6 +86,12 @@ public final class BridgeHost {
     private var hiddenWindow: NSWindow?
     private var pollTimer: Timer?
     private var isStarted = false
+    /// Set while `poll()` is in flight so the 150 ms timer doesn't
+    /// stack queued polls during a YTM page navigation (which can
+    /// suspend `evaluateJavaScript` for 3–15 s). Without this guard,
+    /// 20+ polls accumulate on the main actor and contend for it
+    /// when the navigation completes.
+    private var pollInFlight = false
 
     public init(
         configuration: BridgeConfiguration = .init(),
@@ -172,11 +176,20 @@ public final class BridgeHost {
         pollTimer?.invalidate()
         pollTimer = nil
         isStarted = false
+        // Tear down the hidden NSWindow so the WKWebView can drop its
+        // process and reclaim memory. `isReleasedWhenClosed = false`
+        // means we have to nil the reference ourselves.
+        hiddenWindow?.contentView = nil
+        hiddenWindow?.close()
+        hiddenWindow = nil
     }
 
     /// Returns the underlying `WKWebView` so callers can attach it to a
-    /// hidden window if they want devtools to work. The view does NOT
-    /// need to be in the view hierarchy for media playback.
+    /// hidden window if they want devtools to work. **The view IS
+    /// parented to an off-screen NSWindow** (see `start()`); a detached
+    /// WKWebView refuses media playback on macOS regardless of
+    /// `mediaTypesRequiringUserActionForPlayback`. The exposed reference
+    /// is for inspection only — moving it elsewhere will break audio.
     public var hiddenWebView: WKWebView { webView }
 
     // MARK: - Player commands
@@ -476,11 +489,20 @@ public final class BridgeHost {
         })();
         """
 
+        // Skip the cycle if a previous poll is still in flight. YTM
+        // page navigation can suspend evaluateJavaScript for 3–15 s;
+        // without this guard the 150 ms timer would queue 20+ pending
+        // tasks on the main actor, all racing for it once navigation
+        // settles. The guard keeps the poll cadence honest.
+        guard !pollInFlight else { return }
+        pollInFlight = true
+
         // Use the async API + Task so the explicit content-world targeting
         // is unambiguous (the older closure form doesn't accept a content
         // world parameter on this SDK).
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { self.pollInFlight = false }
             let result: Any?
             do {
                 result = try await self.webView.evaluateJavaScript(js, in: nil, contentWorld: .page)
@@ -536,16 +558,25 @@ public final class BridgeHost {
     }
 
     private func handleEvalError(_ error: Error) {
-        // During the first 1-2 seconds of a navigation, evaluateJavaScript
-        // raises "JavaScript execution returned a result of an unsupported
-        // type" because the page's globals haven't been written yet. That's
-        // expected; we don't escalate it. Real failures (network, content
-        // process termination) surface here too — to be triaged once the
-        // BridgeState decoder is wired and we can correlate.
         let nsError = error as NSError
-        if nsError.domain == "WKErrorDomain" {
-            // Quietly swallow. A diagnostic ring buffer is overdue here
-            // and lands with the decoder.
+        // During the first 1–2 s of a navigation, evaluateJavaScript
+        // raises a benign "result of unsupported type" error because
+        // the page's globals haven't been written yet. Demote that to
+        // debug; everything else is at least a warning, and a content-
+        // process termination triggers a webview reload.
+        let isExpectedDuringNavigation = nsError.domain == "WKErrorDomain"
+            && nsError.localizedDescription.contains("unsupported type")
+        if isExpectedDuringNavigation {
+            bridgeLog.debug("evaluateJavaScript transient: \(nsError.localizedDescription, privacy: .public)")
+            return
+        }
+        bridgeLog.warning("evaluateJavaScript failed (\(nsError.domain, privacy: .public) #\(nsError.code, privacy: .public)): \(nsError.localizedDescription, privacy: .public)")
+        // 4 = WKError.Code.webContentProcessTerminated. The view's JS
+        // context is gone; reload to recover. Without this the poll
+        // loop keeps ticking forever against a dead context.
+        if nsError.domain == "WKErrorDomain" && nsError.code == 4 {
+            bridgeLog.error("WKWebView content process terminated — reloading bridge")
+            webView.reload()
         }
     }
 
@@ -555,9 +586,21 @@ public final class BridgeHost {
             withExtension: "js",
             subdirectory: "InjectedScripts"
         ) else {
+            // Packaging bug — the resource is missing from the bundle.
+            // Without these scripts the bridge can never report state,
+            // so an explicit fault is far more actionable than the
+            // silent "no snapshot ever fires" failure mode the
+            // previous nil-return produced.
+            bridgeLog.fault("Injected script missing from bundle: \(name, privacy: .public).js — bundle resources misconfigured")
+            assertionFailure("Injected script \(name).js missing from YTMBridge bundle")
             return nil
         }
-        return try? String(contentsOf: url, encoding: .utf8)
+        do {
+            return try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            bridgeLog.fault("Could not read injected script \(name, privacy: .public).js: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
 }
 

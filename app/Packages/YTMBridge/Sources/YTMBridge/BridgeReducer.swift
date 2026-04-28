@@ -42,9 +42,11 @@ public struct BridgePipelineState: Sendable, Equatable {
 ///   5. Map remaining BridgeState fields onto PlayerState (title, artist,
 ///      artwork, status, repeat, shuffle, like, duration).
 ///
-/// User IPC paths (markSeek, set_volume) feed into seekFilter / volume
-/// settle by mutating the pipeline state OUTSIDE this reducer — those
-/// mutations land in a follow-up batch.
+/// User IPC paths (`AppBootstrap.seek`, `AppBootstrap.setVolume`) arm
+/// the corresponding filter state OUTSIDE this reducer — they mutate
+/// `BridgePipelineState.seekFilter` / `volumeSettle.lastPushAt`
+/// directly before issuing the IPC. The reducer reads those armed
+/// values and decides what to do per cycle.
 public enum BridgeReducer {
     public struct Output: Sendable, Equatable {
         public let nextPlayerState: PlayerState

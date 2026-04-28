@@ -163,15 +163,22 @@ final class AppBootstrap {
             object: nil,
             queue: .main
         ) { [weak self] note in
-            // Sample the (non-Sendable) NSWindow's properties INLINE
-            // before hopping onto the actor — Swift 6 won't let us
-            // ferry the reference across. Since the queue is `.main`
-            // the closure already runs on the main thread, where
-            // NSWindow access is safe.
-            let window = note.object as? NSWindow
+            // The closure runs on the main thread (`queue: .main`), so
+            // NSWindow property access is physically safe even though
+            // Swift 6 emits a "main actor-isolated property cannot be
+            // referenced from a nonisolated context" warning here. The
+            // warnings are diagnostics, not errors — there's no
+            // sound way to express "this closure runs on the main
+            // queue" to Swift 6's strict checker without ferrying a
+            // non-Sendable NSWindow reference across the actor
+            // boundary, which the checker rejects as a data race.
+            // We leave the warnings and accept the structurally
+            // safe runtime guarantee (`queue: .main`).
             let isMainVisible: Bool = {
-                guard let window else { return false }
-                return window.alphaValue > 0 && window.canBecomeMain
+                guard let window = note.object as? NSWindow else { return false }
+                guard window.alphaValue > 0, window.canBecomeMain else { return false }
+                let title = window.title
+                return title.isEmpty || title == "VibeYTM"
             }()
             guard isMainVisible else { return }
             MainActor.assumeIsolated {
@@ -251,12 +258,6 @@ final class AppBootstrap {
         Task { try? await bridge?.setVolume(level: clamped) }
     }
 
-    /// Start playback from a Home/Explore card. If the card has a
-    /// `videoId` we navigate to that track (with an optional playlist
-    /// context). If only a `playlistId` is present we navigate to the
-    /// playlist's radio. Cards that have neither (browse-only) are
-    /// ignored for now — playlist/album browse-detail surfaces land
-    /// in a follow-up batch.
     /// Shuffle-then-play — used by the BrowseDetailView header's
     /// Shuffle button. Loads the lead track first, waits for YTM's queue
     /// context to settle (~2 s after navigation), then issues the shuffle
@@ -273,6 +274,12 @@ final class AppBootstrap {
         }
     }
 
+    /// Start playback from a card tap. If the card carries a `videoId`,
+    /// load it directly via the IFrame Player API (bypassing polymer's
+    /// isTrusted-gated auto-play). If only a `playlistId` is present,
+    /// navigate to the playlist's radio so YTM picks the first track.
+    /// Cards with neither id are filtered upstream by `cardLink(for:)`
+    /// and never reach this method.
     func play(item: ShelfItem) {
         guard let bridge else { return }
         let videoId = item.videoId

@@ -212,20 +212,22 @@ struct BrowseDetailView: View {
         return savedToLibrary ? "Remove from Library" : "Save to Library"
     }
 
-    /// Heuristic: podcast browse ids start with `MPSP` (show) or
-    /// `UCSh` (channel-as-show). The detection is conservative — false
-    /// negatives just mean the button reads "Save" instead of
-    /// "Subscribe", same underlying like_playlist call.
+    /// Heuristic: podcast/show browse ids start with `MPSP`. The
+    /// detection is conservative — false negatives just mean the
+    /// button reads "Save" instead of "Subscribe", same underlying
+    /// like_playlist call.
     private var isPodcast: Bool {
         let upper = browseId.uppercased()
         return upper.hasPrefix("MPSP")
     }
 
     /// Whether this browse page corresponds to something the user can
-    /// add to / remove from their library. MPRE / MPLA / OLAK
-    /// (album-as-audio-playlist) and VL / PL (regular playlists) all
-    /// support like_playlist. Artist channels (UC / MPLA) and search
-    /// indices don't.
+    /// add to or remove from their library. The like_playlist endpoint
+    /// accepts the album's audio-playlist id (MPRE → its OLAK counter-
+    /// part), the playlist's own id (VL / PL), and OLAK directly. Search
+    /// indices (FE…), artist channels (UC / MPLA), and other surfaces
+    /// don't have a single playlistId we can target, so the button is
+    /// hidden for them.
     private var isLibrarySaveable: Bool {
         let upper = browseId.uppercased()
         return upper.hasPrefix("MPRE")

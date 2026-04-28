@@ -60,7 +60,17 @@ struct NowPlayingExpanded: View {
         // SwiftUI .cancelAction shortcut is unreliable here; a local
         // monitor gives us a guaranteed Esc-handler regardless of
         // focus chain or other modifiers in scope.
+        //
+        // SwiftUI may fire `.onAppear` more than once before
+        // `.onDisappear` (e.g. when a sheet is presented during a
+        // rapid presentation transition). Guarding on `escMonitor ==
+        // nil` prevents leaking a duplicate registration; double
+        // monitors would each consume the Esc keyDown and call
+        // onDismiss twice, but more importantly the first registration
+        // would leak forever because the @State only tracks the most
+        // recent token.
         .onAppear {
+            guard escMonitor == nil else { return }
             escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 if event.keyCode == 53 {  // 53 = kVK_Escape
                     onDismiss()

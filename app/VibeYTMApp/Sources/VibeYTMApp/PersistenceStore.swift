@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let persistenceLog = Logger(subsystem: "com.vibeytm.app", category: "Persistence")
 
 /// Snapshot persisted across launches. Holds just enough to restore the
 /// user's last session: the video they were playing, where they were in
@@ -109,10 +112,18 @@ final class PersistenceStore {
     }
 
     /// Synchronous save — used at app exit so the final position lands
-    /// on disk even if the throttle says we're in cooldown.
+    /// on disk even if the throttle says we're in cooldown. Only
+    /// updates `lastWriteAt` on a successful write so a transient I/O
+    /// failure (disk full, permission revoked) doesn't close the
+    /// throttle window for the next 2 s and silently drop another
+    /// legitimate save.
     func saveImmediate(_ state: PersistedState) {
-        guard let data = try? JSONEncoder().encode(state) else { return }
-        try? data.write(to: url, options: [.atomic])
-        lastWriteAt = Date()
+        do {
+            let data = try JSONEncoder().encode(state)
+            try data.write(to: url, options: [.atomic])
+            lastWriteAt = Date()
+        } catch {
+            persistenceLog.error("Persistence save failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 }

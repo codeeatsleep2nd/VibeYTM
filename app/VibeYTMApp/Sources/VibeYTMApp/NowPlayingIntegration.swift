@@ -22,10 +22,31 @@ import PlayerCore
 @MainActor
 final class NowPlayingIntegration {
     private weak var bootstrap: AppBootstrap?
+    /// Tokens returned by `MPRemoteCommand.addTarget(_:)` so we can
+    /// pair them with `removeTarget(_:)` on `deinit`. Without this,
+    /// re-creating `NowPlayingIntegration` (or calling
+    /// `wireRemoteCommands` more than once) would accumulate ghost
+    /// handlers that fire callbacks against a stale `bootstrap`.
+    /// Each command's tokens live in a separate slot keyed by the
+    /// command's pointer identity.
+    private var commandTokens: [(command: MPRemoteCommand, token: Any)] = []
 
     init(bootstrap: AppBootstrap) {
         self.bootstrap = bootstrap
         wireRemoteCommands()
+    }
+
+    deinit {
+        // Remove every registered handler so subsequent
+        // NowPlayingIntegration instances don't fire stale closures.
+        // Captured commands must be touched on the main actor —
+        // `MPRemoteCommand` is not Sendable. `MainActor.assumeIsolated`
+        // is safe in `deinit` only when the type is `@MainActor`.
+        MainActor.assumeIsolated {
+            for (command, token) in commandTokens {
+                command.removeTarget(token)
+            }
+        }
     }
 
     /// Push the current PlayerState to MPNowPlayingInfoCenter.
@@ -73,33 +94,46 @@ final class NowPlayingIntegration {
 
     private func wireRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
-        center.playCommand.addTarget { [weak self] _ in
+        // Each addTarget returns an opaque token used with removeTarget.
+        // Keep them in `commandTokens` so `deinit` can pair them up.
+        let playToken = center.playCommand.addTarget { [weak self] _ in
             Task { @MainActor in self?.bootstrap?.play() }
             return .success
         }
-        center.pauseCommand.addTarget { [weak self] _ in
+        commandTokens.append((center.playCommand, playToken))
+
+        let pauseToken = center.pauseCommand.addTarget { [weak self] _ in
             Task { @MainActor in self?.bootstrap?.pause() }
             return .success
         }
-        center.togglePlayPauseCommand.addTarget { [weak self] _ in
+        commandTokens.append((center.pauseCommand, pauseToken))
+
+        let toggleToken = center.togglePlayPauseCommand.addTarget { [weak self] _ in
             Task { @MainActor in self?.bootstrap?.togglePlay() }
             return .success
         }
-        center.nextTrackCommand.addTarget { [weak self] _ in
+        commandTokens.append((center.togglePlayPauseCommand, toggleToken))
+
+        let nextToken = center.nextTrackCommand.addTarget { [weak self] _ in
             Task { @MainActor in self?.bootstrap?.next() }
             return .success
         }
-        center.previousTrackCommand.addTarget { [weak self] _ in
+        commandTokens.append((center.nextTrackCommand, nextToken))
+
+        let prevToken = center.previousTrackCommand.addTarget { [weak self] _ in
             Task { @MainActor in self?.bootstrap?.previous() }
             return .success
         }
-        center.changePlaybackPositionCommand.addTarget { [weak self] event in
+        commandTokens.append((center.previousTrackCommand, prevToken))
+
+        let seekToken = center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let positionEvent = event as? MPChangePlaybackPositionCommandEvent else {
                 return .commandFailed
             }
             Task { @MainActor in self?.bootstrap?.seek(secs: positionEvent.positionTime) }
             return .success
         }
+        commandTokens.append((center.changePlaybackPositionCommand, seekToken))
         // Enable each command — disabled commands hide their corresponding
         // button in the Now Playing widget.
         center.playCommand.isEnabled = true
