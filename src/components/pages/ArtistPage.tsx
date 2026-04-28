@@ -167,8 +167,15 @@ export const ArtistPage: FC<ArtistPageProps> = ({
             >
               Top songs
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {Array.from({ length: 5 }).map((_, i) => (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                columnGap: 'var(--space-4)',
+                rowGap: 'var(--space-1)',
+              }}
+            >
+              {Array.from({ length: 6 }).map((_, i) => (
                 <SkeletonRow key={i} />
               ))}
             </div>
@@ -233,7 +240,14 @@ export const ArtistPage: FC<ArtistPageProps> = ({
           >
             Top songs
           </h2>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+              columnGap: 'var(--space-4)',
+              rowGap: 'var(--space-1)',
+            }}
+          >
             {songs.map((track, idx) => (
               <SongRow
                 key={`${track.videoId || 'track'}-${idx}`}

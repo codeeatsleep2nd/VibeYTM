@@ -1,4 +1,4 @@
-import { type FC, type ReactNode, useEffect, useRef } from 'react';
+import { type FC, type ReactNode, useEffect, useRef, useState } from 'react';
 import { LiquidGlass } from '@liquidglass/react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { preloadLyrics } from '../../hooks/useLyrics';
@@ -296,6 +296,12 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   // between mute and the user's previous level. Default to 0.5 if the
   // user opened the app already at 0 (so unmute does something visible).
   const lastNonZeroVolumeRef = useRef<number>(volume > 0 ? volume : 0.5);
+  // Volume slider visibility — Apple-Music-style hover reveal. The
+  // slider sits next to the speaker button; both share a wrapper that
+  // toggles `isVolumeHovered` on enter/leave. Width animates from 0
+  // (collapsed) → 55px (expanded) so the slot doesn't visually
+  // jitter the surrounding chrome on toggle.
+  const [isVolumeHovered, setIsVolumeHovered] = useState(false);
   useEffect(() => {
     if (volume > 0) lastNonZeroVolumeRef.current = volume;
   }, [volume]);
@@ -449,6 +455,16 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         }}
       >
         <div
+          // Apple-Music-style volume control: speaker button always
+          // visible, slider hidden by default and revealed on hover
+          // over either the button or the slider's reserved slot. Both
+          // share a wrapper so the slider stays open while the user
+          // moves between button and slider thumb. Width animates so
+          // the chrome doesn't jitter during the reveal.
+          onMouseEnter={() => setIsVolumeHovered(true)}
+          onMouseLeave={() => setIsVolumeHovered(false)}
+          onFocus={() => setIsVolumeHovered(true)}
+          onBlur={() => setIsVolumeHovered(false)}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -499,8 +515,14 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
               );
             }}
             aria-label="Volume"
+            tabIndex={isVolumeHovered ? 0 : -1}
             style={{
-              width: '55px', /* 2/3 of prior 83px */
+              width: isVolumeHovered ? '55px' : '0px',
+              opacity: isVolumeHovered ? 1 : 0,
+              pointerEvents: isVolumeHovered ? 'auto' : 'none',
+              overflow: 'hidden',
+              transition:
+                'width var(--duration-normal) var(--ease-out), opacity var(--duration-normal) var(--ease-out)',
               backgroundImage: `linear-gradient(to right, var(--color-text-secondary) ${
                 volume * 100
               }%, var(--color-surface-3) ${volume * 100}%)`,

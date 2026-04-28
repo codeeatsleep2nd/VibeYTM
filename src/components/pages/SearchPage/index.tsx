@@ -15,6 +15,7 @@ import {
 import { TopAlbumCover } from './TopAlbumCover';
 import { EmptyCategory } from './EmptyCategory';
 import { LiquidGlass } from '@liquidglass/react';
+import { openArtist } from '../../../lib/appNav';
 
 const SUGGEST_DEBOUNCE_MS = 200;
 const MIN_QUERY_LENGTH = 2;
@@ -680,7 +681,14 @@ export const SearchPage: FC<SearchPageProps> = ({
 
           {results.songs.length > 0 && (
             <ShelfRow title="Songs">
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  columnGap: 'var(--space-4)',
+                  rowGap: 'var(--space-1)',
+                }}
+              >
                 {results.songs.map((track, i) => (
                   <SongRow key={track.videoId || `song-${i}`} track={track} />
                 ))}
@@ -699,7 +707,14 @@ export const SearchPage: FC<SearchPageProps> = ({
         <>
           {results.songs.length > 0 ? (
             <ShelfRow title="Songs">
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  columnGap: 'var(--space-4)',
+                  rowGap: 'var(--space-1)',
+                }}
+              >
                 {results.songs.map((track, i) => (
                   <SongRow key={track.videoId || `song-${i}`} track={track} />
                 ))}
@@ -830,12 +845,11 @@ export const SearchPage: FC<SearchPageProps> = ({
                   <button
                     key={artist.channelId}
                     onClick={() => {
-                      // Switch back to the unified view, then submit a fresh
-                      // search for this artist's name. submitQuery sets both
-                      // `query` and `submittedQuery`, which fires the search
-                      // effect with the new (artist, null) cache key.
-                      setActiveCategory(null);
-                      submitQuery(artist.name);
+                      // Open the dedicated ArtistPage instead of just
+                      // re-running the search. `openArtist` flows
+                      // through App's `searchForArtist` registry handler,
+                      // which closes overlays and sets viewingArtist.
+                      openArtist(artist.name);
                     }}
                     style={{
                       display: 'flex',
