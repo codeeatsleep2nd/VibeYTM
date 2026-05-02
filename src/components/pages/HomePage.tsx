@@ -59,6 +59,42 @@ let cachedMoodSongs: { mood: MoodTab; songs: TrackInfo[] } | null = null;
 
 const SONGS_FILTER = 'EgWKAQIIAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 
+// Personal shelves users want pinned to the top of Home, in this exact
+// display order. Match is case-insensitive and trim-tolerant — YTM
+// occasionally returns trailing whitespace and capitalization can drift
+// across releases. Absent priority shelves fall through silently and the
+// remaining shelves keep their original backend order.
+const PRIORITY_TITLES = [
+  'Listen again',
+  'Your daily discovery',
+  'Albums for you',
+] as const;
+
+export function reorderShelves(shelves: Shelf[]): Shelf[] {
+  const norm = (s: string) => s.trim().toLowerCase();
+  const priorityIndex = new Map(
+    PRIORITY_TITLES.map((title, i) => [norm(title), i] as const),
+  );
+
+  const pinned: Shelf[] = [];
+  const rest: Shelf[] = [];
+  const seen = new Set<string>();
+
+  for (const shelf of shelves) {
+    const key = norm(shelf.title);
+    const idx = priorityIndex.get(key);
+    if (idx !== undefined && !seen.has(key)) {
+      pinned[idx] = shelf;
+      seen.add(key);
+    } else {
+      rest.push(shelf);
+    }
+  }
+
+  // pinned may be sparse if some priority shelves are absent — filter holes
+  return [...pinned.filter(Boolean), ...rest];
+}
+
 const getGreeting = (): string => {
   const hour = new Date().getHours();
   if (hour >= 5 && hour < 12) return 'Good morning';
@@ -376,7 +412,7 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
       )}
 
       {activeMood === 'All' &&
-        shelves.map((shelf) => (
+        reorderShelves(shelves).map((shelf) => (
           <ShelfRow key={shelf.title} title={shelf.title}>
             {renderShelfContent(shelf, onOpenPlaylist)}
           </ShelfRow>
