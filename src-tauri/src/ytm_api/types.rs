@@ -95,6 +95,18 @@ pub struct PodcastLastEpisode {
     pub secs_ago: Option<i64>,
 }
 
+/// One date-grouped section of the FEmusic_history response. YTM groups
+/// recently-played tracks under headers like "Today", "Yesterday",
+/// "Last week", or specific calendar dates. Preserving the section
+/// label lets the FE bucket entries into Today / Yesterday / This week
+/// / Earlier without inventing its own date-grouping logic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistorySection {
+    pub label: String,
+    pub tracks: Vec<TrackInfo>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Shelf {

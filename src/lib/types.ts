@@ -129,6 +129,17 @@ export interface SearchResults {
   topAlbum?: AlbumSummary | null;
 }
 
+/**
+ * One date-grouped section of the YTM "Recently played" response.
+ * `label` is YTM's own header text — typically "Today", "Yesterday",
+ * "Last week", or a specific calendar date — preserved so the FE can
+ * bucket these into Today / Yesterday / This week / Earlier groups.
+ */
+export interface HistorySection {
+  label: string;
+  tracks: TrackInfo[];
+}
+
 export type ShelfContent =
   | { kind: 'Albums'; data: AlbumSummary[] }
   | { kind: 'Playlists'; data: PlaylistSummary[] }

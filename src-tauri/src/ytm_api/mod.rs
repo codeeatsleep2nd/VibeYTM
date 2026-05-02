@@ -269,7 +269,7 @@ impl YtmApi {
     /// playlist-shelf-of-tracks structure as the liked-videos endpoint.
     /// Replaces the locally-tracked playback log added in #83 — the
     /// follow-up issue requested matching YTM's authoritative history.
-    pub async fn get_history(&self, app: &AppHandle) -> anyhow::Result<Vec<TrackInfo>> {
+    pub async fn get_history(&self, app: &AppHandle) -> anyhow::Result<Vec<HistorySection>> {
         let body = serde_json::json!({ "browseId": "FEmusic_history" }).to_string();
         // Short TTL — the user's expectation is that "recently played"
         // reflects the latest plays, so we don't want a stale 5-min
@@ -283,7 +283,7 @@ impl YtmApi {
         .await
         .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
-        Ok(parse_library_songs(&data))
+        Ok(parse_history_grouped(&data))
     }
 
     /// Fetch user's liked/library songs via the real YTM API.
@@ -2104,6 +2104,81 @@ fn parse_library_songs(data: &Value) -> Vec<TrackInfo> {
         }
     }
     tracks
+}
+
+/// Walk the FEmusic_history `sectionListRenderer` and emit one
+/// `HistorySection` per date-grouped carousel/shelf, preserving the
+/// header label YTM uses ("Today", "Yesterday", a specific date, etc.)
+/// so the FE can bucket entries into Today / Yesterday / This week /
+/// Earlier without inventing its own date logic.
+fn parse_history_grouped(data: &Value) -> Vec<HistorySection> {
+    let paths = [
+        &data["contents"]["singleColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]
+            ["content"]["sectionListRenderer"]["contents"],
+        &data["contents"]["twoColumnBrowseResultsRenderer"]["secondaryContents"]
+            ["sectionListRenderer"]["contents"],
+    ];
+
+    let mut out: Vec<HistorySection> = Vec::new();
+    for path in paths {
+        let Some(sections) = path.as_array() else { continue };
+        for section in sections {
+            collect_history_section(section, &mut out);
+            // Library responses sometimes wrap the date shelves inside
+            // an itemSectionRenderer — dig one level deeper to be safe.
+            if let Some(inner) = section["itemSectionRenderer"]["contents"].as_array() {
+                for inner_item in inner {
+                    collect_history_section(inner_item, &mut out);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn collect_history_section(section: &Value, out: &mut Vec<HistorySection>) {
+    // Carousel-style date shelves (the common shape on FEmusic_history).
+    if let Some(carousel) = section.get("musicCarouselShelfRenderer") {
+        if let Some(s) = build_history_section_from_renderer(
+            &carousel["header"]["musicCarouselShelfBasicHeaderRenderer"]["title"]["runs"],
+            &carousel["contents"],
+        ) {
+            out.push(s);
+        }
+    }
+    // Plain shelf shape — kept as a defensive fallback in case YTM ever
+    // swaps the carousel for a flat list within the history endpoint.
+    if let Some(shelf) = section.get("musicShelfRenderer") {
+        if let Some(s) = build_history_section_from_renderer(
+            &shelf["title"]["runs"],
+            &shelf["contents"],
+        ) {
+            out.push(s);
+        }
+    }
+}
+
+fn build_history_section_from_renderer(
+    title_runs: &Value,
+    contents: &Value,
+) -> Option<HistorySection> {
+    let label = runs_text(title_runs);
+    if label.is_empty() {
+        return None;
+    }
+    let items = contents.as_array()?;
+    let mut tracks = Vec::new();
+    for item in items {
+        if let Some(renderer) = item.get("musicResponsiveListItemRenderer") {
+            if let Some(track) = parse_track_from_list_item(renderer) {
+                tracks.push(track);
+            }
+        }
+    }
+    if tracks.is_empty() {
+        return None;
+    }
+    Some(HistorySection { label, tracks })
 }
 
 fn parse_library_albums(data: &Value) -> Vec<AlbumSummary> {
@@ -5655,6 +5730,118 @@ mod tests {
         assert_eq!(tracks.len(), 1, "expected 1 track from carousel shelf");
         assert_eq!(tracks[0].title, "Recently Played Song");
         assert_eq!(tracks[0].video_id, "histVid1");
+    }
+
+    #[test]
+    fn parse_history_grouped_keeps_section_labels() {
+        // FEmusic_history wraps date-grouped tracks inside
+        // `musicCarouselShelfRenderer` sections whose header carries the
+        // user-facing label ("Today", "Yesterday", a date string, ...).
+        // parse_history_grouped must preserve those labels so the FE
+        // can bucket entries.
+        let make_section = |label: &str, video_id: &str, title: &str| {
+            json!({
+                "musicCarouselShelfRenderer": {
+                    "header": {
+                        "musicCarouselShelfBasicHeaderRenderer": {
+                            "title": { "runs": [{ "text": label }] }
+                        }
+                    },
+                    "contents": [
+                        {
+                            "musicResponsiveListItemRenderer": {
+                                "flexColumns": [
+                                    {
+                                        "musicResponsiveListItemFlexColumnRenderer": {
+                                            "text": { "runs": [{
+                                                "text": title,
+                                                "navigationEndpoint": {
+                                                    "watchEndpoint": { "videoId": video_id }
+                                                }
+                                            }] }
+                                        }
+                                    },
+                                    {
+                                        "musicResponsiveListItemFlexColumnRenderer": {
+                                            "text": { "runs": [{ "text": "Some Artist" }] }
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            })
+        };
+        let data = json!({
+            "contents": {
+                "singleColumnBrowseResultsRenderer": {
+                    "tabs": [{
+                        "tabRenderer": {
+                            "content": {
+                                "sectionListRenderer": {
+                                    "contents": [
+                                        make_section("Today", "vidToday", "Track A"),
+                                        make_section("Yesterday", "vidY", "Track B"),
+                                        make_section("Last week", "vidLW", "Track C")
+                                    ]
+                                }
+                            }
+                        }
+                    }]
+                }
+            }
+        });
+        let sections = super::parse_history_grouped(&data);
+        assert_eq!(sections.len(), 3, "expected 3 grouped sections");
+        assert_eq!(sections[0].label, "Today");
+        assert_eq!(sections[0].tracks.len(), 1);
+        assert_eq!(sections[0].tracks[0].title, "Track A");
+        assert_eq!(sections[1].label, "Yesterday");
+        assert_eq!(sections[2].label, "Last week");
+    }
+
+    #[test]
+    fn parse_history_grouped_skips_sections_with_no_tracks_or_no_label() {
+        // Sections without a header label OR with no parsed tracks are
+        // dropped — they'd render as ghost group headers in the FE.
+        let data = json!({
+            "contents": {
+                "singleColumnBrowseResultsRenderer": {
+                    "tabs": [{
+                        "tabRenderer": {
+                            "content": {
+                                "sectionListRenderer": {
+                                    "contents": [
+                                        // missing header
+                                        {
+                                            "musicCarouselShelfRenderer": {
+                                                "contents": [
+                                                    { "musicResponsiveListItemRenderer": {} }
+                                                ]
+                                            }
+                                        },
+                                        // header but empty contents
+                                        {
+                                            "musicCarouselShelfRenderer": {
+                                                "header": {
+                                                    "musicCarouselShelfBasicHeaderRenderer": {
+                                                        "title": { "runs": [{ "text": "Today" }] }
+                                                    }
+                                                },
+                                                "contents": []
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }]
+                }
+            }
+        });
+        let sections = super::parse_history_grouped(&data);
+        assert!(sections.is_empty(), "expected both malformed sections to drop");
     }
 
     #[test]
