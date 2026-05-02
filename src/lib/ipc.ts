@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary, ArtistDetail, PodcastSummary, PodcastLastEpisode, Lyrics } from './types';
+import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary, ArtistDetail, PodcastSummary, PodcastLastEpisode, Lyrics, HistorySection } from './types';
 import type { RepeatMode } from './types';
 
 export interface CacheStats {
@@ -264,8 +264,11 @@ export const browseApi = {
   getLibraryPlaylists: () => invoke<PlaylistSummary[]>('get_library_playlists'),
   getLibrarySongs: () => invoke<TrackInfo[]>('get_library_songs'),
   /** Issue #93 — recently-played history sourced from YTM's own
-   *  `FEmusic_history` endpoint. */
-  getHistory: () => invoke<TrackInfo[]>('get_history'),
+   *  `FEmusic_history` endpoint. Returns date-grouped sections (Today,
+   *  Yesterday, Last week, specific dates, ...) preserving YTM's own
+   *  labels. The FE buckets them into Today / Yesterday / This week /
+   *  Earlier. */
+  getHistory: () => invoke<HistorySection[]>('get_history'),
   getLibraryAlbums: () => invoke<AlbumSummary[]>('get_library_albums'),
   getLibraryArtists: () => invoke<ArtistSummary[]>('get_library_artists'),
   getLibraryPodcasts: () => invoke<PodcastSummary[]>('get_library_podcasts'),

@@ -5,6 +5,8 @@ import {
   createContext,
   forwardRef,
   useContext,
+  useEffect,
+  useState,
 } from 'react';
 
 /**
@@ -130,6 +132,23 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
   const right = inset?.right ?? DEFAULT_INSET.right;
   const bottom = inset?.bottom ?? DEFAULT_INSET.bottom;
 
+  // Permanent `willChange: 'opacity, transform'` keeps WKWebView's GPU
+  // layer for this overlay promoted forever — fine on its own, but when
+  // two SafeOverlays both with `backdrop-filter` stack in the same
+  // screen region (e.g. NowPlaying + LyricsOverlay or NowPlaying +
+  // QueuePanel), WKWebView enters a paint feedback loop and the user
+  // sees continuous flicker (issue #99). Demote the layer to `auto`
+  // once the entrance/exit transition completes so the GPU stops
+  // re-rasterising it every frame.
+  const [transitioning, setTransitioning] = useState(false);
+  useEffect(() => {
+    setTransitioning(true);
+    // Match the 420 ms transition duration below; small slack so the
+    // demote happens after the last animation frame.
+    const handle = setTimeout(() => setTransitioning(false), 480);
+    return () => clearTimeout(handle);
+  }, [isOpen]);
+
   // Back-compat: an explicit `rise={false}` disables the entrance entirely
   // (transform stays `none`). New callers should use `slideFrom`.
   const effectiveSlide: SlideDirection | 'none' =
@@ -194,7 +213,10 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
     // (WKWebView hit-test bug, see SafeOverlay.test.tsx contracts).
     transform,
     pointerEvents: isOpen ? 'auto' : 'none',
-    willChange: 'opacity, transform',
+    // Only hint willChange while the overlay is animating. Permanent
+    // GPU promotion stacks badly with backdrop-filter layers in
+    // WKWebView (issue #99).
+    willChange: transitioning ? 'opacity, transform' : 'auto',
     // Opacity and transform share the same 420 ms cubic-bezier so the
     // closing motion plays at exactly the same speed as the opening
     // motion. Previously opacity used the shorter `--duration-normal`

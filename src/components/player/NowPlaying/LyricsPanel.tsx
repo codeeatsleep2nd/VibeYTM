@@ -47,28 +47,16 @@ const CONTAINER_STYLE: CSSProperties = {
   // Fill the full content height of the overlay. The overlay reserves the
   // title-bar and player-bar on the outside; only the top space-3 padding
   // is on the inside (no bottom padding — the panel's bottom edge aligns
-  // exactly with the chrome's top, per user request).
-  // Bottom edge matches the QueuePanel's bottom edge: sit
-  // `var(--space-3)` above the player chrome's top so the rounded
-  // bottom corners are visible (without this gap the panel ends
-  // flush with the chrome's top edge).
-  height:
-    'calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) * 2)',
+  // The wrapping SafeOverlay (LyricsOverlay) now owns the glass frame
+  // — gradient background, backdrop-filter, border, rounded corners,
+  // shadow — so this inner container only needs sizing and layout.
+  // Putting the frame on the wrapper (1) avoids stacking two
+  // backdrop-filter layers in the same screen region, which WKWebView
+  // flickers on (issue #99), and (2) keeps the rounded corners on the
+  // visible blurred surface so the panel doesn't render as a square
+  // (issue #98).
+  height: '100%',
   padding: 'var(--space-6)',
-  // Liquid Glass card tier — translucent surface so the cover-tinted
-  // backdrop and ambient page colour bleed through. Backdrop-filter
-  // on a fixed-position parent (NowPlaying overlay) so this nested
-  // panel inherits the chrome plate's blur context.
-  background:
-    'linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.10) 100%), var(--glass-bg-card)',
-  backdropFilter:
-    'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
-  WebkitBackdropFilter:
-    'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))',
-  border: '1px solid var(--glass-rim-mid)',
-  borderRadius: 'var(--radius-lg)',
-  boxShadow:
-    'inset 0 1px 0 var(--glass-rim-bright), 0 24px 60px oklch(0% 0 0 / 0.5)',
   overflowY: 'auto',
   display: 'flex',
   flexDirection: 'column',
@@ -335,12 +323,15 @@ const TimedLyrics: FC<TimedLyricsProps> = ({
           fontSize: 'var(--text-xs)',
           color: 'var(--color-text-tertiary)',
           borderTop: '1px solid oklch(100% 0 0 / 0.06)',
-          // Frosted-glass hood so lyric lines underneath read as a
-          // soft blur rather than fighting the controls for focus.
+          // Opaque gradient hood so lyric lines scrolling underneath
+          // fade behind the controls without needing a third
+          // `backdrop-filter` layer. Stacked backdrop-filters
+          // (NowPlaying + LyricsOverlay + this sticky row) caused
+          // continuous WKWebView paint flicker (issue #99). The bumped
+          // alpha values here recover the visual obscuration the blur
+          // previously provided.
           background:
-            'linear-gradient(180deg, oklch(0% 0 0 / 0) 0%, oklch(0% 0 0 / 0.45) 70%, oklch(0% 0 0 / 0.55) 100%)',
-          backdropFilter: 'blur(8px)',
-          WebkitBackdropFilter: 'blur(8px)',
+            'linear-gradient(180deg, oklch(8% 0.005 270 / 0) 0%, oklch(8% 0.005 270 / 0.85) 60%, oklch(8% 0.005 270 / 0.95) 100%)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',

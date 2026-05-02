@@ -269,7 +269,7 @@ impl YtmApi {
     /// playlist-shelf-of-tracks structure as the liked-videos endpoint.
     /// Replaces the locally-tracked playback log added in #83 — the
     /// follow-up issue requested matching YTM's authoritative history.
-    pub async fn get_history(&self, app: &AppHandle) -> anyhow::Result<Vec<TrackInfo>> {
+    pub async fn get_history(&self, app: &AppHandle) -> anyhow::Result<Vec<HistorySection>> {
         let body = serde_json::json!({ "browseId": "FEmusic_history" }).to_string();
         // Short TTL — the user's expectation is that "recently played"
         // reflects the latest plays, so we don't want a stale 5-min
@@ -283,7 +283,7 @@ impl YtmApi {
         .await
         .map_err(anyhow::Error::msg)?;
         let data: Value = serde_json::from_str(&raw)?;
-        Ok(parse_library_songs(&data))
+        Ok(parse_history_grouped(&data))
     }
 
     /// Fetch user's liked/library songs via the real YTM API.
@@ -2106,6 +2106,81 @@ fn parse_library_songs(data: &Value) -> Vec<TrackInfo> {
     tracks
 }
 
+/// Walk the FEmusic_history `sectionListRenderer` and emit one
+/// `HistorySection` per date-grouped carousel/shelf, preserving the
+/// header label YTM uses ("Today", "Yesterday", a specific date, etc.)
+/// so the FE can bucket entries into Today / Yesterday / This week /
+/// Earlier without inventing its own date logic.
+fn parse_history_grouped(data: &Value) -> Vec<HistorySection> {
+    let paths = [
+        &data["contents"]["singleColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]
+            ["content"]["sectionListRenderer"]["contents"],
+        &data["contents"]["twoColumnBrowseResultsRenderer"]["secondaryContents"]
+            ["sectionListRenderer"]["contents"],
+    ];
+
+    let mut out: Vec<HistorySection> = Vec::new();
+    for path in paths {
+        let Some(sections) = path.as_array() else { continue };
+        for section in sections {
+            collect_history_section(section, &mut out);
+            // Library responses sometimes wrap the date shelves inside
+            // an itemSectionRenderer — dig one level deeper to be safe.
+            if let Some(inner) = section["itemSectionRenderer"]["contents"].as_array() {
+                for inner_item in inner {
+                    collect_history_section(inner_item, &mut out);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn collect_history_section(section: &Value, out: &mut Vec<HistorySection>) {
+    // Carousel-style date shelves (the common shape on FEmusic_history).
+    if let Some(carousel) = section.get("musicCarouselShelfRenderer") {
+        if let Some(s) = build_history_section_from_renderer(
+            &carousel["header"]["musicCarouselShelfBasicHeaderRenderer"]["title"]["runs"],
+            &carousel["contents"],
+        ) {
+            out.push(s);
+        }
+    }
+    // Plain shelf shape — kept as a defensive fallback in case YTM ever
+    // swaps the carousel for a flat list within the history endpoint.
+    if let Some(shelf) = section.get("musicShelfRenderer") {
+        if let Some(s) = build_history_section_from_renderer(
+            &shelf["title"]["runs"],
+            &shelf["contents"],
+        ) {
+            out.push(s);
+        }
+    }
+}
+
+fn build_history_section_from_renderer(
+    title_runs: &Value,
+    contents: &Value,
+) -> Option<HistorySection> {
+    let label = runs_text(title_runs);
+    if label.is_empty() {
+        return None;
+    }
+    let items = contents.as_array()?;
+    let mut tracks = Vec::new();
+    for item in items {
+        if let Some(renderer) = item.get("musicResponsiveListItemRenderer") {
+            if let Some(track) = parse_track_from_list_item(renderer) {
+                tracks.push(track);
+            }
+        }
+    }
+    if tracks.is_empty() {
+        return None;
+    }
+    Some(HistorySection { label, tracks })
+}
+
 fn parse_library_albums(data: &Value) -> Vec<AlbumSummary> {
     let items = find_browse_list_items(data);
     let mut albums = Vec::new();
@@ -3307,6 +3382,7 @@ fn parse_track_from_list_item(renderer: &Value) -> Option<TrackInfo> {
         album_id: None,
         artwork_url,
         duration_secs,
+        ..Default::default()
     })
 }
 
@@ -3346,15 +3422,34 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         return None;
     }
 
-    // Show name = first subtitle run. The show name is reliably the
-    // first run for episodes; published date / other metadata live in
-    // their own dedicated fields (`publishedTimeText`, etc.).
-    let show_name = renderer["subtitle"]["runs"]
+    // YTM's podcast episode shape has TWO variants:
+    //
+    //   (A) older shape (matched by the existing tests):
+    //         subtitle.runs[0]      = show name
+    //         publishedTimeText     = publish-date display
+    //
+    //   (B) current live shape (verified Apr 2026 against
+    //         /tmp/vibeytm-resp-browse-*.json for BBC News etc.):
+    //         secondTitle.runs[0]   = show name (e.g. "BBC News")
+    //         subtitle.runs[0]      = publish-date display ("51 min ago")
+    //         (no publishedTimeText field)
+    //
+    // Detect by presence of `secondTitle.runs[0]`. When present, that's
+    // the show name and `subtitle` carries the publish date; when
+    // absent, fall back to the older shape.
+    let second_title_text = renderer["secondTitle"]["runs"]
         .as_array()
         .and_then(|runs| runs.first())
         .and_then(|r| r["text"].as_str())
-        .unwrap_or_default()
-        .to_string();
+        .filter(|s| !s.is_empty());
+    let subtitle_text = renderer["subtitle"]["runs"]
+        .as_array()
+        .and_then(|runs| runs.first())
+        .and_then(|r| r["text"].as_str())
+        .unwrap_or_default();
+    let show_name = second_title_text
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| subtitle_text.to_string());
 
     // VideoId — kaset reads `onTap.watchEndpoint.videoId` directly;
     // we keep the overlay fallback for resilience against shape drift.
@@ -3387,18 +3482,65 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         Some(artwork_url)
     };
 
-    // Duration: kaset reads `data.durationText.runs[0].text` —
-    // flat, top-level on the renderer. The previous nested
-    // `playbackProgress.musicPlaybackProgressRenderer.durationText`
-    // path was wrong and always returned 0. Format may be
-    // "36 min" / "1 hr 30 min" (podcasts often) or "1:11:19" (some
-    // long-form episodes); both handled by parse_episode_duration_text.
-    let duration_text = renderer["durationText"]["runs"]
+    // Duration: try the top-level kaset path first ("36 min" / "1:11:19"),
+    // then fall back to the nested playbackProgress renderer used by the
+    // current live shape (where the duration sits in
+    // `playbackProgress.musicPlaybackProgressRenderer.durationText.runs[]`,
+    // typically as runs[" • ", "5 min"] — we scan all runs for the
+    // first parseable one rather than picking a fixed index).
+    let duration_text_top = renderer["durationText"]["runs"]
         .as_array()
         .and_then(|runs| runs.first())
         .and_then(|r| r["text"].as_str())
         .unwrap_or_default();
-    let duration_secs = parse_episode_duration_text(duration_text);
+    let mut duration_secs = parse_episode_duration_text(duration_text_top);
+    if duration_secs == 0.0 {
+        if let Some(runs) = renderer["playbackProgress"]
+            ["musicPlaybackProgressRenderer"]["durationText"]["runs"]
+            .as_array()
+        {
+            for run in runs {
+                if let Some(t) = run["text"].as_str() {
+                    let parsed = parse_episode_duration_text(t);
+                    if parsed > 0.0 {
+                        duration_secs = parsed;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Description blurb — concatenate all runs so paragraph breaks /
+    // multi-segment text comes through verbatim. Episodes that don't
+    // expose a description leave the field as None so the FE renders
+    // nothing rather than an empty line.
+    let description = runs_text(&renderer["description"]["runs"]);
+    let description = if description.trim().is_empty() {
+        None
+    } else {
+        Some(description)
+    };
+
+    // Publish-date display string ("Mar 1, 2026" / "51 min ago").
+    // Two paths to cover both shape variants:
+    //   (A) older: `publishedTimeText.runs[0].text`
+    //   (B) current live: `subtitle.runs[0].text` (only when
+    //       `secondTitle` carries the show name — otherwise subtitle
+    //       IS the show name and there's no publish date here).
+    let published_at = renderer["publishedTimeText"]["runs"]
+        .as_array()
+        .and_then(|runs| runs.first())
+        .and_then(|r| r["text"].as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            if second_title_text.is_some() && !subtitle_text.trim().is_empty() {
+                Some(subtitle_text.to_string())
+            } else {
+                None
+            }
+        });
 
     Some(TrackInfo {
         video_id,
@@ -3409,6 +3551,8 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         album_id: None,
         artwork_url,
         duration_secs,
+        description,
+        published_at,
     })
 }
 
@@ -3505,6 +3649,7 @@ fn parse_track_from_two_row(two_row: &Value) -> Option<TrackInfo> {
         album_id: None,
         artwork_url,
         duration_secs: 0.0,
+        ..Default::default()
     })
 }
 
@@ -4030,6 +4175,7 @@ fn extract_upcoming_tracks(data: &Value, current_video_id: &str, limit: usize) -
             album_id: None,
             artwork_url,
             duration_secs,
+            ..Default::default()
         });
     }
     out
@@ -5655,6 +5801,194 @@ mod tests {
         assert_eq!(tracks.len(), 1, "expected 1 track from carousel shelf");
         assert_eq!(tracks[0].title, "Recently Played Song");
         assert_eq!(tracks[0].video_id, "histVid1");
+    }
+
+    #[test]
+    fn parse_episode_from_multi_row_extracts_description_and_published_at() {
+        // Podcast episodes carry `description.runs` and
+        // `publishedTimeText.runs` alongside the standard track fields.
+        // The episode parser must surface them so the FE can render
+        // per-episode details on the show detail page.
+        let renderer = json!({
+            "title": { "runs": [{ "text": "Ep 42: Deep dive" }] },
+            "subtitle": { "runs": [{ "text": "The Show" }] },
+            "description": { "runs": [
+                { "text": "First half of the description. " },
+                { "text": "Second half — runs concatenate." }
+            ] },
+            "publishedTimeText": { "runs": [{ "text": "Mar 1, 2026" }] },
+            "durationText": { "runs": [{ "text": "36 min" }] },
+            "onTap": { "watchEndpoint": { "videoId": "epVid42" } }
+        });
+        let track = super::parse_episode_from_multi_row(&renderer)
+            .expect("renderer should parse");
+        assert_eq!(track.title, "Ep 42: Deep dive");
+        assert_eq!(track.video_id, "epVid42");
+        assert_eq!(
+            track.description.as_deref(),
+            Some("First half of the description. Second half — runs concatenate.")
+        );
+        assert_eq!(track.published_at.as_deref(), Some("Mar 1, 2026"));
+    }
+
+    #[test]
+    fn parse_episode_from_multi_row_handles_secondtitle_shape() {
+        // Live YTM shape (verified against
+        // /tmp/vibeytm-resp-browse-*.json on 2026-05-02):
+        //   secondTitle.runs[0]   = show name
+        //   subtitle.runs[0]      = publish-date display ("51 min ago")
+        //   playbackProgress.musicPlaybackProgressRenderer.durationText
+        //                         = duration runs (with " • " separators)
+        //   no publishedTimeText, no top-level durationText
+        let renderer = json!({
+            "title":      { "runs": [{ "text": "02/05/2026 21:01 GMT" }] },
+            "secondTitle": { "runs": [{ "text": "BBC News" }] },
+            "subtitle":   { "runs": [{ "text": "51 min ago" }] },
+            "description": { "runs": [{ "text": "The latest five minute news bulletin." }] },
+            "playbackProgress": {
+                "musicPlaybackProgressRenderer": {
+                    "durationText": { "runs": [
+                        { "text": " • " },
+                        { "text": "5 min" }
+                    ] }
+                }
+            },
+            "onTap": { "watchEndpoint": { "videoId": "epLive1" } }
+        });
+        let track = super::parse_episode_from_multi_row(&renderer)
+            .expect("renderer should parse");
+        // Show name comes from secondTitle, NOT subtitle
+        assert_eq!(track.artist, "BBC News");
+        // Subtitle becomes the publish-date display
+        assert_eq!(track.published_at.as_deref(), Some("51 min ago"));
+        // Duration parsed from the nested playbackProgress shape
+        assert_eq!(track.duration_secs, 300.0);
+    }
+
+    #[test]
+    fn parse_episode_from_multi_row_leaves_optional_fields_none_when_absent() {
+        let renderer = json!({
+            "title": { "runs": [{ "text": "Untitled" }] },
+            "subtitle": { "runs": [{ "text": "Show" }] },
+            "durationText": { "runs": [{ "text": "10 min" }] },
+            "onTap": { "watchEndpoint": { "videoId": "vid1" } }
+        });
+        let track = super::parse_episode_from_multi_row(&renderer)
+            .expect("renderer should parse");
+        assert!(track.description.is_none(), "no description in input");
+        assert!(track.published_at.is_none(), "no publishedTimeText in input");
+    }
+
+    #[test]
+    fn parse_history_grouped_keeps_section_labels() {
+        // FEmusic_history wraps date-grouped tracks inside
+        // `musicCarouselShelfRenderer` sections whose header carries the
+        // user-facing label ("Today", "Yesterday", a date string, ...).
+        // parse_history_grouped must preserve those labels so the FE
+        // can bucket entries.
+        let make_section = |label: &str, video_id: &str, title: &str| {
+            json!({
+                "musicCarouselShelfRenderer": {
+                    "header": {
+                        "musicCarouselShelfBasicHeaderRenderer": {
+                            "title": { "runs": [{ "text": label }] }
+                        }
+                    },
+                    "contents": [
+                        {
+                            "musicResponsiveListItemRenderer": {
+                                "flexColumns": [
+                                    {
+                                        "musicResponsiveListItemFlexColumnRenderer": {
+                                            "text": { "runs": [{
+                                                "text": title,
+                                                "navigationEndpoint": {
+                                                    "watchEndpoint": { "videoId": video_id }
+                                                }
+                                            }] }
+                                        }
+                                    },
+                                    {
+                                        "musicResponsiveListItemFlexColumnRenderer": {
+                                            "text": { "runs": [{ "text": "Some Artist" }] }
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            })
+        };
+        let data = json!({
+            "contents": {
+                "singleColumnBrowseResultsRenderer": {
+                    "tabs": [{
+                        "tabRenderer": {
+                            "content": {
+                                "sectionListRenderer": {
+                                    "contents": [
+                                        make_section("Today", "vidToday", "Track A"),
+                                        make_section("Yesterday", "vidY", "Track B"),
+                                        make_section("Last week", "vidLW", "Track C")
+                                    ]
+                                }
+                            }
+                        }
+                    }]
+                }
+            }
+        });
+        let sections = super::parse_history_grouped(&data);
+        assert_eq!(sections.len(), 3, "expected 3 grouped sections");
+        assert_eq!(sections[0].label, "Today");
+        assert_eq!(sections[0].tracks.len(), 1);
+        assert_eq!(sections[0].tracks[0].title, "Track A");
+        assert_eq!(sections[1].label, "Yesterday");
+        assert_eq!(sections[2].label, "Last week");
+    }
+
+    #[test]
+    fn parse_history_grouped_skips_sections_with_no_tracks_or_no_label() {
+        // Sections without a header label OR with no parsed tracks are
+        // dropped — they'd render as ghost group headers in the FE.
+        let data = json!({
+            "contents": {
+                "singleColumnBrowseResultsRenderer": {
+                    "tabs": [{
+                        "tabRenderer": {
+                            "content": {
+                                "sectionListRenderer": {
+                                    "contents": [
+                                        // missing header
+                                        {
+                                            "musicCarouselShelfRenderer": {
+                                                "contents": [
+                                                    { "musicResponsiveListItemRenderer": {} }
+                                                ]
+                                            }
+                                        },
+                                        // header but empty contents
+                                        {
+                                            "musicCarouselShelfRenderer": {
+                                                "header": {
+                                                    "musicCarouselShelfBasicHeaderRenderer": {
+                                                        "title": { "runs": [{ "text": "Today" }] }
+                                                    }
+                                                },
+                                                "contents": []
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }]
+                }
+            }
+        });
+        let sections = super::parse_history_grouped(&data);
+        assert!(sections.is_empty(), "expected both malformed sections to drop");
     }
 
     #[test]

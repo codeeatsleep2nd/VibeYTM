@@ -7,6 +7,12 @@ export interface TrackInfo {
   albumId?: string;
   artworkUrl?: string;
   durationSecs: number;
+  /** Podcast / show episode description blurb. Populated only by the
+   *  episode parser; absent on music tracks. */
+  description?: string;
+  /** Podcast / show episode publish-date display string (e.g.
+   *  "Mar 1, 2026" / "3 days ago"). YTM-formatted; not parsed. */
+  publishedAt?: string;
 }
 
 export type PlaybackStatus = 'playing' | 'paused' | 'buffering' | 'idle';
@@ -127,6 +133,17 @@ export interface SearchResults {
    * Null when no album was found or the search was filtered.
    */
   topAlbum?: AlbumSummary | null;
+}
+
+/**
+ * One date-grouped section of the YTM "Recently played" response.
+ * `label` is YTM's own header text — typically "Today", "Yesterday",
+ * "Last week", or a specific calendar date — preserved so the FE can
+ * bucket these into Today / Yesterday / This week / Earlier groups.
+ */
+export interface HistorySection {
+  label: string;
+  tracks: TrackInfo[];
 }
 
 export type ShelfContent =

@@ -433,6 +433,7 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                     album_id: None,
                     artwork_url: if bs.artwork_url.is_empty() { None } else { Some(bs.artwork_url.clone()) },
                     duration_secs: initial_duration,
+                    ..Default::default()
                 };
 
                 // Persist duration in the side-cache so future list responses
@@ -678,6 +679,7 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                             Some(q.artwork_url.clone())
                         },
                         duration_secs: q.duration_secs,
+                        ..Default::default()
                     })
                     .collect();
                 {

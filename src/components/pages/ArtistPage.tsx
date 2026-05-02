@@ -166,8 +166,8 @@ export const ArtistPage: FC<ArtistPageProps> = ({
           zIndex: 10,
           flexShrink: 0,
           background: 'transparent',
-          backdropFilter: `blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))`,
-          WebkitBackdropFilter: `blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))`,
+          backdropFilter: 'var(--page-sticky-blur)',
+          WebkitBackdropFilter: 'var(--page-sticky-blur)',
         }}
       >
         <DetailPageHero

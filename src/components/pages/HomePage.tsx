@@ -59,6 +59,51 @@ let cachedMoodSongs: { mood: MoodTab; songs: TrackInfo[] } | null = null;
 
 const SONGS_FILTER = 'EgWKAQIIAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 
+// Personal shelves users want pinned to the top of Home, in this exact
+// display order. Each slot accepts multiple title variants for forward
+// compatibility in case YTM renames a shelf. Match is case-insensitive
+// and trim-tolerant.
+//
+// Verified against the live running app via REORDER-DIAG on 2026-05-02:
+// YTM's actual shelf titles for slots 0-2 in the user's home are
+// "Listen again", "Your daily discover" (note: no trailing 'y' — YTM's
+// UI truncates), and "Albums for you".
+const PRIORITY_TITLE_ALIASES: ReadonlyArray<ReadonlyArray<string>> = [
+  ['Listen again'],
+  [
+    'Your daily discover',
+    'Your daily discovery',
+    'Daily discovery',
+    'Discovery',
+  ],
+  ['Albums for you'],
+];
+
+export function reorderShelves(shelves: Shelf[]): Shelf[] {
+  const norm = (s: string) => s.trim().toLowerCase();
+  const priorityIndex = new Map<string, number>();
+  PRIORITY_TITLE_ALIASES.forEach((aliases, slot) => {
+    for (const alias of aliases) priorityIndex.set(norm(alias), slot);
+  });
+
+  const pinned: Shelf[] = [];
+  const rest: Shelf[] = [];
+  const filledSlots = new Set<number>();
+
+  for (const shelf of shelves) {
+    const slot = priorityIndex.get(norm(shelf.title));
+    if (slot !== undefined && !filledSlots.has(slot)) {
+      pinned[slot] = shelf;
+      filledSlots.add(slot);
+    } else {
+      rest.push(shelf);
+    }
+  }
+
+  // pinned may be sparse if some priority shelves are absent — filter holes
+  return [...pinned.filter(Boolean), ...rest];
+}
+
 const getGreeting = (): string => {
   const hour = new Date().getHours();
   if (hour >= 5 && hour < 12) return 'Good morning';
@@ -376,7 +421,7 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
       )}
 
       {activeMood === 'All' &&
-        shelves.map((shelf) => (
+        reorderShelves(shelves).map((shelf) => (
           <ShelfRow key={shelf.title} title={shelf.title}>
             {renderShelfContent(shelf, onOpenPlaylist)}
           </ShelfRow>

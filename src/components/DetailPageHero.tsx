@@ -1,4 +1,12 @@
-import { type FC, type ReactNode, useMemo } from 'react';
+import {
+  type FC,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import type { CoverColors } from '../lib/coverColors';
 import { CachedImage } from './CachedImage';
@@ -125,6 +133,9 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
           type="button"
           onClick={onBack}
           aria-label="Back"
+          // Marker for the global CSS rule that hides this button while
+          // the Now Playing overlay is open (see styles/global.css).
+          data-detail-back-button=""
           style={{
             // Portaled to document.body so the button shares the body
             // stacking context with the title-bar drag region (z 200)
@@ -251,23 +262,7 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
               {meta}
             </div>
           )}
-          {description && (
-            <p
-              style={{
-                fontSize: 'var(--text-sm)',
-                color: 'var(--color-text-tertiary)',
-                margin: 0,
-                lineHeight: 1.5,
-                maxWidth: '500px',
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }}
-            >
-              {description}
-            </p>
-          )}
+          {description && <ExpandableDescription text={description} />}
           <div
             style={{
               display: 'flex',
@@ -383,3 +378,87 @@ function withAlpha(color: string, alpha: number): string {
   const pct = Math.round(alpha * 100);
   return `color-mix(in oklab, ${color} ${pct}%, transparent)`;
 }
+
+/**
+ * Description blurb with a "More" / "Less" toggle that appears only
+ * when the text actually overflows the 2-line clamp. Long podcast
+ * descriptions stay collapsed by default; users opt in to the full
+ * text on demand. Pure presentational; no portals or globals.
+ */
+const COLLAPSED_LINE_CLAMP = 2;
+
+const ExpandableDescription: FC<{ text: string }> = ({ text }) => {
+  const ref = useRef<HTMLParagraphElement | null>(null);
+  // `null` until we've measured at least once. Drives whether the
+  // toggle button renders (we only show it when the text genuinely
+  // overflows the clamp).
+  const [isOverflowing, setIsOverflowing] = useState<boolean | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Re-measure whenever the text changes OR on resize, since the
+  // clamp's overflow status depends on the container width.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setIsOverflowing(el.scrollHeight > el.clientHeight + 1);
+  }, [text]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const obs = new ResizeObserver(() => {
+      // While expanded the clamp is off, so scrollHeight === clientHeight
+      // and we'd flip overflow off mid-flight. Skip while expanded;
+      // re-evaluate the next time the user collapses.
+      if (isExpanded) return;
+      setIsOverflowing(el.scrollHeight > el.clientHeight + 1);
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [isExpanded]);
+
+  const clampStyle =
+    isExpanded
+      ? {}
+      : {
+          display: '-webkit-box',
+          WebkitLineClamp: COLLAPSED_LINE_CLAMP,
+          WebkitBoxOrient: 'vertical' as const,
+          overflow: 'hidden',
+        };
+
+  return (
+    <div style={{ maxWidth: '500px' }}>
+      <p
+        ref={ref}
+        style={{
+          fontSize: 'var(--text-sm)',
+          color: 'var(--color-text-tertiary)',
+          margin: 0,
+          lineHeight: 1.5,
+          ...clampStyle,
+        }}
+      >
+        {text}
+      </p>
+      {(isOverflowing || isExpanded) && (
+        <button
+          type="button"
+          onClick={() => setIsExpanded((v) => !v)}
+          style={{
+            marginTop: 'var(--space-1)',
+            padding: 0,
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--color-accent)',
+            fontSize: 'var(--text-sm)',
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          {isExpanded ? 'Less' : 'More'}
+        </button>
+      )}
+    </div>
+  );
+};

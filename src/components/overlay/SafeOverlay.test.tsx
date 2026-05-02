@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
 import { SafeOverlay, useOverlayOpen } from './SafeOverlay';
 
 // SafeOverlay locks down the four WKWebView click-loss invariants the
@@ -186,6 +186,113 @@ describe('SafeOverlay', () => {
     );
     expect(observedOpen).toBe(true);
     expect(observedClosed).toBe(false);
+  });
+
+  describe('willChange lifecycle (issue #99 — stacked-blur flicker)', () => {
+    // The wrapper's `will-change` is gated on a `transitioning` flag
+    // that flips true on every isOpen change and back to false 480 ms
+    // later. A permanent `will-change: opacity, transform` keeps
+    // WKWebView's GPU layer for the overlay promoted forever; when
+    // two SafeOverlays both with backdrop-filter stack in the same
+    // screen region (NowPlaying + a drawer), that triggers a paint
+    // feedback loop. Demoting after the transition settles breaks the
+    // loop. These tests pin that lifecycle so a future edit can't
+    // silently regress the fix.
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('promotes will-change while transitioning, demotes after settle', () => {
+      render(
+        <SafeOverlay isOpen ariaLabel="test">
+          <div>content</div>
+        </SafeOverlay>,
+      );
+      const wrapper = screen.getByLabelText('test');
+      // Mount kicks the effect synchronously — wrapper is in the
+      // transitioning state.
+      expect(wrapper.style.willChange).toBe('opacity, transform');
+
+      // Just under the 480 ms settle: still transitioning.
+      act(() => {
+        vi.advanceTimersByTime(479);
+      });
+      expect(wrapper.style.willChange).toBe('opacity, transform');
+
+      // Past the settle: layer demotes.
+      act(() => {
+        vi.advanceTimersByTime(2);
+      });
+      expect(wrapper.style.willChange).toBe('auto');
+    });
+
+    it('flipping isOpen re-promotes will-change for the next animation', () => {
+      const { rerender } = render(
+        <SafeOverlay isOpen ariaLabel="test">
+          <div>content</div>
+        </SafeOverlay>,
+      );
+      const wrapper = screen.getByLabelText('test');
+
+      // Settle the initial mount transition.
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(wrapper.style.willChange).toBe('auto');
+
+      // Close — the close transition needs willChange promoted again.
+      rerender(
+        <SafeOverlay isOpen={false} ariaLabel="test">
+          <div>content</div>
+        </SafeOverlay>,
+      );
+      expect(wrapper.style.willChange).toBe('opacity, transform');
+
+      // Settle again.
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(wrapper.style.willChange).toBe('auto');
+    });
+
+    it('rapid isOpen flips cancel the prior demote timer (no premature demote)', () => {
+      const { rerender } = render(
+        <SafeOverlay isOpen ariaLabel="test">
+          <div>content</div>
+        </SafeOverlay>,
+      );
+      const wrapper = screen.getByLabelText('test');
+      expect(wrapper.style.willChange).toBe('opacity, transform');
+
+      // Flip just before the prior timer would have fired.
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      rerender(
+        <SafeOverlay isOpen={false} ariaLabel="test">
+          <div>content</div>
+        </SafeOverlay>,
+      );
+      // The prior 480 ms timer must have been cancelled by the effect
+      // cleanup; advancing past its original deadline must NOT demote.
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      // 500 ms total elapsed since mount — without cleanup, the first
+      // timer would have fired at 480 ms and demoted. The fresh
+      // transition started at 300 ms; it has 480 ms ahead of it.
+      expect(wrapper.style.willChange).toBe('opacity, transform');
+
+      // Settle the second transition.
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(wrapper.style.willChange).toBe('auto');
+    });
   });
 
   it('passes inset overrides to the wrapper position', () => {

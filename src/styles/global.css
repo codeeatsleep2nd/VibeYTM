@@ -240,3 +240,31 @@ input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-runnable-track {
 input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-thumb {
   margin-top: -4px; /* recenter on the 4px hover-track */
 }
+
+/* DetailPageHero back button hides while the Now Playing overlay is
+ * visible. The button is portaled to <body> at z-index 250 (above the
+ * Now Playing overlay), so without this rule the back chevron floats
+ * over the cover even though the page underneath is no longer the
+ * user's focus. The selector keys off SafeOverlay's
+ * `aria-label="Now playing"` + `aria-hidden="false"`. */
+body:has([aria-label='Now playing'][aria-hidden='false'])
+  [data-detail-back-button] {
+  display: none;
+}
+
+/* Sticky-hero backdrop-filter on detail pages (PlaylistDetailPage,
+ * ArtistPage) is opted into via this CSS variable. When the Now
+ * Playing overlay is visible we override the variable to `none` so
+ * the underlying page-hero blur layer disappears — that prevents
+ * stacking three backdrop-filter layers (page hero + NowPlaying +
+ * drawer) in the same screen region, which WKWebView feedback-loops
+ * on (issue #99 follow-up). The page underneath is fully covered by
+ * NowPlaying, so dropping its blur is purely a perf optimisation
+ * with zero visible change. */
+:root {
+  --page-sticky-blur: blur(var(--glass-blur)) saturate(var(--glass-saturate))
+    brightness(var(--glass-brightness));
+}
+body:has([aria-label='Now playing'][aria-hidden='false']) {
+  --page-sticky-blur: none;
+}
