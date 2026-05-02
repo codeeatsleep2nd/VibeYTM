@@ -1,6 +1,7 @@
 import { type FC, useState } from 'react';
 import type { TrackInfo } from '../../lib/types';
 import { playerApi } from '../../lib/ipc';
+import { debug } from '../../lib/debug';
 import { CachedImage } from '../CachedImage';
 import { ContextMenuTarget } from '../contextMenu/ContextMenu';
 import { buildTrackContextMenu } from '../contextMenu/trackActions';
@@ -44,7 +45,12 @@ export const EpisodeRow: FC<EpisodeRowProps> = ({ track, playlistId }) => {
 
   const handleClick = () => {
     if (track.videoId) {
-      playerApi.playTrack(track.videoId, playlistId).catch(() => {});
+      playerApi.playTrack(track.videoId, playlistId).catch((e) => {
+        debug.error('EpisodeRow', 'playTrack failed', {
+          videoId: track.videoId,
+          error: String(e),
+        });
+      });
     }
   };
 
