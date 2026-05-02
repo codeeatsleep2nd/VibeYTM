@@ -12,7 +12,6 @@ import {
   PodcastsIcon,
   SearchIcon,
   SettingsIcon,
-  SongsIcon,
 } from '../icons';
 
 interface NavItemProps {
@@ -128,7 +127,6 @@ const NAV_ITEMS: { path: string; label: string; icon: ReactNode }[] = [
 // puts "Recently Played" in the same section as the user's library.
 const LIBRARY_ITEMS: { path: string; label: string; icon: ReactNode }[] = [
   { path: 'library/playlists', label: 'Playlists', icon: <PlaylistsIcon size={16} /> },
-  { path: 'library/songs', label: 'Songs', icon: <SongsIcon size={16} /> },
   { path: 'library/albums', label: 'Albums', icon: <AlbumsIcon size={16} /> },
   { path: 'library/artists', label: 'Artists', icon: <ArtistsIcon size={16} /> },
   { path: 'library/podcasts', label: 'Podcasts', icon: <PodcastsIcon size={16} /> },
