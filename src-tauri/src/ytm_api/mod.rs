@@ -3422,15 +3422,34 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         return None;
     }
 
-    // Show name = first subtitle run. The show name is reliably the
-    // first run for episodes; published date / other metadata live in
-    // their own dedicated fields (`publishedTimeText`, etc.).
-    let show_name = renderer["subtitle"]["runs"]
+    // YTM's podcast episode shape has TWO variants:
+    //
+    //   (A) older shape (matched by the existing tests):
+    //         subtitle.runs[0]      = show name
+    //         publishedTimeText     = publish-date display
+    //
+    //   (B) current live shape (verified Apr 2026 against
+    //         /tmp/vibeytm-resp-browse-*.json for BBC News etc.):
+    //         secondTitle.runs[0]   = show name (e.g. "BBC News")
+    //         subtitle.runs[0]      = publish-date display ("51 min ago")
+    //         (no publishedTimeText field)
+    //
+    // Detect by presence of `secondTitle.runs[0]`. When present, that's
+    // the show name and `subtitle` carries the publish date; when
+    // absent, fall back to the older shape.
+    let second_title_text = renderer["secondTitle"]["runs"]
         .as_array()
         .and_then(|runs| runs.first())
         .and_then(|r| r["text"].as_str())
-        .unwrap_or_default()
-        .to_string();
+        .filter(|s| !s.is_empty());
+    let subtitle_text = renderer["subtitle"]["runs"]
+        .as_array()
+        .and_then(|runs| runs.first())
+        .and_then(|r| r["text"].as_str())
+        .unwrap_or_default();
+    let show_name = second_title_text
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| subtitle_text.to_string());
 
     // VideoId — kaset reads `onTap.watchEndpoint.videoId` directly;
     // we keep the overlay fallback for resilience against shape drift.
@@ -3463,18 +3482,34 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         Some(artwork_url)
     };
 
-    // Duration: kaset reads `data.durationText.runs[0].text` —
-    // flat, top-level on the renderer. The previous nested
-    // `playbackProgress.musicPlaybackProgressRenderer.durationText`
-    // path was wrong and always returned 0. Format may be
-    // "36 min" / "1 hr 30 min" (podcasts often) or "1:11:19" (some
-    // long-form episodes); both handled by parse_episode_duration_text.
-    let duration_text = renderer["durationText"]["runs"]
+    // Duration: try the top-level kaset path first ("36 min" / "1:11:19"),
+    // then fall back to the nested playbackProgress renderer used by the
+    // current live shape (where the duration sits in
+    // `playbackProgress.musicPlaybackProgressRenderer.durationText.runs[]`,
+    // typically as runs[" • ", "5 min"] — we scan all runs for the
+    // first parseable one rather than picking a fixed index).
+    let duration_text_top = renderer["durationText"]["runs"]
         .as_array()
         .and_then(|runs| runs.first())
         .and_then(|r| r["text"].as_str())
         .unwrap_or_default();
-    let duration_secs = parse_episode_duration_text(duration_text);
+    let mut duration_secs = parse_episode_duration_text(duration_text_top);
+    if duration_secs == 0.0 {
+        if let Some(runs) = renderer["playbackProgress"]
+            ["musicPlaybackProgressRenderer"]["durationText"]["runs"]
+            .as_array()
+        {
+            for run in runs {
+                if let Some(t) = run["text"].as_str() {
+                    let parsed = parse_episode_duration_text(t);
+                    if parsed > 0.0 {
+                        duration_secs = parsed;
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
     // Description blurb — concatenate all runs so paragraph breaks /
     // multi-segment text comes through verbatim. Episodes that don't
@@ -3487,14 +3522,25 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         Some(description)
     };
 
-    // Publish-date display string ("Mar 1, 2026" / "3 days ago").
-    // Take the first run only — YTM doesn't multi-segment this field.
+    // Publish-date display string ("Mar 1, 2026" / "51 min ago").
+    // Two paths to cover both shape variants:
+    //   (A) older: `publishedTimeText.runs[0].text`
+    //   (B) current live: `subtitle.runs[0].text` (only when
+    //       `secondTitle` carries the show name — otherwise subtitle
+    //       IS the show name and there's no publish date here).
     let published_at = renderer["publishedTimeText"]["runs"]
         .as_array()
         .and_then(|runs| runs.first())
         .and_then(|r| r["text"].as_str())
         .map(|s| s.to_string())
-        .filter(|s| !s.trim().is_empty());
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            if second_title_text.is_some() && !subtitle_text.trim().is_empty() {
+                Some(subtitle_text.to_string())
+            } else {
+                None
+            }
+        });
 
     Some(TrackInfo {
         video_id,
@@ -5783,6 +5829,40 @@ mod tests {
             Some("First half of the description. Second half — runs concatenate.")
         );
         assert_eq!(track.published_at.as_deref(), Some("Mar 1, 2026"));
+    }
+
+    #[test]
+    fn parse_episode_from_multi_row_handles_secondtitle_shape() {
+        // Live YTM shape (verified against
+        // /tmp/vibeytm-resp-browse-*.json on 2026-05-02):
+        //   secondTitle.runs[0]   = show name
+        //   subtitle.runs[0]      = publish-date display ("51 min ago")
+        //   playbackProgress.musicPlaybackProgressRenderer.durationText
+        //                         = duration runs (with " • " separators)
+        //   no publishedTimeText, no top-level durationText
+        let renderer = json!({
+            "title":      { "runs": [{ "text": "02/05/2026 21:01 GMT" }] },
+            "secondTitle": { "runs": [{ "text": "BBC News" }] },
+            "subtitle":   { "runs": [{ "text": "51 min ago" }] },
+            "description": { "runs": [{ "text": "The latest five minute news bulletin." }] },
+            "playbackProgress": {
+                "musicPlaybackProgressRenderer": {
+                    "durationText": { "runs": [
+                        { "text": " • " },
+                        { "text": "5 min" }
+                    ] }
+                }
+            },
+            "onTap": { "watchEndpoint": { "videoId": "epLive1" } }
+        });
+        let track = super::parse_episode_from_multi_row(&renderer)
+            .expect("renderer should parse");
+        // Show name comes from secondTitle, NOT subtitle
+        assert_eq!(track.artist, "BBC News");
+        // Subtitle becomes the publish-date display
+        assert_eq!(track.published_at.as_deref(), Some("51 min ago"));
+        // Duration parsed from the nested playbackProgress shape
+        assert_eq!(track.duration_secs, 300.0);
     }
 
     #[test]
