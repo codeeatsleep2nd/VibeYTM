@@ -324,6 +324,13 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                     }
                     let _ = app.emit("player:login-changed", &cur);
 
+                    // Invalidate the YTM API response cache on every login
+                    // transition. Cached browse/library/explore responses are
+                    // account-scoped — without this, signing out + skipping
+                    // (or signing in as a different user) would surface the
+                    // previous account's home shelves and library data.
+                    crate::webview_bridge::api_cache::clear_all().await;
+
                     // Hard-reset the shared player state on sign-out so the
                     // next subscriber receives defaults instead of whatever
                     // was last scrobbled (issue #37). Also drop cached

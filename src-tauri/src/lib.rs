@@ -377,6 +377,8 @@ pub fn run() {
             commands::player::hide_ytm,
             commands::player::show_ytm,
             commands::player::inject_ytm_bridge,
+            commands::player::navigate_ytm_to_login,
+            commands::player::navigate_ytm_to_home,
             commands::browse::search,
             commands::browse::search_suggestions,
             commands::browse::get_home,
@@ -522,6 +524,23 @@ pub fn run() {
                 tracing::error!(error = %e, "failed to create YTM window");
                 e
             })?;
+
+            // Close-intercept: when the user clicks the macOS red close
+            // button on the YTM window, hide it instead of destroying it.
+            // Without this, the WebviewWindow with label "ytm" is gone for
+            // good and every subsequent IPC fails with "YTM window not
+            // found" — including the LoginPage's "Reopen sign-in page".
+            {
+                let ytm_for_close = ytm_window.clone();
+                ytm_window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        if let Err(e) = ytm_for_close.hide() {
+                            tracing::warn!(error = %e, "failed to hide YTM window on close-request");
+                        }
+                    }
+                });
+            }
 
             // Bridge is injected via initialization_script — runs on every page load.
             // Start the poller that reads state from the bridge via document.title trick.

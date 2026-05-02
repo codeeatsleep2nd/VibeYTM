@@ -92,6 +92,39 @@
     // localStorage / JSON parse failure — fall through to live re-fetch.
   }
 
+  // Post-sign-in defensive redirect. Mirrors kaset's `didFinish → match
+  // music.youtube.com` heuristic: if Google's auth chain leaves the YTM
+  // window stalled on www.youtube.com or a Google account-chooser page
+  // (Tauri's WebViewWindow occasionally drops the final hop), force a
+  // navigation to music.youtube.com so the bridge can resume normal
+  // operation. Gated on SAPISID being present — without it we'd
+  // hijack the user mid-sign-in.
+  try {
+    var hasSapisid = (function () {
+      try {
+        var cs = document.cookie.split(';');
+        for (var i = 0; i < cs.length; i++) {
+          var k = cs[i].split('=')[0].trim();
+          if (k === '__Secure-3PAPISID' || k === 'SAPISID') return true;
+        }
+      } catch (e) {}
+      return false;
+    })();
+    var host = location.host;
+    var stalledOnYtDomain =
+      hasSapisid
+      && host !== 'music.youtube.com'
+      && (host === 'www.youtube.com'
+        || host === 'youtube.com'
+        || host === 'consent.youtube.com');
+    if (stalledOnYtDomain) {
+      window.location.replace('https://music.youtube.com/');
+      return;
+    }
+  } catch (e) {
+    // Best-effort — if cookie inspection or redirect throws, fall through.
+  }
+
   function log(msg) {
     window.__VIBEYTM_DEBUG__.push(new Date().toISOString() + ': ' + msg);
     if (window.__VIBEYTM_DEBUG__.length > 50) window.__VIBEYTM_DEBUG__.shift();
@@ -801,7 +834,24 @@
       var signIn = document.querySelector(
         'ytmusic-nav-bar a[href*="accounts.google.com"], ytmusic-nav-bar a[aria-label*="Sign in" i]'
       );
-      if (avatar) {
+      // Cookie-based detection mirrors kaset (LoginSheet.swift polls for
+      // SAPISID directly). Set independently of DOM so we surface signed-in
+      // even in the brief window where the music.youtube.com page has
+      // loaded but the avatar img hasn't rendered yet, AND on intermediate
+      // YT-domain pages the redirect chain may briefly visit.
+      var hasSapisid = false;
+      try {
+        var cookies = document.cookie.split(';');
+        for (var i = 0; i < cookies.length; i++) {
+          var k = cookies[i].split('=')[0].trim();
+          if (k === '__Secure-3PAPISID' || k === 'SAPISID') {
+            hasSapisid = true;
+            break;
+          }
+        }
+      } catch (e) {}
+
+      if (avatar || hasSapisid) {
         window.__VIBEYTM_LOGGED_IN__ = true;
       } else if (signIn) {
         window.__VIBEYTM_LOGGED_IN__ = false;

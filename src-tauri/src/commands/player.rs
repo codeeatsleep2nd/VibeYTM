@@ -492,6 +492,27 @@ pub async fn inject_ytm_bridge(app: AppHandle) -> Result<(), String> {
     crate::webview_bridge::inject_bridge(&window)
 }
 
+/// Navigate the YTM window directly to Google's sign-in URL so the
+/// LoginPage user doesn't have to hunt for the "Sign in" anchor inside
+/// music.youtube.com's nav bar.
+#[tauri::command]
+pub async fn navigate_ytm_to_login(app: AppHandle) -> Result<(), String> {
+    let window = crate::webview_bridge::get_ytm_window(&app)
+        .ok_or("YTM window not found")?;
+    crate::webview_bridge::navigate_to_login(&window)
+}
+
+/// Navigate the YTM window to music.youtube.com home. Used by the
+/// LoginPage's "Skip for now" path so the bridge has a working same-
+/// origin context for subsequent fetches even when the user hasn't
+/// signed in.
+#[tauri::command]
+pub async fn navigate_ytm_to_home(app: AppHandle) -> Result<(), String> {
+    let window = crate::webview_bridge::get_ytm_window(&app)
+        .ok_or("YTM window not found")?;
+    crate::webview_bridge::navigate_to_home(&window)
+}
+
 /// Background task that periodically writes the currently-playing
 /// episode's position into the per-videoId resume map. Gated on the
 /// active playlist context starting with `MPSP*` (a podcast / show

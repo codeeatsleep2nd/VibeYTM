@@ -149,6 +149,16 @@ pub async fn ytm_api_call(
     // Phase 2: Poll for result
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(30);
+    // If the YTM window navigated mid-fetch (e.g. the post-sign-in
+    // navigate_to_home transition), the original fetch is killed and the
+    // global is never written. Re-fire the JS at increasing intervals so
+    // the request lands once the new page is loaded enough for fetch().
+    let refire_intervals = [
+        std::time::Duration::from_secs(3),
+        std::time::Duration::from_secs(8),
+        std::time::Duration::from_secs(15),
+    ];
+    let mut next_refire_idx: usize = 0;
 
     loop {
         if start.elapsed() > timeout {
@@ -158,6 +168,31 @@ pub async fn ytm_api_call(
                 map.remove(&req_id);
             }
             return Err("ytm_api_call timed out".into());
+        }
+
+        if next_refire_idx < refire_intervals.len()
+            && start.elapsed() >= refire_intervals[next_refire_idx]
+        {
+            tracing::info!(
+                req_id,
+                attempt = next_refire_idx + 2,
+                "ytm_api_call: re-firing fetch JS (page-nav race)"
+            );
+            next_refire_idx += 1;
+            let app_refire = app.clone();
+            let fire_js_refire = fire_js.clone();
+            let _ = app.run_on_main_thread(move || {
+                let Some(window) = app_refire.get_webview_window("ytm") else { return; };
+                let _ = window.with_webview(move |pv| {
+                    #[cfg(target_os = "macos")]
+                    unsafe {
+                        let wk: &objc2_web_kit::WKWebView =
+                            &*(pv.inner() as *const objc2_web_kit::WKWebView);
+                        let js = objc2_foundation::NSString::from_str(&fire_js_refire);
+                        wk.evaluateJavaScript_completionHandler(&js, None);
+                    }
+                });
+            });
         }
 
         // Wait before polling
