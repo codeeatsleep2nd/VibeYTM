@@ -60,32 +60,39 @@ let cachedMoodSongs: { mood: MoodTab; songs: TrackInfo[] } | null = null;
 const SONGS_FILTER = 'EgWKAQIIAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 
 // Personal shelves users want pinned to the top of Home, in this exact
-// display order. Match is case-insensitive and trim-tolerant — YTM
-// occasionally returns trailing whitespace and capitalization can drift
-// across releases. Absent priority shelves fall through silently and the
-// remaining shelves keep their original backend order.
-const PRIORITY_TITLES = [
-  'Listen again',
-  'Your daily discovery',
-  'Albums for you',
-] as const;
+// display order. Each slot accepts multiple title variants so we can
+// follow YTM's real wording without losing the user's mental model:
+// "daily discovery" is the user's name; YTM actually returns "Discovery".
+// Match is case-insensitive and trim-tolerant.
+//
+// Verified against /tmp/vibeytm-resp-browse-*.json on 2026-05-02:
+//   - "Albums for you"  ← exact YTM title
+//   - "Discovery"       ← exact YTM title (user calls it "daily discovery")
+//   - "Listen again"    ← YTM context-menu offers "Pin to Listen again",
+//                         so the shelf only appears when the user has
+//                         pinned items; pins gracefully when present.
+const PRIORITY_TITLE_ALIASES: ReadonlyArray<ReadonlyArray<string>> = [
+  ['Listen again'],
+  ['Discovery', 'Your daily discovery', 'Daily discovery'],
+  ['Albums for you'],
+];
 
 export function reorderShelves(shelves: Shelf[]): Shelf[] {
   const norm = (s: string) => s.trim().toLowerCase();
-  const priorityIndex = new Map(
-    PRIORITY_TITLES.map((title, i) => [norm(title), i] as const),
-  );
+  const priorityIndex = new Map<string, number>();
+  PRIORITY_TITLE_ALIASES.forEach((aliases, slot) => {
+    for (const alias of aliases) priorityIndex.set(norm(alias), slot);
+  });
 
   const pinned: Shelf[] = [];
   const rest: Shelf[] = [];
-  const seen = new Set<string>();
+  const filledSlots = new Set<number>();
 
   for (const shelf of shelves) {
-    const key = norm(shelf.title);
-    const idx = priorityIndex.get(key);
-    if (idx !== undefined && !seen.has(key)) {
-      pinned[idx] = shelf;
-      seen.add(key);
+    const slot = priorityIndex.get(norm(shelf.title));
+    if (slot !== undefined && !filledSlots.has(slot)) {
+      pinned[slot] = shelf;
+      filledSlots.add(slot);
     } else {
       rest.push(shelf);
     }

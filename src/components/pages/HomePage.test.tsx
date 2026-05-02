@@ -12,16 +12,43 @@ describe('reorderShelves', () => {
       shelf('Albums for you'),
       shelf('Trending community playlists'),
       shelf('Listen again'),
-      shelf('Your daily discovery'),
+      shelf('Discovery'),
     ];
     const out = reorderShelves(input).map((s) => s.title);
     expect(out).toEqual([
       'Listen again',
-      'Your daily discovery',
+      'Discovery',
       'Albums for you',
       'Quick picks',
       'Trending community playlists',
     ]);
+  });
+
+  it('matches any alias in a priority slot', () => {
+    // YTM's real title is "Discovery" but users may call it "Daily discovery"
+    // or "Your daily discovery" — all three should pin to the same slot.
+    const inputs = [
+      [shelf('Discovery'), shelf('Albums for you')],
+      [shelf('Daily discovery'), shelf('Albums for you')],
+      [shelf('Your daily discovery'), shelf('Albums for you')],
+    ];
+    for (const input of inputs) {
+      const out = reorderShelves(input).map((s) => s.title);
+      expect(out[0]).toBe(input[0].title);
+      expect(out[1]).toBe('Albums for you');
+    }
+  });
+
+  it('pins the first matching alias and sends later aliases to rest', () => {
+    // If YTM ever returns two equivalent shelves (very unlikely), the first
+    // wins the priority slot; the second falls through to rest.
+    const input = [
+      shelf('Discovery'),
+      shelf('Daily discovery'),
+      shelf('Quick picks'),
+    ];
+    const out = reorderShelves(input).map((s) => s.title);
+    expect(out).toEqual(['Discovery', 'Daily discovery', 'Quick picks']);
   });
 
   it('keeps non-priority shelves in their original backend order', () => {
@@ -41,9 +68,15 @@ describe('reorderShelves', () => {
       shelf('quick picks'),
       shelf('  Albums For You  '),
       shelf('LISTEN AGAIN'),
+      shelf('  discovery  '),
     ];
     const out = reorderShelves(input).map((s) => s.title);
-    expect(out).toEqual(['LISTEN AGAIN', '  Albums For You  ', 'quick picks']);
+    expect(out).toEqual([
+      'LISTEN AGAIN',
+      '  discovery  ',
+      '  Albums For You  ',
+      'quick picks',
+    ]);
   });
 
   it('does not mutate input array', () => {
