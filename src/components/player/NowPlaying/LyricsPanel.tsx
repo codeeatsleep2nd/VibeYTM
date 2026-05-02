@@ -323,12 +323,15 @@ const TimedLyrics: FC<TimedLyricsProps> = ({
           fontSize: 'var(--text-xs)',
           color: 'var(--color-text-tertiary)',
           borderTop: '1px solid oklch(100% 0 0 / 0.06)',
-          // Frosted-glass hood so lyric lines underneath read as a
-          // soft blur rather than fighting the controls for focus.
+          // Opaque gradient hood so lyric lines scrolling underneath
+          // fade behind the controls without needing a third
+          // `backdrop-filter` layer. Stacked backdrop-filters
+          // (NowPlaying + LyricsOverlay + this sticky row) caused
+          // continuous WKWebView paint flicker (issue #99). The bumped
+          // alpha values here recover the visual obscuration the blur
+          // previously provided.
           background:
-            'linear-gradient(180deg, oklch(0% 0 0 / 0) 0%, oklch(0% 0 0 / 0.45) 70%, oklch(0% 0 0 / 0.55) 100%)',
-          backdropFilter: 'blur(8px)',
-          WebkitBackdropFilter: 'blur(8px)',
+            'linear-gradient(180deg, oklch(8% 0.005 270 / 0) 0%, oklch(8% 0.005 270 / 0.85) 60%, oklch(8% 0.005 270 / 0.95) 100%)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
