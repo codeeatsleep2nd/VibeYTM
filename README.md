@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="docs/screenshot-home.png" alt="VibeYTM" width="800">
+  <video src="docs/screenshot-home.mp4" poster="docs/screenshot-home.png" width="800" autoplay loop muted playsinline controls>
+    <img src="docs/screenshot-home.png" alt="VibeYTM" width="800">
+  </video>
 </p>
 
 <p align="center">
@@ -45,7 +47,9 @@ A YouTube Music desktop app built with Tauri, React, and Rust.
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshot-home.png" alt="Home Page" width="800">
+  <video src="docs/screenshot-home.mp4" poster="docs/screenshot-home.png" width="800" autoplay loop muted playsinline controls>
+    <img src="docs/screenshot-home.png" alt="Home Page" width="800">
+  </video>
 </p>
 
 ## Tech Stack
