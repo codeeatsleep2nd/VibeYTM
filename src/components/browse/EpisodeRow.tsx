@@ -107,19 +107,6 @@ export const EpisodeRow: FC<EpisodeRowProps> = ({ track, playlistId }) => {
             gap: 'var(--space-1)',
           }}
         >
-          {metaParts.length > 0 && (
-            <div
-              style={{
-                fontSize: 'var(--text-xs)',
-                fontWeight: 600,
-                color: 'var(--color-text-tertiary)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.06em',
-              }}
-            >
-              {metaParts.join(' · ')}
-            </div>
-          )}
           <div
             style={{
               fontSize: 'var(--text-base)',
@@ -136,6 +123,17 @@ export const EpisodeRow: FC<EpisodeRowProps> = ({ track, playlistId }) => {
           >
             {track.title}
           </div>
+          {metaParts.length > 0 && (
+            <div
+              style={{
+                fontSize: 'var(--text-xs)',
+                color: 'var(--color-text-tertiary)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {metaParts.join(' · ')}
+            </div>
+          )}
           {track.description && (
             <p
               style={{
