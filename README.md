@@ -24,8 +24,12 @@ A YouTube Music desktop app built with Tauri, React, and Rust.
 - Album / playlist detail pages: pinned hero (cover + title + play-all + save), scrolling track list, edge-flush rows, invisible spacer so the last track clears the floating chrome
 - Album hero meta line: `artist · year · N songs · runtime`; description joins all runs (no more lopped descriptions); back button portaled above the title-bar drag region for click reliability
 - **Library Podcasts**: dedicated `FEmusic_library_non_music_audio_list` endpoint (full subscription list, not just the landing subset), per-show "last episode X ago" recency probe (parallel, capped concurrency, 1h localStorage cache), and grid sorted most-recent-first
+- **Podcast detail rows** — full episode rows on show pages with the publish-date and long-form duration under the title plus a 3-line description preview, distinct from music-track rows
 - **Subscribe / Unsubscribe button** on podcast detail pages with the same like-endpoint round-trip as playlist/album save
 - Show-cover override: episodes from a podcast use the show's channel art on every now-playing surface
+- **Pinned Home shelves** — Listen again, Your daily discover, Albums for you stay at the top of Home no matter what order YTM returns them in
+- **Grouped History** — recently played is bucketed into Today / Yesterday / This week / Earlier (preserving YTM's own date sections under the hood)
+- **Expandable hero descriptions** — long album / show / playlist descriptions clamp to 2 lines with a More / Less toggle that only appears when text actually overflows
 - System tray with playback controls
 - Media key support (Play/Pause, Next, Previous)
 - Now Playing Control Center integration (macOS)
