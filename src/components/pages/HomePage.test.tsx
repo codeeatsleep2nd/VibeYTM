@@ -11,14 +11,14 @@ describe('reorderShelves', () => {
     const input = [
       shelf('Albums for you'),
       shelf('Quick picks'),
-      shelf('Mixed for you'),
-      shelf('Forgotten favorites'),
+      shelf('Your daily discover'),
+      shelf('Listen again'),
       shelf('Trending community playlists'),
     ];
     const out = reorderShelves(input).map((s) => s.title);
     expect(out).toEqual([
-      'Forgotten favorites',
-      'Mixed for you',
+      'Listen again',
+      'Your daily discover',
       'Albums for you',
       'Quick picks',
       'Trending community playlists',
@@ -26,10 +26,10 @@ describe('reorderShelves', () => {
   });
 
   it('matches any alias in a priority slot', () => {
-    // Slot 1 ("Mixed for you") accepts the user-facing names too, in case
-    // YTM ever rebrands the shelf back to "Daily discovery" / "Discovery".
+    // Slot 1 accepts YTM's truncated "Your daily discover" plus longer
+    // variants in case YTM stops truncating or renames the shelf.
     const inputs = [
-      [shelf('Mixed for you'), shelf('Albums for you')],
+      [shelf('Your daily discover'), shelf('Albums for you')],
       [shelf('Discovery'), shelf('Albums for you')],
       [shelf('Daily discovery'), shelf('Albums for you')],
       [shelf('Your daily discovery'), shelf('Albums for you')],
@@ -45,44 +45,44 @@ describe('reorderShelves', () => {
     // If YTM ever returns two shelves whose titles both match the same slot,
     // the first wins; the second falls through to rest.
     const input = [
-      shelf('Mixed for you'),
+      shelf('Your daily discover'),
       shelf('Discovery'),
       shelf('Quick picks'),
     ];
     const out = reorderShelves(input).map((s) => s.title);
-    expect(out).toEqual(['Mixed for you', 'Discovery', 'Quick picks']);
+    expect(out).toEqual(['Your daily discover', 'Discovery', 'Quick picks']);
   });
 
   it('keeps non-priority shelves in their original backend order', () => {
-    const input = [shelf('A'), shelf('B'), shelf('Forgotten favorites'), shelf('C')];
+    const input = [shelf('A'), shelf('B'), shelf('Listen again'), shelf('C')];
     const out = reorderShelves(input).map((s) => s.title);
-    expect(out).toEqual(['Forgotten favorites', 'A', 'B', 'C']);
+    expect(out).toEqual(['Listen again', 'A', 'B', 'C']);
   });
 
   it('falls through gracefully when priority shelves are missing', () => {
-    const input = [shelf('Quick picks'), shelf('Forgotten favorites')];
+    const input = [shelf('Quick picks'), shelf('Listen again')];
     const out = reorderShelves(input).map((s) => s.title);
-    expect(out).toEqual(['Forgotten favorites', 'Quick picks']);
+    expect(out).toEqual(['Listen again', 'Quick picks']);
   });
 
   it('matches case-insensitively and tolerates trailing whitespace', () => {
     const input = [
       shelf('quick picks'),
       shelf('  Albums For You  '),
-      shelf('FORGOTTEN FAVORITES'),
-      shelf('  mixed for you  '),
+      shelf('LISTEN AGAIN'),
+      shelf('  your daily discover  '),
     ];
     const out = reorderShelves(input).map((s) => s.title);
     expect(out).toEqual([
-      'FORGOTTEN FAVORITES',
-      '  mixed for you  ',
+      'LISTEN AGAIN',
+      '  your daily discover  ',
       '  Albums For You  ',
       'quick picks',
     ]);
   });
 
   it('does not mutate input array', () => {
-    const input = [shelf('A'), shelf('Forgotten favorites')];
+    const input = [shelf('A'), shelf('Listen again')];
     const snapshot = input.map((s) => s.title);
     reorderShelves(input);
     expect(input.map((s) => s.title)).toEqual(snapshot);
@@ -90,13 +90,13 @@ describe('reorderShelves', () => {
 
   it('dedupes when the same priority title appears twice', () => {
     const input = [
-      shelf('Forgotten favorites'),
+      shelf('Listen again'),
       shelf('Quick picks'),
-      shelf('Forgotten favorites'),
+      shelf('Listen again'),
     ];
     const out = reorderShelves(input).map((s) => s.title);
     // First occurrence wins; the duplicate falls into rest, preserving its position
-    expect(out).toEqual(['Forgotten favorites', 'Quick picks', 'Forgotten favorites']);
+    expect(out).toEqual(['Listen again', 'Quick picks', 'Listen again']);
   });
 
   it('returns a new array (no identity reuse)', () => {

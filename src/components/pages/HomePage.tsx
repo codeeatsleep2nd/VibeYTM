@@ -60,23 +60,22 @@ let cachedMoodSongs: { mood: MoodTab; songs: TrackInfo[] } | null = null;
 const SONGS_FILTER = 'EgWKAQIIAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 
 // Personal shelves users want pinned to the top of Home, in this exact
-// display order. Each slot accepts multiple title variants so we can
-// follow YTM's real wording without losing the user's mental model.
-// Match is case-insensitive and trim-tolerant.
+// display order. Each slot accepts multiple title variants for forward
+// compatibility in case YTM renames a shelf. Match is case-insensitive
+// and trim-tolerant.
 //
-// Verified against /tmp/vibeytm-resp-browse-*.json on 2026-05-02 — these
-// are the actual shelf titles YTM returns (NOT the user-facing names like
-// "Listen again" / "Daily discovery", which are not real shelf titles in
-// the API). Aliases are kept for forward-compat in case YTM renames.
-//   - slot 0: "Forgotten favorites" (semantic: revisit older listens)
-//             aliases: "Listen again" — kept in case YTM ever re-introduces
-//             that exact title for a pinned shelf.
-//   - slot 1: "Mixed for you" (semantic: personalized daily mix)
-//             aliases: "Discovery" / "Daily discovery" / "Your daily discovery".
-//   - slot 2: "Albums for you".
+// Verified against the live running app via REORDER-DIAG on 2026-05-02:
+// YTM's actual shelf titles for slots 0-2 in the user's home are
+// "Listen again", "Your daily discover" (note: no trailing 'y' — YTM's
+// UI truncates), and "Albums for you".
 const PRIORITY_TITLE_ALIASES: ReadonlyArray<ReadonlyArray<string>> = [
-  ['Forgotten favorites', 'Listen again'],
-  ['Mixed for you', 'Discovery', 'Daily discovery', 'Your daily discovery'],
+  ['Listen again'],
+  [
+    'Your daily discover',
+    'Your daily discovery',
+    'Daily discovery',
+    'Discovery',
+  ],
   ['Albums for you'],
 ];
 
