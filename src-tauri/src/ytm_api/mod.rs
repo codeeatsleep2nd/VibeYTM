@@ -3382,6 +3382,7 @@ fn parse_track_from_list_item(renderer: &Value) -> Option<TrackInfo> {
         album_id: None,
         artwork_url,
         duration_secs,
+        ..Default::default()
     })
 }
 
@@ -3475,6 +3476,26 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         .unwrap_or_default();
     let duration_secs = parse_episode_duration_text(duration_text);
 
+    // Description blurb — concatenate all runs so paragraph breaks /
+    // multi-segment text comes through verbatim. Episodes that don't
+    // expose a description leave the field as None so the FE renders
+    // nothing rather than an empty line.
+    let description = runs_text(&renderer["description"]["runs"]);
+    let description = if description.trim().is_empty() {
+        None
+    } else {
+        Some(description)
+    };
+
+    // Publish-date display string ("Mar 1, 2026" / "3 days ago").
+    // Take the first run only — YTM doesn't multi-segment this field.
+    let published_at = renderer["publishedTimeText"]["runs"]
+        .as_array()
+        .and_then(|runs| runs.first())
+        .and_then(|r| r["text"].as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty());
+
     Some(TrackInfo {
         video_id,
         title,
@@ -3484,6 +3505,8 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         album_id: None,
         artwork_url,
         duration_secs,
+        description,
+        published_at,
     })
 }
 
@@ -3580,6 +3603,7 @@ fn parse_track_from_two_row(two_row: &Value) -> Option<TrackInfo> {
         album_id: None,
         artwork_url,
         duration_secs: 0.0,
+        ..Default::default()
     })
 }
 
@@ -4105,6 +4129,7 @@ fn extract_upcoming_tracks(data: &Value, current_video_id: &str, limit: usize) -
             album_id: None,
             artwork_url,
             duration_secs,
+            ..Default::default()
         });
     }
     out
@@ -5730,6 +5755,48 @@ mod tests {
         assert_eq!(tracks.len(), 1, "expected 1 track from carousel shelf");
         assert_eq!(tracks[0].title, "Recently Played Song");
         assert_eq!(tracks[0].video_id, "histVid1");
+    }
+
+    #[test]
+    fn parse_episode_from_multi_row_extracts_description_and_published_at() {
+        // Podcast episodes carry `description.runs` and
+        // `publishedTimeText.runs` alongside the standard track fields.
+        // The episode parser must surface them so the FE can render
+        // per-episode details on the show detail page.
+        let renderer = json!({
+            "title": { "runs": [{ "text": "Ep 42: Deep dive" }] },
+            "subtitle": { "runs": [{ "text": "The Show" }] },
+            "description": { "runs": [
+                { "text": "First half of the description. " },
+                { "text": "Second half — runs concatenate." }
+            ] },
+            "publishedTimeText": { "runs": [{ "text": "Mar 1, 2026" }] },
+            "durationText": { "runs": [{ "text": "36 min" }] },
+            "onTap": { "watchEndpoint": { "videoId": "epVid42" } }
+        });
+        let track = super::parse_episode_from_multi_row(&renderer)
+            .expect("renderer should parse");
+        assert_eq!(track.title, "Ep 42: Deep dive");
+        assert_eq!(track.video_id, "epVid42");
+        assert_eq!(
+            track.description.as_deref(),
+            Some("First half of the description. Second half — runs concatenate.")
+        );
+        assert_eq!(track.published_at.as_deref(), Some("Mar 1, 2026"));
+    }
+
+    #[test]
+    fn parse_episode_from_multi_row_leaves_optional_fields_none_when_absent() {
+        let renderer = json!({
+            "title": { "runs": [{ "text": "Untitled" }] },
+            "subtitle": { "runs": [{ "text": "Show" }] },
+            "durationText": { "runs": [{ "text": "10 min" }] },
+            "onTap": { "watchEndpoint": { "videoId": "vid1" } }
+        });
+        let track = super::parse_episode_from_multi_row(&renderer)
+            .expect("renderer should parse");
+        assert!(track.description.is_none(), "no description in input");
+        assert!(track.published_at.is_none(), "no publishedTimeText in input");
     }
 
     #[test]

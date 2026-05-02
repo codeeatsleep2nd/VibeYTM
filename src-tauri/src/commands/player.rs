@@ -322,6 +322,7 @@ pub async fn play_track(
         )),
         duration_secs: 0.0,
         video_id,
+        ..Default::default()
     };
 
     {

@@ -7,6 +7,12 @@ export interface TrackInfo {
   albumId?: string;
   artworkUrl?: string;
   durationSecs: number;
+  /** Podcast / show episode description blurb. Populated only by the
+   *  episode parser; absent on music tracks. */
+  description?: string;
+  /** Podcast / show episode publish-date display string (e.g.
+   *  "Mar 1, 2026" / "3 days ago"). YTM-formatted; not parsed. */
+  publishedAt?: string;
 }
 
 export type PlaybackStatus = 'playing' | 'paused' | 'buffering' | 'idle';

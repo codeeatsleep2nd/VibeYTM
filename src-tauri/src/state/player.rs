@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackInfo {
     pub video_id: String,
@@ -13,6 +13,15 @@ pub struct TrackInfo {
     pub album_id: Option<String>,
     pub artwork_url: Option<String>,
     pub duration_secs: f64,
+    /// Podcast / show episode description blurb. Populated only by
+    /// `parse_episode_from_multi_row`; absent on music tracks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Podcast / show episode publish-date display string (e.g.
+    /// "Mar 1, 2026" or "3 days ago"). YTM-formatted; we don't parse it.
+    /// Populated only for episodes; absent on music tracks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

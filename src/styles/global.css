@@ -240,3 +240,14 @@ input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-runnable-track {
 input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-thumb {
   margin-top: -4px; /* recenter on the 4px hover-track */
 }
+
+/* DetailPageHero back button hides while the Now Playing overlay is
+ * visible. The button is portaled to <body> at z-index 250 (above the
+ * Now Playing overlay), so without this rule the back chevron floats
+ * over the cover even though the page underneath is no longer the
+ * user's focus. The selector keys off SafeOverlay's
+ * `aria-label="Now playing"` + `aria-hidden="false"`. */
+body:has([aria-label='Now playing'][aria-hidden='false'])
+  [data-detail-back-button] {
+  display: none;
+}

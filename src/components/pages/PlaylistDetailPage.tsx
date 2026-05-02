@@ -8,6 +8,7 @@ import { rememberTrackMetas } from '../../lib/trackMetaRegistry';
 import { useCoverColors } from '../../hooks/useCoverColors';
 import { albumArtOrNothing } from '../../lib/artwork';
 import { SongRow } from '../browse/SongRow';
+import { EpisodeRow } from '../browse/EpisodeRow';
 import { LoadingSpinner } from '../LoadingOverlay';
 import { DetailPageHero } from '../DetailPageHero';
 import { SkeletonDetailHero, SkeletonRow } from '../Skeleton';
@@ -420,14 +421,22 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
           padding: '0 var(--space-6)',
         }}
       >
-        {playlist.tracks.map((track, i) => (
-          <SongRow
-            key={track.videoId || `track-${i}`}
-            track={track}
-            index={i + 1}
-            playlistId={watchListId}
-          />
-        ))}
+        {playlist.tracks.map((track, i) =>
+          isShow ? (
+            <EpisodeRow
+              key={track.videoId || `track-${i}`}
+              track={track}
+              playlistId={watchListId}
+            />
+          ) : (
+            <SongRow
+              key={track.videoId || `track-${i}`}
+              track={track}
+              index={i + 1}
+              playlistId={watchListId}
+            />
+          ),
+        )}
         {playlist.tracks.length === 0 && (
           <div
             style={{
