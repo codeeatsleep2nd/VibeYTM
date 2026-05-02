@@ -69,9 +69,12 @@ export const LyricsOverlay: FC<LyricsOverlayProps> = ({ isOpen }) => {
 
   const overlayRef = useRef<HTMLElement | null>(null);
 
-  // Blur is scoped to the lyrics card itself (LyricsPanel's
-  // CONTAINER_STYLE owns the backdrop-filter recipe) — no full-area
-  // plate behind, so the rest of the page stays unblurred.
+  // Glass frame (background gradient, blur, border, rounded corners,
+  // shadow) lives on the SafeOverlay wrapper — same pattern QueuePanel
+  // uses (src/components/player/QueuePanel/index.tsx ~line 570). Putting
+  // the rounded corners on the wrapper ensures the visible blurred
+  // surface itself is rounded, not just the inner content card.
+  // (Issue #98 fix.)
   return (
     <SafeOverlay
       ref={overlayRef as Ref<HTMLElement>}
@@ -91,13 +94,15 @@ export const LyricsOverlay: FC<LyricsOverlayProps> = ({ isOpen }) => {
         bottom: 'calc(var(--player-bar-height) + var(--space-3))',
         left: 'calc(var(--sidebar-width) + var(--space-6) + min(800px, calc((2 / 3) * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px)) + var(--space-5))',
       }}
-      // Match the playing page's blur recipe — applied on the
-      // SafeOverlay wrapper itself so WebKit doesn't drop the filter
-      // because of the wrapper's transform-driven slide animation
-      // (descendant backdrop-filter under a transformed ancestor is
-      // unreliable in WKWebView). Same pattern QueuePanel uses.
-      background="transparent"
-      backdropFilter="blur(40px) saturate(180%)"
+      background="linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.10) 100%), var(--glass-bg-card)"
+      backdropFilter="blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))"
+      border="1px solid var(--glass-rim-mid)"
+      borderRadius="var(--radius-lg)"
+      boxShadow={
+        isOpen
+          ? 'inset 0 1px 0 var(--glass-rim-bright), 0 24px 60px oklch(0% 0 0 / 0.5)'
+          : undefined
+      }
       display="flex"
       flexDirection="column"
     >
