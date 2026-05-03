@@ -20,6 +20,7 @@ import {
 } from '../../lib/ipc';
 import type { RepeatMode } from '../../lib/types';
 import {
+  ClockIcon,
   LyricsIcon,
   NextIcon,
   PauseIcon,
@@ -42,6 +43,8 @@ interface PlayerChromeProps {
   lyricsOpen: boolean;
   onToggleQueue: () => void;
   queueOpen: boolean;
+  onToggleFocusTimer: () => void;
+  focusTimerOpen: boolean;
 }
 
 // PlayerChrome stays at the bottom (preserves original PlayerBar location
@@ -139,6 +142,8 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
   lyricsOpen,
   onToggleQueue,
   queueOpen,
+  onToggleFocusTimer,
+  focusTimerOpen,
 }) => {
   const state = usePlayerState();
   const { track, status, volume, isShuffled, repeatMode, applyOptimistic, activePlaylistId } = state;
@@ -561,6 +566,15 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
           size={28}
         >
           <QueueIcon size={20} />
+        </ChromeButton>
+
+        <ChromeButton
+          label={focusTimerOpen ? 'Hide focus timer' : 'Show focus timer'}
+          onClick={onToggleFocusTimer}
+          isActive={focusTimerOpen}
+          size={28}
+        >
+          <ClockIcon size={20} />
         </ChromeButton>
       </div>
       </div>

@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="docs/screenshot-home.png" alt="VibeYTM" width="800">
+  <video src="docs/screenshot-home.mp4" poster="docs/screenshot-home.png" width="800" autoplay loop muted playsinline controls>
+    <img src="docs/screenshot-home.png" alt="VibeYTM" width="800">
+  </video>
 </p>
 
 <p align="center">
@@ -27,6 +29,8 @@ A YouTube Music desktop app built with Tauri, React, and Rust.
 - **Podcast detail rows** — full episode rows on show pages with the publish-date and long-form duration under the title plus a 3-line description preview, distinct from music-track rows
 - **Subscribe / Unsubscribe button** on podcast detail pages with the same like-endpoint round-trip as playlist/album save
 - Show-cover override: episodes from a podcast use the show's channel art on every now-playing surface
+- **Direct Google sign-in** — first-launch login surface auto-opens the auxiliary YTM window straight on Google's account chooser; bridge auto-detects sign-in (DOM avatar + SAPISID cookie) and the boot orchestrator hides the window the moment it's reached the app phase. Settings → "Sign in to YouTube Music" uses the same direct URL.
+- **Focus timer overlay** — clock button in the player chrome opens a full-page focus surface mirroring the Now Playing style; 5–120 min slider in 5-min steps, default 25 min. macOS system notification + custom "happy bells" sound on completion (sound bundled into the binary via `include_bytes!`). App-level confirmation gate prompts before any close path while the countdown is running. Slider becomes interactive again on Done — clicking it returns to idle with the new duration.
 - **Pinned Home shelves** — Listen again, Your daily discover, Albums for you stay at the top of Home no matter what order YTM returns them in
 - **Grouped History** — recently played is bucketed into Today / Yesterday / This week / Earlier (preserving YTM's own date sections under the hood)
 - **Expandable hero descriptions** — long album / show / playlist descriptions clamp to 2 lines with a More / Less toggle that only appears when text actually overflows
@@ -45,7 +49,9 @@ A YouTube Music desktop app built with Tauri, React, and Rust.
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshot-home.png" alt="Home Page" width="800">
+  <video src="docs/screenshot-home.mp4" poster="docs/screenshot-home.png" width="800" autoplay loop muted playsinline controls>
+    <img src="docs/screenshot-home.png" alt="Home Page" width="800">
+  </video>
 </p>
 
 ## Tech Stack

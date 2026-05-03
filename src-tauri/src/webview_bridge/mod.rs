@@ -49,6 +49,43 @@ pub fn show_ytm_window(window: &WebviewWindow) -> Result<(), String> {
     window.set_focus().map_err(|e| e.to_string())
 }
 
+// `service=youtube` short-circuits Google to the YouTube-branded sign-in
+// (otherwise users see a generic Gmail screen). `continue=` lands the user
+// directly on music.youtube.com after auth. A chained variant
+// (continue→youtube.com/signin→next=music.youtube.com) was tested
+// in this Tauri WebViewWindow and the redirect chain stalls
+// mid-flight, leaving the bridge on a non-YTM page where the
+// `ytmusic-nav-bar` selector never matches and login detection
+// never fires.
+const GOOGLE_SIGNIN_URL: &str = "https://accounts.google.com/ServiceLogin?service=youtube&uilel=3&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F";
+
+/// Navigate the YTM window directly to Google's sign-in screen so the
+/// LoginPage user lands on the account chooser instead of music.youtube.com's
+/// home page. Cross-origin navigation — bypasses YTM's polymer router on
+/// purpose; we want a full top-level transition.
+pub fn navigate_to_login(window: &WebviewWindow) -> Result<(), String> {
+    tracing::info!(url = GOOGLE_SIGNIN_URL, "navigate_to_login");
+    let encoded =
+        serde_json::to_string(GOOGLE_SIGNIN_URL).map_err(|e| e.to_string())?;
+    let js = format!("window.location.assign({encoded});");
+    window.eval(&js).map_err(|e| e.to_string())
+}
+
+const MUSIC_YOUTUBE_HOME_URL: &str = "https://music.youtube.com/";
+
+/// Navigate the YTM window to music.youtube.com home. Used when the user
+/// dismisses the LoginPage without signing in: the YTM window may still
+/// be on `accounts.google.com` from a prior `navigate_to_login`, and our
+/// `ytm_api_call` requires the YTM window to be on a music.youtube.com
+/// origin (the bridge fetches `/youtubei/v1/...` against that origin).
+pub fn navigate_to_home(window: &WebviewWindow) -> Result<(), String> {
+    tracing::info!(url = MUSIC_YOUTUBE_HOME_URL, "navigate_to_home");
+    let encoded =
+        serde_json::to_string(MUSIC_YOUTUBE_HOME_URL).map_err(|e| e.to_string())?;
+    let js = format!("window.location.assign({encoded});");
+    window.eval(&js).map_err(|e| e.to_string())
+}
+
 /// Execute a playback command in the YTM window.
 pub fn exec_playback_command(window: &WebviewWindow, cmd: &str) -> Result<(), String> {
     let js = format!(
@@ -181,7 +218,7 @@ pub fn navigate_to_track_with_playlist(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_ytm_id;
+    use super::{validate_ytm_id, GOOGLE_SIGNIN_URL};
 
     #[test]
     fn accepts_valid_video_id() {
@@ -214,14 +251,11 @@ mod tests {
         assert!(validate_ytm_id(&long, 20, "video_id").is_err());
     }
 
-    // =====================================================================
-    // Regression tests for features added since v0.7.0.
-    // =====================================================================
-
-    // v0.9.1: navigate_to_track must use the song-radio list (`RDAMVM<vid>`)
-    // so YTM streams the audio variant rather than the music-video variant
-    // when both exist for the same videoId. This is verified by inspecting
-    // the JS payload that would be eval'd in the YTM webview.
+    // navigate_to_track must use the song-radio list (`RDAMVM<vid>`)
+    // so YTM streams the audio variant rather than the music-video
+    // variant when both exist for the same videoId. Verified by
+    // inspecting the JS payload that would be eval'd in the YTM
+    // webview.
     fn navigate_to_track_js(video_id: &str) -> String {
         // Mirror the format string in `navigate_to_track` so a regression
         // there fails this test instead of silently changing behaviour.
@@ -252,6 +286,27 @@ mod tests {
             "navigate_to_track must use the RDAMVM song-radio list to force \
              YTM into audio mode; otherwise tracks with both audio and \
              music-video variants land on the video player.\nGot:\n{js}"
+        );
+    }
+
+    // Login URL contract — must land directly on music.youtube.com after
+    // Google auth so the bridge's `ytmusic-nav-bar` avatar selector can
+    // detect sign-in. Chained variants that route through youtube.com/signin
+    // were tried and stalled mid-redirect in the Tauri WebViewWindow.
+    #[test]
+    fn google_signin_url_targets_youtube_service_and_continues_to_music_youtube() {
+        assert!(
+            GOOGLE_SIGNIN_URL.starts_with("https://accounts.google.com/"),
+            "sign-in URL must point at Google's auth domain: {GOOGLE_SIGNIN_URL}"
+        );
+        assert!(
+            GOOGLE_SIGNIN_URL.contains("service=youtube"),
+            "sign-in URL must request the YouTube-branded flow: {GOOGLE_SIGNIN_URL}"
+        );
+        assert!(
+            GOOGLE_SIGNIN_URL.contains("continue=https%3A%2F%2Fmusic.youtube.com%2F"),
+            "sign-in URL must redirect directly to music.youtube.com so the \
+             bridge re-detects __VIBEYTM_LOGGED_IN__: {GOOGLE_SIGNIN_URL}"
         );
     }
 }

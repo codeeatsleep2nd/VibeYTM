@@ -4,9 +4,8 @@
 //! app restarts.
 //!
 //! Songs are intentionally NOT tracked here: YTM users expect songs
-//! to start from 0 on click; resume is the long-form-audio convention
-//! and the kaset reference applies it specifically to episodes. We
-//! gate writes on the active playlist context (MPSP* browseId).
+//! to start from 0 on click; resume is reserved for long-form audio.
+//! We gate writes on the active playlist context (MPSP* browseId).
 //!
 //! Capacity is bounded at `MAX_ENTRIES`; LRU eviction happens on
 //! every save when the cap is exceeded so the file stays small.

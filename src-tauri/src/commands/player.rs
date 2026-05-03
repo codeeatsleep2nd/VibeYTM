@@ -284,8 +284,7 @@ pub async fn play_track(
     // Per-episode resume: if this videoId has saved progress AND we're
     // playing it from a podcast / show context (MPSP*), seek to the
     // saved position via navigate_to_track_at_position. Songs are
-    // intentionally skipped — only long-form audio resumes (matches
-    // the kaset reference's behavior).
+    // intentionally skipped — only long-form audio resumes.
     let resume_position = if let Some(progress_state) = app.try_state::<SharedEpisodeProgress>() {
         let store = progress_state.read().await;
         lookup_episode_resume(&store, &video_id, playlist_id.as_deref())
@@ -492,6 +491,27 @@ pub async fn inject_ytm_bridge(app: AppHandle) -> Result<(), String> {
     crate::webview_bridge::inject_bridge(&window)
 }
 
+/// Navigate the YTM window directly to Google's sign-in URL so the
+/// LoginPage user doesn't have to hunt for the "Sign in" anchor inside
+/// music.youtube.com's nav bar.
+#[tauri::command]
+pub async fn navigate_ytm_to_login(app: AppHandle) -> Result<(), String> {
+    let window = crate::webview_bridge::get_ytm_window(&app)
+        .ok_or("YTM window not found")?;
+    crate::webview_bridge::navigate_to_login(&window)
+}
+
+/// Navigate the YTM window to music.youtube.com home. Used by the
+/// LoginPage's "Skip for now" path so the bridge has a working same-
+/// origin context for subsequent fetches even when the user hasn't
+/// signed in.
+#[tauri::command]
+pub async fn navigate_ytm_to_home(app: AppHandle) -> Result<(), String> {
+    let window = crate::webview_bridge::get_ytm_window(&app)
+        .ok_or("YTM window not found")?;
+    crate::webview_bridge::navigate_to_home(&window)
+}
+
 /// Background task that periodically writes the currently-playing
 /// episode's position into the per-videoId resume map. Gated on the
 /// active playlist context starting with `MPSP*` (a podcast / show
@@ -529,10 +549,10 @@ pub fn spawn_episode_progress_saver(
             if !matches!(status, PlaybackStatus::Playing) {
                 continue;
             }
-            // Episode-only gate. Kaset's PodcastParser pins the
-            // show browseId prefix at MPSPP (5 chars). Match
-            // exactly so we don't accidentally start saving for
-            // unrelated MPSP* contexts.
+            // Episode-only gate. Podcast show browseIds use the
+            // 5-char MPSPP prefix exactly; matching that so we
+            // don't accidentally start saving for unrelated MPSP*
+            // contexts.
             if !context.starts_with("MPSPP") {
                 continue;
             }
@@ -576,9 +596,9 @@ pub(crate) fn lookup_episode_resume(
     playlist_id: Option<&str>,
 ) -> Option<f64> {
     let context = playlist_id?;
-    // Kaset's PodcastParser uses MPSPP (5 chars) as the show
-    // browseId prefix — match exactly so we don't accidentally
-    // resume a non-podcast that happens to share an MPSP* prefix.
+    // Podcast show browseIds use the 5-char MPSPP prefix exactly —
+    // match strictly so we don't accidentally resume a non-podcast
+    // that happens to share an MPSP* prefix.
     if !context.starts_with("MPSPP") {
         return None;
     }

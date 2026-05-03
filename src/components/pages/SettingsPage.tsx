@@ -361,7 +361,17 @@ export const SettingsPage: FC = () => {
           padding: 'var(--space-3) 0',
         }}
       >
-        <OutlinedButton label="Sign in to YouTube Music" onClick={() => ytmApi.showYtm()} />
+        <OutlinedButton
+          label="Sign in to YouTube Music"
+          onClick={() => {
+            ytmApi.openSignIn().catch((e: unknown) => {
+              debug.error('SettingsPage', 'openSignIn failed', e);
+            });
+            ytmApi.showYtm().catch((e: unknown) => {
+              debug.error('SettingsPage', 'showYtm failed', e);
+            });
+          }}
+        />
         <OutlinedButton label="Hide YouTube Music window" onClick={() => ytmApi.hideYtm()} />
         <OutlinedButton label="Re-inject player bridge" onClick={() => ytmApi.injectBridge()} />
       </div>

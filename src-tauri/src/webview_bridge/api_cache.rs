@@ -1,13 +1,12 @@
 //! In-process cache for `ytm_api_call` responses, keyed by
-//! `SHA256(endpoint + sorted-keys body)`. Mirrors kaset's `APICache`
-//! contract (per-endpoint TTL, LRU eviction at capacity, throttled
-//! eviction passes).
+//! `SHA256(endpoint + sorted-keys body)`. Per-endpoint TTL, LRU
+//! eviction at capacity, throttled eviction passes.
 //!
 //! Each entry is the raw JSON string that the WebKit fetch returned —
 //! exactly what `ytm_api_call` would emit on a miss — so callers don't
 //! need to know whether a value came from cache or the bridge.
 //!
-//! TTLs match kaset's table:
+//! TTLs:
 //!   home / library    →  5 min
 //!   playlist / track  → 30 min
 //!   artist            →  1 h
@@ -63,10 +62,10 @@ fn cache() -> &'static RwLock<Inner> {
     CACHE.get_or_init(|| RwLock::new(Inner::default()))
 }
 
-/// Compute the cache key. Mirrors kaset's `stableCacheKey` —
-/// SHA256 over `endpoint|sorted-keys-body`. Sorting the body keys is
-/// what makes it cache-stable: two semantically equivalent JSON
-/// payloads with different key order resolve to the same key.
+/// Compute the cache key. SHA256 over `endpoint|sorted-keys-body`.
+/// Sorting the body keys is what makes it cache-stable: two
+/// semantically equivalent JSON payloads with different key order
+/// resolve to the same key.
 pub fn cache_key(endpoint: &str, body_json: &str) -> String {
     let normalized_body = sort_json_keys(body_json);
     let mut hasher = Sha256::new();

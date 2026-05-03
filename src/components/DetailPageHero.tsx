@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import type { CoverColors } from '../lib/coverColors';
+import { useOverlayState } from '../lib/overlayState';
 import { CachedImage } from './CachedImage';
 
 export interface DetailPageHeroSaveProps {
@@ -100,6 +101,9 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
   extra,
   transparent = false,
 }) => {
+  const { nowPlayingOpen, focusTimerOpen } = useOverlayState();
+  const hideBackButton = nowPlayingOpen || focusTimerOpen;
+
   // Memoize the gradient so re-renders driven by frequent player events
   // (track-change, position update) don't recompute the string. Same
   // colors → same string, no React work.
@@ -128,13 +132,16 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
         transition: 'background 700ms var(--ease-out)',
       }}
     >
-      {createPortal(
+      {!hideBackButton && createPortal(
         <button
           type="button"
           onClick={onBack}
           aria-label="Back"
           // Marker for the global CSS rule that hides this button while
           // the Now Playing overlay is open (see styles/global.css).
+          // Belt-and-suspenders: the React condition above is the
+          // primary guard; the CSS rule is a backup for any edge case
+          // where the context isn't reachable.
           data-detail-back-button=""
           style={{
             // Portaled to document.body so the button shares the body

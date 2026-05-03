@@ -99,6 +99,8 @@ const baseProps = {
   lyricsOpen: false,
   onToggleQueue: vi.fn(),
   queueOpen: false,
+  onToggleFocusTimer: vi.fn(),
+  focusTimerOpen: false,
 };
 
 describe('PlayerChrome — contract after Liquid-Glass visual refactor', () => {

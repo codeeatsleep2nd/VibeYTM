@@ -1,4 +1,5 @@
-import { type FC, useEffect, useRef, useState } from 'react';
+import { type FC, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { AlbumSummary, PlaylistDetail, SearchResults } from '../../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../../lib/ipc';
 import { SongRow } from '../../browse/SongRow';
@@ -83,6 +84,14 @@ export const SearchPage: FC<SearchPageProps> = ({
   const resultsCacheRef = useRef<Map<string, SearchResults>>(new Map());
   const albumPreviewCacheRef = useRef<Map<string, PlaylistDetail>>(new Map());
   const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The dropdown is portaled into document.body so it can escape the
+  // LiquidGlass capsule's `overflow: hidden`. Position is read from the
+  // input's bounding rect on every layout pass; resize listener keeps
+  // it aligned. The sticky-positioned input doesn't move on scroll
+  // (it stays pinned), so no scroll listener is needed.
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [inputRect, setInputRect] = useState<DOMRect | null>(null);
 
   // ---------- Search effect: fires only on submittedQuery / category changes ----------
   useEffect(() => {
@@ -170,6 +179,18 @@ export const SearchPage: FC<SearchPageProps> = ({
       cancelled = true;
     };
   }, [results?.topAlbum?.artworkUrl, activeCategory]);
+
+  // ---------- Input-rect tracking for the portaled dropdown ----------
+  useLayoutEffect(() => {
+    const measure = () => {
+      if (inputRef.current) {
+        setInputRect(inputRef.current.getBoundingClientRect());
+      }
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [showSuggestions, suggestions.length, query]);
 
   // ---------- Debounced autocomplete suggestions ----------
   useEffect(() => {
@@ -298,6 +319,7 @@ export const SearchPage: FC<SearchPageProps> = ({
           &#x2315;
         </span>
         <input
+          ref={inputRef}
           type="text"
           placeholder="Search YouTube Music — press Enter"
           value={query}
@@ -360,14 +382,15 @@ export const SearchPage: FC<SearchPageProps> = ({
           }}
         />
 
-        {/* Suggestion dropdown */}
-        {showSuggestions && suggestions.length > 0 && (
+        {/* Suggestion dropdown — portaled to document.body so the
+            LiquidGlass capsule's `overflow: hidden` doesn't clip it. */}
+        {showSuggestions && suggestions.length > 0 && inputRect && createPortal(
           <ul
             style={{
-              position: 'absolute',
-              top: 'calc(100% + 4px)',
-              left: 0,
-              right: 0,
+              position: 'fixed',
+              top: inputRect.bottom + 4,
+              left: inputRect.left,
+              width: inputRect.width,
               listStyle: 'none',
               padding: 'var(--space-2) 0',
               margin: 0,
@@ -375,7 +398,7 @@ export const SearchPage: FC<SearchPageProps> = ({
               border: '1px solid oklch(100% 0 0 / 0.08)',
               borderRadius: 'var(--radius-md)',
               boxShadow: '0 8px 24px oklch(0% 0 0 / 0.35)',
-              zIndex: 50,
+              zIndex: 160,
             }}
           >
             {suggestions.map((s, i) => {
@@ -411,7 +434,8 @@ export const SearchPage: FC<SearchPageProps> = ({
                 </li>
               );
             })}
-          </ul>
+          </ul>,
+          document.body,
         )}
       </div>
 

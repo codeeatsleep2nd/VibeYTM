@@ -197,6 +197,28 @@ export const ytmApi = {
   hideYtm: () => invoke('hide_ytm'),
   showYtm: () => invoke('show_ytm'),
   injectBridge: () => invoke('inject_ytm_bridge'),
+  /**
+   * Navigate the YTM auxiliary window directly to Google's sign-in screen.
+   * Used by LoginPage so the user lands on the account chooser instead of
+   * music.youtube.com's home page.
+   */
+  openSignIn: () => invoke('navigate_ytm_to_login'),
+  /**
+   * Navigate the YTM auxiliary window to music.youtube.com home. Used by
+   * the "Skip for now" path so the bridge has a working same-origin
+   * context for subsequent fetches.
+   */
+  navigateToHome: () => invoke('navigate_ytm_to_home'),
+};
+
+export const notificationApi = {
+  /**
+   * Fire a macOS system notification. Permission is granted at app
+   * start via the notification:default capability (see
+   * src-tauri/capabilities/default.json) — no runtime prompt needed.
+   */
+  show: (title: string, body: string) =>
+    invoke('show_notification', { title, body }),
 };
 
 export interface AppSettings {
