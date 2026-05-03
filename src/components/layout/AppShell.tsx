@@ -5,6 +5,7 @@ import { NowPlaying } from '../player/NowPlaying';
 import { QueuePanel } from '../player/QueuePanel';
 import { LyricsOverlay } from '../player/LyricsOverlay';
 import { FocusTimer } from '../player/FocusTimer';
+import type { FocusTimerState } from '../player/FocusTimer/useFocusTimerCountdown';
 
 interface AppShellProps {
   currentPath: string;
@@ -17,7 +18,7 @@ interface AppShellProps {
   onToggleQueue: () => void;
   focusTimerOpen: boolean;
   onToggleFocusTimer: () => void;
-  onFocusTimerStateChange: (state: 'idle' | 'running' | 'done') => void;
+  onFocusTimerStateChange: (state: FocusTimerState) => void;
   onFocusTimerClose: () => void;
   children: ReactNode;
 }

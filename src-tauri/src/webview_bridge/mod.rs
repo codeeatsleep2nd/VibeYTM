@@ -51,11 +51,12 @@ pub fn show_ytm_window(window: &WebviewWindow) -> Result<(), String> {
 
 // `service=youtube` short-circuits Google to the YouTube-branded sign-in
 // (otherwise users see a generic Gmail screen). `continue=` lands the user
-// directly on music.youtube.com after auth — kaset's chained variant
-// (continue→youtube.com/signin→next=music.youtube.com) was tested in this
-// Tauri WebViewWindow and the redirect chain stalls mid-flight, leaving
-// the bridge on a non-YTM page where the `ytmusic-nav-bar` selector never
-// matches and login detection never fires.
+// directly on music.youtube.com after auth. A chained variant
+// (continue→youtube.com/signin→next=music.youtube.com) was tested
+// in this Tauri WebViewWindow and the redirect chain stalls
+// mid-flight, leaving the bridge on a non-YTM page where the
+// `ytmusic-nav-bar` selector never matches and login detection
+// never fires.
 const GOOGLE_SIGNIN_URL: &str = "https://accounts.google.com/ServiceLogin?service=youtube&uilel=3&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F";
 
 /// Navigate the YTM window directly to Google's sign-in screen so the
@@ -250,14 +251,11 @@ mod tests {
         assert!(validate_ytm_id(&long, 20, "video_id").is_err());
     }
 
-    // =====================================================================
-    // Regression tests for features added since v0.7.0.
-    // =====================================================================
-
-    // v0.9.1: navigate_to_track must use the song-radio list (`RDAMVM<vid>`)
-    // so YTM streams the audio variant rather than the music-video variant
-    // when both exist for the same videoId. This is verified by inspecting
-    // the JS payload that would be eval'd in the YTM webview.
+    // navigate_to_track must use the song-radio list (`RDAMVM<vid>`)
+    // so YTM streams the audio variant rather than the music-video
+    // variant when both exist for the same videoId. Verified by
+    // inspecting the JS payload that would be eval'd in the YTM
+    // webview.
     fn navigate_to_track_js(video_id: &str) -> String {
         // Mirror the format string in `navigate_to_track` so a regression
         // there fails this test instead of silently changing behaviour.

@@ -59,7 +59,7 @@ Before designing or coding ANY non-trivial feature, search GitHub (and other reg
 2. **API behavior & quirks** — YTM bridge / Innertube clients (e.g. ytmusicapi, sigma67, th-ch/youtube-music) have already documented the response shapes and the edge cases.
 3. **Implementation patterns** — when you'd otherwise hand-roll something (e.g. a queue dedupe, a media-key handler, a notification provider), check whether a small library or a referenced source-snippet already does it correctly.
 
-Always run `gh search repos`, `gh search code`, or a targeted web search BEFORE writing the plan — not after the user pushes back. Cite the references you used in the plan so future-you can re-verify. If no existing implementation matches, document what you searched for so the absence is recorded, not assumed.
+Run `gh search repos`, `gh search code`, or a targeted web search BEFORE writing the plan — not after the user pushes back. Cite the references you used in the plan so future-you can re-verify. If no existing implementation matches, document what you searched for so the absence is recorded, not assumed.
 
 ## Architecture
 - Two WebView model: visible React UI + hidden YouTube Music audio engine

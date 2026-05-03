@@ -248,7 +248,8 @@ input[type='range'][data-vibeytm-slider]:hover::-webkit-slider-thumb {
  * user's focus. The selector keys off SafeOverlay's
  * `aria-label="Now playing"` + `aria-hidden="false"`. */
 body:has([aria-label='Now playing'][aria-hidden='false'])
-  [data-detail-back-button] {
+  [data-detail-back-button],
+body.vibeytm-nowplaying-open [data-detail-back-button] {
   display: none;
 }
 

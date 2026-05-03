@@ -284,8 +284,7 @@ pub async fn play_track(
     // Per-episode resume: if this videoId has saved progress AND we're
     // playing it from a podcast / show context (MPSP*), seek to the
     // saved position via navigate_to_track_at_position. Songs are
-    // intentionally skipped — only long-form audio resumes (matches
-    // the kaset reference's behavior).
+    // intentionally skipped — only long-form audio resumes.
     let resume_position = if let Some(progress_state) = app.try_state::<SharedEpisodeProgress>() {
         let store = progress_state.read().await;
         lookup_episode_resume(&store, &video_id, playlist_id.as_deref())
@@ -550,10 +549,10 @@ pub fn spawn_episode_progress_saver(
             if !matches!(status, PlaybackStatus::Playing) {
                 continue;
             }
-            // Episode-only gate. Kaset's PodcastParser pins the
-            // show browseId prefix at MPSPP (5 chars). Match
-            // exactly so we don't accidentally start saving for
-            // unrelated MPSP* contexts.
+            // Episode-only gate. Podcast show browseIds use the
+            // 5-char MPSPP prefix exactly; matching that so we
+            // don't accidentally start saving for unrelated MPSP*
+            // contexts.
             if !context.starts_with("MPSPP") {
                 continue;
             }
@@ -597,9 +596,9 @@ pub(crate) fn lookup_episode_resume(
     playlist_id: Option<&str>,
 ) -> Option<f64> {
     let context = playlist_id?;
-    // Kaset's PodcastParser uses MPSPP (5 chars) as the show
-    // browseId prefix — match exactly so we don't accidentally
-    // resume a non-podcast that happens to share an MPSP* prefix.
+    // Podcast show browseIds use the 5-char MPSPP prefix exactly —
+    // match strictly so we don't accidentally resume a non-podcast
+    // that happens to share an MPSP* prefix.
     if !context.starts_with("MPSPP") {
         return None;
     }

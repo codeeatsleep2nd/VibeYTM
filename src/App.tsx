@@ -17,6 +17,7 @@ import { useBootState } from './hooks/useBootState';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
 import { ytmApi, playerApi } from './lib/ipc';
 import { registerOpenArtist, registerOpenPlaylist } from './lib/appNav';
+import { OverlayStateContext } from './lib/overlayState';
 import type { FocusTimerState } from './components/player/FocusTimer/useFocusTimerCountdown';
 
 interface ViewingPlaylist {
@@ -129,14 +130,18 @@ const App: FC = () => {
     setIsQueueOpen((prev) => !prev);
   }, []);
 
-  // Focus timer is a fully independent surface — opening it does not
-  // touch playback or any other overlay. Closing while running
-  // funnels through the gate above so the user can confirm.
+  // Focus timer takes over the main surface — opening it closes the
+  // other right-side overlays (NowPlaying, Lyrics, Queue) so the
+  // focus session is the user's sole focal point. Closing while
+  // running funnels through the gate above so the user can confirm.
   const toggleFocusTimer = useCallback(() => {
     if (isFocusTimerOpenRef.current) {
       requestCloseFocusTimer(() => setIsFocusTimerOpen(false));
       return;
     }
+    setIsNowPlayingOpen(false);
+    setIsLyricsOpen(false);
+    setIsQueueOpen(false);
     setIsFocusTimerOpen(true);
   }, [requestCloseFocusTimer]);
 
@@ -150,7 +155,6 @@ const App: FC = () => {
 
   const searchForArtist = useCallback((name: string) => {
     requestCloseFocusTimer(() => {
-      // Promoted from a search redirect to a real overlay page (P3.1).
       // Closes other overlays so the artist hero is the focus.
       setViewingPlaylist(null);
       setIsNowPlayingOpen(false);
@@ -171,6 +175,17 @@ const App: FC = () => {
       });
     }
   }, [phase]);
+
+  // Mirror NowPlaying's open state onto a body class so CSS rules
+  // outside the React tree (e.g. DetailPageHero's portaled back
+  // button) can react. The existing `body:has(...)` rule in global.css
+  // can flake in WKWebView; the class is a deterministic backup.
+  useEffect(() => {
+    document.body.classList.toggle(
+      'vibeytm-nowplaying-open',
+      isNowPlayingOpen,
+    );
+  }, [isNowPlayingOpen]);
 
   // Register the app-level "open artist" navigation hook so the track
   // context menu can drive it without prop-drilling. Re-registers on
@@ -366,6 +381,12 @@ const App: FC = () => {
 
   return (
     <>
+    <OverlayStateContext.Provider
+      value={{
+        nowPlayingOpen: isNowPlayingOpen,
+        focusTimerOpen: isFocusTimerOpen,
+      }}
+    >
     <AppShell
       currentPath={currentPath}
       onNavigate={(path) => {
@@ -457,6 +478,7 @@ const App: FC = () => {
         )}
       </div>
     </AppShell>
+    </OverlayStateContext.Provider>
     <WelcomeScreen isDone={isSplashDone} />
     <UpdateBanner />
     <ShortcutCheatsheet
@@ -573,6 +595,7 @@ const App: FC = () => {
           >
             <button
               type="button"
+              autoFocus
               onClick={() => setPendingFocusTimerClose(null)}
               style={{
                 flex: 1,
@@ -597,12 +620,11 @@ const App: FC = () => {
             </button>
             <button
               type="button"
-              autoFocus
               onClick={() => {
                 const action = pendingFocusTimerClose;
                 setPendingFocusTimerClose(null);
                 setIsFocusTimerOpen(false);
-                action();
+                action?.();
               }}
               style={{
                 flex: 1,

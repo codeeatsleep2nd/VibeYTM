@@ -1,5 +1,6 @@
 import { type FC, useEffect, useRef, useState } from 'react';
 import { ytmApi } from '../../lib/ipc';
+import { debug } from '../../lib/debug';
 import { useTauriEvent } from '../../hooks/useTauriEvent';
 
 interface LoginPageProps {
@@ -7,14 +8,13 @@ interface LoginPageProps {
 }
 
 /**
- * Mirrors kaset's LoginSheet flow (sozercan/kaset, Sources/Kaset/Views/
- * LoginSheet.swift): when the login surface mounts, the auxiliary YTM
- * window navigates straight to Google's sign-in URL and becomes visible.
- * The user signs in there; the bridge poller detects __VIBEYTM_LOGGED_IN__,
- * emits `player:login-changed: true`, and the boot orchestrator flips
- * `phase` to `app` — at which point App.tsx hides the YTM window
- * automatically (see App.tsx auto-hide effect). The "I'm already signed
- * in" and "Skip for now" buttons remain as manual recovery paths.
+ * Login surface. On mount the auxiliary YTM window navigates straight
+ * to Google's sign-in URL and becomes visible. The user signs in there;
+ * the bridge poller detects __VIBEYTM_LOGGED_IN__, emits
+ * `player:login-changed: true`, and the boot orchestrator flips `phase`
+ * to `app` — at which point App.tsx hides the YTM window automatically.
+ * The "I'm already signed in" and "Skip for now" buttons remain as
+ * manual recovery paths.
  */
 export const LoginPage: FC<LoginPageProps> = ({ onLoggedIn }) => {
   const [error, setError] = useState<string | null>(null);
@@ -26,8 +26,8 @@ export const LoginPage: FC<LoginPageProps> = ({ onLoggedIn }) => {
   const autoAdvance = () => {
     if (handedOffRef.current) return;
     handedOffRef.current = true;
-    ytmApi.hideYtm().catch(() => {
-      // App.tsx also hides on phase=app; this is belt-and-suspenders.
+    ytmApi.hideYtm().catch((e: unknown) => {
+      debug.error('LoginPage', 'autoAdvance hideYtm failed', e);
     });
     onLoggedIn();
   };
@@ -36,10 +36,9 @@ export const LoginPage: FC<LoginPageProps> = ({ onLoggedIn }) => {
     if (isLoggedIn) autoAdvance();
   });
 
-  // Auto-open the sign-in surface on mount — matches kaset's sheet, which
-  // embeds the login WebView directly. Gated by a ref so React StrictMode's
-  // dev-mode double-invocation doesn't fire the cross-origin navigation
-  // twice (which makes the YTM WebView hard-reload, visible as a flicker).
+  // Gated by a ref so React StrictMode's dev-mode double-invocation
+  // doesn't fire the cross-origin navigation twice (which makes the YTM
+  // WebView hard-reload, visible as a flicker).
   const mountedRef = useRef(false);
   useEffect(() => {
     if (mountedRef.current) return;
@@ -48,15 +47,14 @@ export const LoginPage: FC<LoginPageProps> = ({ onLoggedIn }) => {
     // second (so the user never sees a flash of music.youtube.com before
     // Google takes over), injectBridge last (queues against the post-
     // redirect-back page when sign-in completes).
-    ytmApi.openSignIn().catch(() => {
-      // Fallback: stay on whatever URL the YTM window has. The "Reopen
-      // sign-in page" button below is the manual recovery path.
+    ytmApi.openSignIn().catch((e: unknown) => {
+      debug.error('LoginPage', 'mount openSignIn failed', e);
     });
-    ytmApi.showYtm().catch(() => {
-      // Window-not-found is non-fatal — manual recovery via the button.
+    ytmApi.showYtm().catch((e: unknown) => {
+      debug.error('LoginPage', 'mount showYtm failed', e);
     });
-    ytmApi.injectBridge().catch(() => {
-      // Bridge was already injected via Tauri init script — safe to ignore.
+    ytmApi.injectBridge().catch((e: unknown) => {
+      debug.error('LoginPage', 'mount injectBridge failed', e);
     });
   }, []);
 
@@ -74,8 +72,8 @@ export const LoginPage: FC<LoginPageProps> = ({ onLoggedIn }) => {
   const handleAlreadySignedIn = async () => {
     try {
       await ytmApi.hideYtm();
-    } catch {
-      // ignore
+    } catch (e: unknown) {
+      debug.error('LoginPage', 'handleAlreadySignedIn hideYtm failed', e);
     }
     onLoggedIn();
   };
@@ -88,8 +86,14 @@ export const LoginPage: FC<LoginPageProps> = ({ onLoggedIn }) => {
     try {
       await ytmApi.navigateToHome();
       await ytmApi.hideYtm();
-    } catch {
-      // Non-fatal; user will land on AppShell either way.
+    } catch (e: unknown) {
+      // Surface the failure: if navigateToHome threw, the YTM window
+      // will still be on the sign-in URL and AppShell fetches will
+      // time out. The user needs to know there is a problem.
+      debug.error('LoginPage', 'handleSkip navigateToHome/hideYtm failed', e);
+      setError(
+        "Couldn't prepare the music window. The app may not load content correctly — try restarting.",
+      );
     }
     onLoggedIn();
   };

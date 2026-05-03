@@ -364,8 +364,12 @@ export const SettingsPage: FC = () => {
         <OutlinedButton
           label="Sign in to YouTube Music"
           onClick={() => {
-            ytmApi.openSignIn().catch(() => {});
-            ytmApi.showYtm().catch(() => {});
+            ytmApi.openSignIn().catch((e: unknown) => {
+              debug.error('SettingsPage', 'openSignIn failed', e);
+            });
+            ytmApi.showYtm().catch((e: unknown) => {
+              debug.error('SettingsPage', 'showYtm failed', e);
+            });
           }}
         />
         <OutlinedButton label="Hide YouTube Music window" onClick={() => ytmApi.hideYtm()} />

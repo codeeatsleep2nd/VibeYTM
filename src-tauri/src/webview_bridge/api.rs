@@ -37,6 +37,13 @@ pub async fn ytm_api_call(
     let fire_js = format!(
         r#"
         (function() {{
+            // Re-fires must not clobber a result that arrived between
+            // the last poll and this re-fire. If the slot already has
+            // a non-null value, leave it alone — the polling loop will
+            // pick it up.
+            if (window.__VIBEYTM_API_{req_id}__ !== null && window.__VIBEYTM_API_{req_id}__ !== undefined) {{
+                return 'already-resolved';
+            }}
             window.__VIBEYTM_API_{req_id}__ = null;
             // Generate SAPISIDHASH auth header from cookies (required for logged-in requests)
             function makeAuth() {{
@@ -82,7 +89,7 @@ pub async fn ytm_api_call(
                     'Content-Type': 'application/json',
                     'X-Origin': 'https://music.youtube.com',
                     'X-Goog-AuthUser': '0',
-                    'X-YouTube-Client-Name': (ytctx && ytctx.client && ytctx.client.clientName === 'WEB_REMIX') ? '67' : '67',
+                    'X-YouTube-Client-Name': '67',
                     'X-YouTube-Client-Version': (ytctx && ytctx.client && ytctx.client.clientVersion) || '1.20250407.01.00',
                 }};
                 if (auth) headers['Authorization'] = auth;
@@ -182,7 +189,10 @@ pub async fn ytm_api_call(
             let app_refire = app.clone();
             let fire_js_refire = fire_js.clone();
             let _ = app.run_on_main_thread(move || {
-                let Some(window) = app_refire.get_webview_window("ytm") else { return; };
+                let Some(window) = app_refire.get_webview_window("ytm") else {
+                    tracing::warn!(req_id, "ytm_api_call re-fire: YTM window gone");
+                    return;
+                };
                 let _ = window.with_webview(move |pv| {
                     #[cfg(target_os = "macos")]
                     unsafe {

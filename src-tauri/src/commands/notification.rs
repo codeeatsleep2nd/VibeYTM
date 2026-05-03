@@ -4,11 +4,25 @@ use std::sync::OnceLock;
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
-/// Embedded notification sound (mixkit-happy-bells-notification-937.wav).
-/// Bundled at compile time so the app is self-contained and the sound
-/// is available regardless of the user's filesystem layout.
+/// Embedded notification sound. Bundled at compile time so the app
+/// is self-contained and the sound is available regardless of the
+/// user's filesystem layout.
 const FOCUS_TIMER_SOUND_BYTES: &[u8] =
     include_bytes!("../../sounds/focus-timer-complete.wav");
+
+/// Escape a string for embedding inside an AppleScript double-quoted
+/// literal. Backslashes must be escaped first, then double quotes —
+/// reversing the order would double-escape the backslash inside an
+/// already-escaped quote and either fail to parse or open an
+/// injection vector. Newlines are stripped because `display
+/// notification` rejects them silently and we'd lose the visual
+/// banner without any error surfacing.
+fn applescript_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+        .replace('\r', " ")
+}
 
 /// Lazily extracts the embedded sound to a temp path the first time
 /// it's needed. `afplay` requires a real file path. Subsequent calls
@@ -31,15 +45,12 @@ fn focus_timer_sound_path() -> Option<PathBuf> {
 /// Fire a macOS system notification on demand. Used by the focus timer
 /// when the countdown hits 0.
 ///
-/// **Why osascript on macOS in dev**: tauri-plugin-notification's dev-
-/// mode path calls `notify_rust::set_application("com.apple.Terminal")`
-/// (see desktop.rs:209). The notification then needs Terminal to have
-/// notification permission in System Settings, which most devs never
-/// grant — so the notification fires into the void. In release builds
-/// the plugin uses the app's bundle id and works fine. We shell out to
-/// `osascript` in dev so the notification reliably appears under
-/// "Script Editor" / system attribution. Release builds use the
-/// plugin path with the app's own bundle id.
+/// In dev mode `tauri-plugin-notification` attributes notifications to
+/// Terminal.app (most users never grant Terminal notification
+/// permission, so the banner fires into the void); we try
+/// `terminal-notifier` first, then a Terminal-attributed osascript,
+/// then a Script-Editor-attributed osascript, then the plugin path.
+/// In release builds the plugin uses VibeYTM's own bundle id and works.
 #[tauri::command]
 pub async fn show_notification(
     app: AppHandle,
@@ -52,18 +63,14 @@ pub async fn show_notification(
     {
         use std::process::Command;
         // Audible cue independent of notification-banner permission.
-        // Even if macOS suppresses the visual banner (Focus mode, Script
-        // Editor permission missing, etc.), the user still hears the
-        // timer fire. Detached so it doesn't block the IPC return.
-        // Custom "happy bells" notification — embedded via include_bytes!
-        // and extracted to a temp file the first time it's needed.
-        // `afplay` requires a real path; the temp extraction is one-shot
-        // (cached for subsequent calls via OnceLock).
+        // Even if macOS suppresses the visual banner (Focus mode, app
+        // permission missing, etc.), the user still hears the timer
+        // fire. Detached so it doesn't block the IPC return. The
+        // bundled "happy bells" sound is extracted to temp once via
+        // OnceLock; afplay requires a real path.
         if let Some(path) = focus_timer_sound_path() {
             let _ = Command::new("afplay").arg(&path).spawn();
         } else {
-            // Extraction failed — fall back to a system sound so the
-            // user still gets an audible cue.
             let _ = Command::new("afplay")
                 .arg("/System/Library/Sounds/Sosumi.aiff")
                 .spawn();
@@ -73,9 +80,8 @@ pub async fn show_notification(
     #[cfg(target_os = "macos")]
     if tauri::is_dev() {
         use std::process::Command;
-        let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-        let title_esc = escape(&title);
-        let body_esc = escape(&body);
+        let title_esc = applescript_escape(&title);
+        let body_esc = applescript_escape(&body);
 
         // 1) `terminal-notifier` if installed (brew install terminal-notifier).
         //    Has its own bundle id, more likely to have notification
@@ -100,9 +106,7 @@ pub async fn show_notification(
 
         // 2) `tell application "Terminal" to display notification` —
         //    routes the notification through Terminal.app's permission
-        //    rather than Script Editor's. tauri-plugin-notification's
-        //    dev-mode path also targets Terminal, so this aligns the
-        //    permission requirement.
+        //    rather than Script Editor's.
         let terminal_script = format!(
             r#"tell application "Terminal" to display notification "{body}" with title "{title}""#,
             body = body_esc,
@@ -151,5 +155,39 @@ pub async fn show_notification(
             tracing::warn!(error = %e, "failed to show notification");
             Err(e.to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::applescript_escape;
+
+    #[test]
+    fn escapes_backslash_before_doublequote() {
+        // Backslash → double-backslash.
+        assert_eq!(applescript_escape("\\"), "\\\\");
+        // Double-quote → escaped double-quote.
+        assert_eq!(applescript_escape("\""), "\\\"");
+        // Mixed: each character escaped independently. If the order
+        // were swapped (quote first, then backslash), the freshly
+        // inserted `\"` would have its `\` re-escaped to `\\\\"`.
+        assert_eq!(applescript_escape("a\\b\"c"), "a\\\\b\\\"c");
+    }
+
+    #[test]
+    fn strips_newlines_to_avoid_silent_dropped_notifications() {
+        // `display notification` rejects literal newlines silently —
+        // the AppleScript fails without any error reaching us.
+        assert_eq!(applescript_escape("line1\nline2"), "line1 line2");
+        assert_eq!(applescript_escape("a\rb"), "a b");
+        assert_eq!(applescript_escape("a\r\nb"), "a  b");
+    }
+
+    #[test]
+    fn passthrough_for_safe_input() {
+        assert_eq!(
+            applescript_escape("You made it, time to take a break."),
+            "You made it, time to take a break."
+        );
     }
 }

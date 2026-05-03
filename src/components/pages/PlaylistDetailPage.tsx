@@ -43,9 +43,9 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
 
   const isAlbum = playlist?.isAlbum ?? playlistId.startsWith('MPRE');
   // Show / podcast browseId — drives the "Show" kind label on the
-  // hero and the "X episodes" meta line. Kaset's reference uses
-  // MPSPP (5 chars) for podcast shows; matching that exactly so the
-  // gate doesn't accidentally fire on any unrelated MPSP* prefix.
+  // hero and the "X episodes" meta line. Podcast shows use the full
+  // MPSPP (5-char) prefix; matching that exactly so the gate doesn't
+  // accidentally fire on any unrelated MPSP* prefix.
   // Save block stays hidden — YTM's podcast subscribe endpoint is a
   // different library surface we don't round-trip yet.
   const isShow = playlistId.startsWith('MPSPP');

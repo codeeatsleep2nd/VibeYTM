@@ -11,7 +11,12 @@ export interface UseFocusTimerCountdown {
   state: FocusTimerState;
   totalSecs: number;
   remainingSecs: number;
-  /** Picks a new duration while idle. No-op while running/done. */
+  /**
+   * Picks a new duration. No-op while running. From `idle` it just
+   * updates the duration; from `done` it transitions back to `idle`
+   * with the new duration so the user can start a fresh session by
+   * dragging the slider on the Done view.
+   */
   setDuration: (secs: number) => void;
   /** Latches state -> 'running' and starts the tick. No-op unless idle. */
   start: () => void;
@@ -32,6 +37,12 @@ export function useFocusTimerCountdown(
   const [state, setState] = useState<FocusTimerState>('idle');
   const [totalSecs, setTotalSecs] = useState(initial);
   const [remainingSecs, setRemainingSecs] = useState(initial);
+  // Mirror `totalSecs` into a ref so `reset()` reads the latest value
+  // without depending on `totalSecs` in its useCallback deps. Avoids a
+  // stale-closure window if `setDuration` and `reset` happen in the
+  // same render tick.
+  const totalSecsRef = useRef(initial);
+  totalSecsRef.current = totalSecs;
 
   // Keep onComplete in a ref so changing the callback identity doesn't
   // restart the tick — we only want to depend on `state` for that.
@@ -81,9 +92,10 @@ export function useFocusTimerCountdown(
       if (s === 'running') return s;
       setTotalSecs(secs);
       setRemainingSecs(secs);
-      // done → idle transition lets the user "pick a new duration to
-      // start over" by interacting with the slider on the Done view.
-      // Reset the completion latch so the next run will fire onComplete.
+      // The completion latch is also reset by the `state === 'idle'`
+      // effect above; resetting here as well guards against the rare
+      // case where state was already `idle` and the effect won't
+      // re-run.
       completedRef.current = false;
       return 'idle';
     });
@@ -95,8 +107,8 @@ export function useFocusTimerCountdown(
 
   const reset = useCallback(() => {
     setState('idle');
-    setRemainingSecs(totalSecs);
-  }, [totalSecs]);
+    setRemainingSecs(totalSecsRef.current);
+  }, []);
 
   return {
     state,

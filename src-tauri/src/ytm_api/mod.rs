@@ -2228,9 +2228,9 @@ fn parse_library_podcasts(data: &Value) -> Vec<PodcastSummary> {
 }
 
 /// Parse a podcast / show card from a `musicTwoRowItemRenderer`. The
-/// browseId starts with MPSPP (5 chars — kaset's PodcastParser uses
-/// the same prefix); anything else returns None so callers don't
-/// accidentally render a non-podcast row in the Podcasts tab.
+/// browseId starts with MPSPP (5 chars); anything else returns None
+/// so callers don't accidentally render a non-podcast row in the
+/// Podcasts tab.
 fn parse_podcast_from_two_row(two_row: &Value) -> Option<PodcastSummary> {
     let browse_id = two_row["navigationEndpoint"]["browseEndpoint"]["browseId"]
         .as_str()?
@@ -3321,12 +3321,26 @@ fn parse_track_from_list_item(renderer: &Value) -> Option<TrackInfo> {
         runs_text(&col["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"])
     });
 
+    // YTM's secondary text shape varies by surface:
+    //   album / playlist track-list:       "Artist • Album"
+    //   search "Songs" / default unified:  "Song • Artist • Album • N plays"
+    //                                      "Video • Artist • N views"
+    // When the first segment is one of the type-label badges, skip it
+    // so the artist still lands in `track.artist` (and the album label
+    // doesn't end up there either).
+    const TYPE_LABELS: &[&str] = &[
+        "Song", "Video", "Single", "Episode", "Podcast", "EP",
+    ];
     let (artist, album) = secondary_text
         .as_deref()
         .map(|s| {
-            let parts: Vec<&str> = s.split(" \u{2022} ").collect(); // split on " • "
-            let a = parts.first().unwrap_or(&"").to_string();
-            let b = parts.get(1).unwrap_or(&"").to_string();
+            let parts: Vec<&str> = s.split(" \u{2022} ").collect();
+            let start = match parts.first() {
+                Some(first) if TYPE_LABELS.contains(first) => 1,
+                _ => 0,
+            };
+            let a = parts.get(start).copied().unwrap_or("").to_string();
+            let b = parts.get(start + 1).copied().unwrap_or("").to_string();
             (a, b)
         })
         .unwrap_or_default();
@@ -3388,9 +3402,7 @@ fn parse_track_from_list_item(renderer: &Value) -> Option<TrackInfo> {
 
 /// Parse a podcast / show episode from a `musicMultiRowListItemRenderer`.
 ///
-/// Field paths verified against the kaset reference's
-/// `PodcastParser.parseMultiRowListItem`. Show pages (browseId
-/// `MPSPP*`) emit episodes as multi-row list items.
+/// Show pages (browseId `MPSPP*`) emit episodes as multi-row list items.
 ///
 /// ```text
 /// musicMultiRowListItemRenderer:
@@ -3408,10 +3420,9 @@ fn parse_track_from_list_item(renderer: &Value) -> Option<TrackInfo> {
 ///     watchEndpoint: { videoId: "<episode video id>" }
 /// ```
 fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
-    // Title: first run of `title.runs`. Matches kaset's
-    // extractMultiRowTitle exactly (don't concatenate runs — episodes
-    // can have multiple runs in title for stylized text but only the
-    // first carries the actual title).
+    // Title: first run of `title.runs` only — episodes can have
+    // multiple runs in title for stylized text but only the first
+    // carries the actual title (don't concatenate runs).
     let title = renderer["title"]["runs"]
         .as_array()
         .and_then(|runs| runs.first())
@@ -3451,8 +3462,8 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         .map(|s| s.to_string())
         .unwrap_or_else(|| subtitle_text.to_string());
 
-    // VideoId — kaset reads `onTap.watchEndpoint.videoId` directly;
-    // we keep the overlay fallback for resilience against shape drift.
+    // VideoId — read `onTap.watchEndpoint.videoId` directly with an
+    // overlay fallback for resilience against shape drift.
     let video_id = renderer["onTap"]["watchEndpoint"]["videoId"]
         .as_str()
         .filter(|s| !s.is_empty())
@@ -3464,9 +3475,8 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         return None;
     }
 
-    // Try multiple thumbnail paths to mirror kaset's
-    // `extractThumbnails` helper — both the primary `thumbnail.*`
-    // path and the `thumbnailRenderer.*` variant some library
+    // Try multiple thumbnail paths — the primary `thumbnail.*`
+    // path and the `thumbnailRenderer.*` variant that some library
     // shapes use.
     let mut artwork_url = best_thumbnail(
         &renderer["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"],
@@ -3482,7 +3492,7 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         Some(artwork_url)
     };
 
-    // Duration: try the top-level kaset path first ("36 min" / "1:11:19"),
+    // Duration: try the top-level path first ("36 min" / "1:11:19"),
     // then fall back to the nested playbackProgress renderer used by the
     // current live shape (where the duration sits in
     // `playbackProgress.musicPlaybackProgressRenderer.durationText.runs[]`,
@@ -5307,10 +5317,11 @@ mod tests {
     // These tests pin the synthetic response shape so a future YTM tweak
     // doesn't silently break show pages.
 
-    /// Synthetic shape that matches kaset's PodcastParser field
-    /// expectations exactly (title.runs[0], subtitle.runs[0],
-    /// durationText.runs[0], onTap.watchEndpoint.videoId, thumbnail
-    /// path, optional publishedTimeText / playedText / playbackProgress).
+    /// Synthetic shape covering the field paths
+    /// `parse_episode_from_multi_row` reads: title.runs[0],
+    /// subtitle.runs[0], durationText.runs[0],
+    /// onTap.watchEndpoint.videoId, thumbnail path, plus optional
+    /// publishedTimeText / playedText / playbackProgress.
     fn sample_multi_row_episode() -> serde_json::Value {
         json!({
             "title": { "runs": [{ "text": "Episode 7: A Long Talk" }] },
@@ -5473,8 +5484,8 @@ mod tests {
         v["navigationEndpoint"]["browseEndpoint"]["browseId"] = json!("MPREalbum123");
         assert!(parse_podcast_from_two_row(&v).is_none());
 
-        // Plain MPSP without the second P — also rejected (kaset
-        // only accepts MPSPP).
+        // Plain MPSP without the second P — also rejected (only
+        // MPSPP is a podcast show).
         v["navigationEndpoint"]["browseEndpoint"]["browseId"] = json!("MPSPbogus");
         assert!(parse_podcast_from_two_row(&v).is_none());
     }

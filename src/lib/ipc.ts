@@ -200,7 +200,7 @@ export const ytmApi = {
   /**
    * Navigate the YTM auxiliary window directly to Google's sign-in screen.
    * Used by LoginPage so the user lands on the account chooser instead of
-   * music.youtube.com's home page. URL chain mirrored from kaset.
+   * music.youtube.com's home page.
    */
   openSignIn: () => invoke('navigate_ytm_to_login'),
   /**

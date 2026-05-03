@@ -10,8 +10,18 @@ const ytmApi = {
 };
 
 vi.mock('../../lib/ipc', () => ({ ytmApi }));
+
+// Capture the handler registered for `player:login-changed` so tests
+// can fire the event manually. The latch on LoginPage's autoAdvance
+// guarantees one-shot semantics — covered by `auto-advance ... fires
+// onLoggedIn exactly once` below.
+let loginEventHandler: ((next: boolean) => void) | null = null;
 vi.mock('../../hooks/useTauriEvent', () => ({
-  useTauriEvent: () => {},
+  useTauriEvent: <T,>(eventName: string, handler: (payload: T) => void) => {
+    if (eventName === 'player:login-changed') {
+      loginEventHandler = handler as unknown as (next: boolean) => void;
+    }
+  },
 }));
 
 const { LoginPage } = await import('./LoginPage');
@@ -19,13 +29,14 @@ const { LoginPage } = await import('./LoginPage');
 describe('LoginPage', () => {
   beforeEach(() => {
     Object.values(ytmApi).forEach((fn) => fn.mockClear());
+    loginEventHandler = null;
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it('auto-opens the sign-in WebView on mount (kaset parity)', async () => {
+  it('auto-opens the sign-in WebView on mount', async () => {
     await act(async () => {
       render(<LoginPage onLoggedIn={() => {}} />);
     });
@@ -87,6 +98,39 @@ describe('LoginPage', () => {
     expect(ytmApi.navigateToHome).toHaveBeenCalledTimes(1);
     expect(ytmApi.hideYtm).toHaveBeenCalledTimes(1);
     expect(onLoggedIn).toHaveBeenCalledTimes(1);
+  });
+
+  it('auto-advance: player:login-changed: true fires onLoggedIn exactly once even when the event arrives twice', async () => {
+    const onLoggedIn = vi.fn();
+    await act(async () => {
+      render(<LoginPage onLoggedIn={onLoggedIn} />);
+    });
+
+    expect(loginEventHandler).not.toBeNull();
+
+    await act(async () => {
+      loginEventHandler!(true);
+    });
+    expect(onLoggedIn).toHaveBeenCalledTimes(1);
+    expect(ytmApi.hideYtm).toHaveBeenCalledTimes(1);
+
+    // The bridge poller re-emits transitions; the latch must dedupe.
+    await act(async () => {
+      loginEventHandler!(true);
+    });
+    expect(onLoggedIn).toHaveBeenCalledTimes(1);
+  });
+
+  it('auto-advance: player:login-changed: false does not fire onLoggedIn', async () => {
+    const onLoggedIn = vi.fn();
+    await act(async () => {
+      render(<LoginPage onLoggedIn={onLoggedIn} />);
+    });
+
+    await act(async () => {
+      loginEventHandler!(false);
+    });
+    expect(onLoggedIn).not.toHaveBeenCalled();
   });
 
   it('renders the passkey hint copy', async () => {
