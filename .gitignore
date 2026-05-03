@@ -5,3 +5,8 @@ target/
 *.app
 .DS_Store
 *.log
+
+# Swift port build artifacts
+app/build/
+app/**/.build/
+app/**/.swiftpm/
