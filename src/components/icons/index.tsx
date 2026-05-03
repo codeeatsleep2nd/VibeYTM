@@ -36,6 +36,7 @@ export {
   Heart as HeartIcon,
   MessageSquareText as LyricsIcon,
   ListMusic as QueueIcon,
+  Clock as ClockIcon,
   VolumeX as SpeakerMuteIcon,
   Volume1 as SpeakerLowIcon,
   Volume2 as SpeakerHighIcon,

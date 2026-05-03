@@ -17,6 +17,7 @@ import { useBootState } from './hooks/useBootState';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
 import { ytmApi, playerApi } from './lib/ipc';
 import { registerOpenArtist, registerOpenPlaylist } from './lib/appNav';
+import type { FocusTimerState } from './components/player/FocusTimer/useFocusTimerCountdown';
 
 interface ViewingPlaylist {
   id: string;
@@ -35,6 +36,20 @@ const App: FC = () => {
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
+  const [isFocusTimerOpen, setIsFocusTimerOpen] = useState(false);
+  // FocusTimer reports its current state up via `onStateChange`. Held
+  // here so the App-level close gate (`requestCloseFocusTimer`) can
+  // decide whether to prompt before any close path completes.
+  const [focusTimerState, setFocusTimerState] = useState<FocusTimerState>('idle');
+  // The action to run if the user confirms the "Reset focus session?"
+  // modal. `null` when no confirmation is in flight.
+  const [pendingFocusTimerClose, setPendingFocusTimerClose] = useState<
+    (() => void) | null
+  >(null);
+  const focusTimerStateRef = useRef<FocusTimerState>('idle');
+  const isFocusTimerOpenRef = useRef(false);
+  isFocusTimerOpenRef.current = isFocusTimerOpen;
+  focusTimerStateRef.current = focusTimerState;
   const [viewingPlaylist, setViewingPlaylist] = useState<ViewingPlaylist | null>(null);
   const [viewingArtist, setViewingArtist] = useState<string | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
@@ -50,24 +65,52 @@ const App: FC = () => {
   // Remembered so "Settings → Settings" toggles back to where the user was.
   const previousPathRef = useRef<string>('home');
 
+  // Single gate funnel for any close path that would either (a) close
+  // the focus-timer overlay or (b) supersede it (sidebar nav, opening
+  // a different overlay, etc.). When the timer is running, the gate
+  // queues the action behind a confirmation modal — once confirmed,
+  // we close the timer AND run the original action. Idle/done close
+  // paths just run the action immediately. Reads via refs so the
+  // helper's identity stays stable across timer ticks.
+  const requestCloseFocusTimer = useCallback((action: () => void) => {
+    if (
+      isFocusTimerOpenRef.current
+      && focusTimerStateRef.current === 'running'
+    ) {
+      setPendingFocusTimerClose(() => action);
+      return;
+    }
+    action();
+  }, []);
+
   // Lock out rapid second toggles within the animation window so a stray
   // double-click never makes the overlay flash open-and-close.
   const lastToggleAtRef = useRef(0);
+  const isNowPlayingOpenRef = useRef(false);
+  isNowPlayingOpenRef.current = isNowPlayingOpen;
   const toggleNowPlaying = useCallback(() => {
     const now = Date.now();
     if (now - lastToggleAtRef.current < 450) return;
     lastToggleAtRef.current = now;
-    setIsNowPlayingOpen((prev) => {
-      const next = !prev;
+    // Closing NowPlaying never touches the focus timer — just toggle.
+    if (isNowPlayingOpenRef.current) {
+      setIsNowPlayingOpen(false);
       // When closing, also clear the LRC selected status so the bottom
       // bar's lyrics button no longer renders as active. Without this,
       // the LRC button stays highlighted after the user has dismissed
       // the playing page, making its state look out of sync with what's
       // actually on screen.
-      if (!next) setIsLyricsOpen(false);
-      return next;
+      setIsLyricsOpen(false);
+      return;
+    }
+    // Opening NowPlaying supersedes the focus timer — funnel through
+    // the App-level gate so a running timer prompts before being
+    // overlaid by the playing page.
+    requestCloseFocusTimer(() => {
+      setIsFocusTimerOpen(false);
+      setIsNowPlayingOpen(true);
     });
-  }, []);
+  }, [requestCloseFocusTimer]);
 
   // Lyrics is its own top-level overlay (LyricsOverlay) — toggling it
   // no longer mounts the Now Playing page. Each overlay (Now Playing,
@@ -86,6 +129,17 @@ const App: FC = () => {
     setIsQueueOpen((prev) => !prev);
   }, []);
 
+  // Focus timer is a fully independent surface — opening it does not
+  // touch playback or any other overlay. Closing while running
+  // funnels through the gate above so the user can confirm.
+  const toggleFocusTimer = useCallback(() => {
+    if (isFocusTimerOpenRef.current) {
+      requestCloseFocusTimer(() => setIsFocusTimerOpen(false));
+      return;
+    }
+    setIsFocusTimerOpen(true);
+  }, [requestCloseFocusTimer]);
+
   const openPlaylistDetail = useCallback((playlistId: string) => {
     setViewingPlaylist({ id: playlistId, autoPlay: false });
   }, []);
@@ -95,14 +149,17 @@ const App: FC = () => {
   }, []);
 
   const searchForArtist = useCallback((name: string) => {
-    // Promoted from a search redirect to a real overlay page (P3.1).
-    // Closes other overlays so the artist hero is the focus.
-    setViewingPlaylist(null);
-    setIsNowPlayingOpen(false);
-    setIsLyricsOpen(false);
-    setIsQueueOpen(false);
-    setViewingArtist(name);
-  }, []);
+    requestCloseFocusTimer(() => {
+      // Promoted from a search redirect to a real overlay page (P3.1).
+      // Closes other overlays so the artist hero is the focus.
+      setViewingPlaylist(null);
+      setIsNowPlayingOpen(false);
+      setIsLyricsOpen(false);
+      setIsQueueOpen(false);
+      setIsFocusTimerOpen(false);
+      setViewingArtist(name);
+    });
+  }, [requestCloseFocusTimer]);
 
   // Hide the YTM window as soon as the boot orchestrator transitions to the
   // app phase (signed in OR manual override). Without this the window
@@ -130,27 +187,33 @@ const App: FC = () => {
   // is the focus once it opens.
   useEffect(() => {
     const handler = (playlistId: string): void => {
-      setIsNowPlayingOpen(false);
-      setIsLyricsOpen(false);
-      setIsQueueOpen(false);
-      setViewingArtist(null);
-      openPlaylistDetail(playlistId);
+      requestCloseFocusTimer(() => {
+        setIsNowPlayingOpen(false);
+        setIsLyricsOpen(false);
+        setIsQueueOpen(false);
+        setIsFocusTimerOpen(false);
+        setViewingArtist(null);
+        openPlaylistDetail(playlistId);
+      });
     };
     registerOpenPlaylist(handler);
     return () => registerOpenPlaylist(null);
-  }, [openPlaylistDetail]);
+  }, [openPlaylistDetail, requestCloseFocusTimer]);
 
   // Global keyboard shortcuts. Active only in the app phase (no point
   // intercepting Cmd+L while the LoginPage is up). Bindings stay as a
   // const-array — `useGlobalShortcuts` re-attaches the listener when
   // it changes, so any state captured by the callbacks is current.
   const goSidebar = useCallback((path: string) => {
-    setViewingPlaylist(null);
-    setIsNowPlayingOpen(false);
-    setIsQueueOpen(false);
-    setIsLyricsOpen(false);
-    setCurrentPath(path);
-  }, []);
+    requestCloseFocusTimer(() => {
+      setViewingPlaylist(null);
+      setIsNowPlayingOpen(false);
+      setIsQueueOpen(false);
+      setIsLyricsOpen(false);
+      setIsFocusTimerOpen(false);
+      setCurrentPath(path);
+    });
+  }, [requestCloseFocusTimer]);
   const shortcutBindings: ShortcutBinding[] = phase === 'app'
     ? [
         {
@@ -306,32 +369,35 @@ const App: FC = () => {
     <AppShell
       currentPath={currentPath}
       onNavigate={(path) => {
-        setViewingPlaylist(null);
-        setViewingArtist(null);
-        setIsNowPlayingOpen(false);
-        setIsQueueOpen(false);
-        // Also close LRC explicitly. Inside NowPlaying, the lyrics
-        // column sets `pointer-events: auto` when `showLyrics` is true,
-        // which overrides the parent overlay's `pointer-events: none`
-        // when the overlay is closed. Without this line the lyrics
-        // column stays click-active over the new page (right side
-        // of Home/Explore/Library) and steals clicks. This is the
-        // "unclickable area where the play queue / lyrics page
-        // appears" bug.
-        setIsLyricsOpen(false);
-        // Settings tab toggles: clicking it while open returns to the
-        // previous view instead of re-rendering the same page.
-        if (path === 'settings' && currentPath === 'settings') {
-          const fallback = previousPathRef.current === 'settings'
-            ? 'home'
-            : previousPathRef.current;
-          setCurrentPath(fallback);
-          return;
-        }
-        if (path !== currentPath) {
-          previousPathRef.current = currentPath;
-        }
-        setCurrentPath(path);
+        requestCloseFocusTimer(() => {
+          setViewingPlaylist(null);
+          setViewingArtist(null);
+          setIsNowPlayingOpen(false);
+          setIsQueueOpen(false);
+          // Also close LRC explicitly. Inside NowPlaying, the lyrics
+          // column sets `pointer-events: auto` when `showLyrics` is true,
+          // which overrides the parent overlay's `pointer-events: none`
+          // when the overlay is closed. Without this line the lyrics
+          // column stays click-active over the new page (right side
+          // of Home/Explore/Library) and steals clicks. This is the
+          // "unclickable area where the play queue / lyrics page
+          // appears" bug.
+          setIsLyricsOpen(false);
+          setIsFocusTimerOpen(false);
+          // Settings tab toggles: clicking it while open returns to the
+          // previous view instead of re-rendering the same page.
+          if (path === 'settings' && currentPath === 'settings') {
+            const fallback = previousPathRef.current === 'settings'
+              ? 'home'
+              : previousPathRef.current;
+            setCurrentPath(fallback);
+            return;
+          }
+          if (path !== currentPath) {
+            previousPathRef.current = currentPath;
+          }
+          setCurrentPath(path);
+        });
       }}
       nowPlayingOpen={isNowPlayingOpen}
       onToggleNowPlaying={toggleNowPlaying}
@@ -339,6 +405,12 @@ const App: FC = () => {
       onToggleLyrics={toggleLyrics}
       queueOpen={isQueueOpen}
       onToggleQueue={toggleQueue}
+      focusTimerOpen={isFocusTimerOpen}
+      onToggleFocusTimer={toggleFocusTimer}
+      onFocusTimerStateChange={setFocusTimerState}
+      onFocusTimerClose={() =>
+        requestCloseFocusTimer(() => setIsFocusTimerOpen(false))
+      }
     >
       {/*
         The underlying page (home/search/explore/library/settings) stays
@@ -392,6 +464,171 @@ const App: FC = () => {
       onClose={() => setIsCheatsheetOpen(false)}
       bindings={shortcutBindings}
     />
+    {pendingFocusTimerClose && (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="focus-confirm-title"
+        aria-describedby="focus-confirm-desc"
+        onClick={() => setPendingFocusTimerClose(null)}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'oklch(0% 0 0 / 0.45)',
+          backdropFilter: 'blur(20px) saturate(160%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(160%)',
+          zIndex: 300,
+          padding: 'var(--space-6)',
+          animation: 'fadeIn 150ms var(--ease-out, ease-out)',
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            width: 360,
+            maxWidth: '100%',
+            background: 'oklch(20% 0 0 / 0.96)',
+            border: '1px solid oklch(100% 0 0 / 0.08)',
+            borderRadius: 16,
+            padding: '28px 28px 20px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'stretch',
+            gap: 0,
+            boxShadow:
+              '0 24px 60px oklch(0% 0 0 / 0.55), 0 0 0 1px oklch(100% 0 0 / 0.04) inset',
+          }}
+        >
+          {/* Icon — accent-tinted clock circle, sized for a 64x64 hit
+              area but rendered visually at 48x48 to match macOS HIG
+              alert iconography. */}
+          <div
+            aria-hidden
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              alignSelf: 'center',
+              marginBottom: 16,
+              background: 'oklch(from var(--color-accent) l c h / 0.16)',
+              color: 'var(--color-accent)',
+            }}
+          >
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+          </div>
+
+          <h2
+            id="focus-confirm-title"
+            style={{
+              margin: 0,
+              fontSize: 17,
+              fontWeight: 600,
+              color: 'var(--color-text-primary)',
+              textAlign: 'center',
+              letterSpacing: '-0.01em',
+              lineHeight: 1.3,
+            }}
+          >
+            Reset focus session?
+          </h2>
+
+          <p
+            id="focus-confirm-desc"
+            style={{
+              margin: '8px 0 24px',
+              fontSize: 13,
+              color: 'var(--color-text-secondary)',
+              textAlign: 'center',
+              lineHeight: 1.5,
+            }}
+          >
+            Leaving this page will reset the countdown. You'll need to
+            start a new session.
+          </p>
+
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              width: '100%',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setPendingFocusTimerClose(null)}
+              style={{
+                flex: 1,
+                height: 36,
+                fontSize: 13,
+                fontWeight: 600,
+                color: 'var(--color-text-primary)',
+                background: 'oklch(100% 0 0 / 0.06)',
+                border: '1px solid oklch(100% 0 0 / 0.08)',
+                borderRadius: 10,
+                cursor: 'pointer',
+                transition: 'background var(--duration-fast) var(--ease-out)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'oklch(100% 0 0 / 0.1)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'oklch(100% 0 0 / 0.06)';
+              }}
+            >
+              Keep going
+            </button>
+            <button
+              type="button"
+              autoFocus
+              onClick={() => {
+                const action = pendingFocusTimerClose;
+                setPendingFocusTimerClose(null);
+                setIsFocusTimerOpen(false);
+                action();
+              }}
+              style={{
+                flex: 1,
+                height: 36,
+                fontSize: 13,
+                fontWeight: 600,
+                color: 'white',
+                background: 'var(--color-accent)',
+                border: 'none',
+                borderRadius: 10,
+                cursor: 'pointer',
+                transition: 'opacity var(--duration-fast) var(--ease-out)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = '0.88';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = '1';
+              }}
+            >
+              Reset & exit
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 };

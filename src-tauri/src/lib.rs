@@ -379,6 +379,7 @@ pub fn run() {
             commands::player::inject_ytm_bridge,
             commands::player::navigate_ytm_to_login,
             commands::player::navigate_ytm_to_home,
+            commands::notification::show_notification,
             commands::browse::search,
             commands::browse::search_suggestions,
             commands::browse::get_home,

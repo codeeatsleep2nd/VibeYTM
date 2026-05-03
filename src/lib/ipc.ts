@@ -211,6 +211,16 @@ export const ytmApi = {
   navigateToHome: () => invoke('navigate_ytm_to_home'),
 };
 
+export const notificationApi = {
+  /**
+   * Fire a macOS system notification. Permission is granted at app
+   * start via the notification:default capability (see
+   * src-tauri/capabilities/default.json) — no runtime prompt needed.
+   */
+  show: (title: string, body: string) =>
+    invoke('show_notification', { title, body }),
+};
+
 export interface AppSettings {
   general: {
     closeToTray: boolean;

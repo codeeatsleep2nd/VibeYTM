@@ -4,6 +4,7 @@ import { PlayerChrome } from './PlayerChrome';
 import { NowPlaying } from '../player/NowPlaying';
 import { QueuePanel } from '../player/QueuePanel';
 import { LyricsOverlay } from '../player/LyricsOverlay';
+import { FocusTimer } from '../player/FocusTimer';
 
 interface AppShellProps {
   currentPath: string;
@@ -14,6 +15,10 @@ interface AppShellProps {
   onToggleLyrics: () => void;
   queueOpen: boolean;
   onToggleQueue: () => void;
+  focusTimerOpen: boolean;
+  onToggleFocusTimer: () => void;
+  onFocusTimerStateChange: (state: 'idle' | 'running' | 'done') => void;
+  onFocusTimerClose: () => void;
   children: ReactNode;
 }
 
@@ -26,6 +31,10 @@ export const AppShell: FC<AppShellProps> = ({
   onToggleLyrics,
   queueOpen,
   onToggleQueue,
+  focusTimerOpen,
+  onToggleFocusTimer,
+  onFocusTimerStateChange,
+  onFocusTimerClose,
   children,
 }) => (
   <div
@@ -89,6 +98,8 @@ export const AppShell: FC<AppShellProps> = ({
       onToggleLyrics={onToggleLyrics}
       queueOpen={queueOpen}
       onToggleQueue={onToggleQueue}
+      focusTimerOpen={focusTimerOpen}
+      onToggleFocusTimer={onToggleFocusTimer}
     />
 
     <NowPlaying
@@ -101,5 +112,11 @@ export const AppShell: FC<AppShellProps> = ({
     <LyricsOverlay isOpen={lyricsOpen} />
 
     <QueuePanel isOpen={queueOpen} onClose={onToggleQueue} />
+
+    <FocusTimer
+      isOpen={focusTimerOpen}
+      onClose={onFocusTimerClose}
+      onStateChange={onFocusTimerStateChange}
+    />
   </div>
 );
