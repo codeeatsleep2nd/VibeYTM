@@ -19,8 +19,11 @@ export interface ContextMenuItem {
   disabled?: boolean;
   /** When true, render as a destructive (accent-red) item. */
   destructive?: boolean;
-  /** Invoked when the item is activated. The menu closes after. */
-  onActivate: () => void;
+  /** Invoked when the item is activated. The menu closes after.
+   *  Receives the activation position (cursor coords AFTER any viewport
+   *  flip) so morph-style items can anchor a follow-on popover at the
+   *  same point. Existing items can ignore the argument. */
+  onActivate: (position?: { x: number; y: number }) => void;
 }
 
 export interface ContextMenuSection {
@@ -109,7 +112,7 @@ export const ContextMenu: FC<ContextMenuProps> = ({
         const item = flatItems[highlightedIdx];
         if (item && !item.disabled) {
           e.preventDefault();
-          item.onActivate();
+          item.onActivate(adjustedPosition);
           onClose();
         }
       }
@@ -171,7 +174,7 @@ export const ContextMenu: FC<ContextMenuProps> = ({
           })()}
           onHover={setHighlightedIdx}
           onActivate={(item) => {
-            item.onActivate();
+            item.onActivate(adjustedPosition);
             onClose();
           }}
         />

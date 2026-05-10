@@ -2,6 +2,8 @@ import { type FC, useEffect, useState } from 'react';
 import type { PlaylistDetail } from '../../lib/types';
 import { browseApi, playerApi } from '../../lib/ipc';
 import { debug } from '../../lib/debug';
+import { notifyLibraryMutated } from '../../lib/libraryMutations';
+import { toast } from '../../lib/toast';
 import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
 import { rememberShowCover } from '../../lib/showCoverRegistry';
 import { rememberTrackMetas } from '../../lib/trackMetaRegistry';
@@ -12,6 +14,20 @@ import { EpisodeRow } from '../browse/EpisodeRow';
 import { LoadingSpinner } from '../LoadingOverlay';
 import { DetailPageHero } from '../DetailPageHero';
 import { SkeletonDetailHero, SkeletonRow } from '../Skeleton';
+
+// User-owned playlists (the only ones YTM lets us mutate) have ids
+// prefixed `PL`, `VLPL`, or `VLLM`. Auto-generated mixes (`RD…`),
+// albums (`MPRE…`), and show pages (`MPSPP…`) are all read-only —
+// hide the inline remove affordance on those.
+function isUserEditablePlaylistId(playlistId: string): boolean {
+  if (!playlistId) return false;
+  if (playlistId.startsWith('RD')) return false;
+  if (playlistId.startsWith('MPRE')) return false;
+  if (playlistId.startsWith('MPSP')) return false;
+  return (
+    playlistId.startsWith('PL') || playlistId.startsWith('VLPL') || playlistId.startsWith('VLLM')
+  );
+}
 
 interface PlaylistDetailPageProps {
   playlistId: string;
@@ -319,6 +335,51 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
     playerApi.playTrack(firstId, watchListId).catch(() => {});
   };
 
+  const canRemoveTracks = isUserEditablePlaylistId(playlistId);
+
+  const handleRemoveTrack = async (
+    setVideoId: string,
+    videoId: string,
+    trackTitle: string,
+  ): Promise<void> => {
+    // Optimistic: drop the row from local state immediately so the UI
+    // doesn't lag the network round-trip. Snapshot for rollback on
+    // failure. The optimistic update intentionally matches by both
+    // setVideoId + videoId so duplicate occurrences of the same video
+    // are removed individually.
+    const before = playlist;
+    setPlaylist((prev) =>
+      prev === null
+        ? prev
+        : {
+            ...prev,
+            tracks: prev.tracks.filter(
+              (t) => !(t.setVideoId === setVideoId && t.videoId === videoId),
+            ),
+            trackCount:
+              typeof prev.trackCount === 'number' && prev.trackCount > 0
+                ? prev.trackCount - 1
+                : prev.trackCount,
+          },
+    );
+    try {
+      await browseApi.removeTrackFromPlaylist(playlistId, setVideoId, videoId);
+      // Library snapshot changed (track count bumped), so re-trigger
+      // the LibraryPage refetch even though we're already inside the
+      // detail page — the user may navigate back.
+      notifyLibraryMutated();
+      onLibraryChanged?.();
+      toast.show({ message: `Removed "${trackTitle}"` });
+    } catch (e: unknown) {
+      // Roll back the optimistic delete and surface the error.
+      setPlaylist(before);
+      debug.error('PlaylistDetailPage', 'remove track failed', e);
+      const msg =
+        e instanceof Error ? e.message : 'Could not remove track. Try again?';
+      toast.show({ message: msg });
+    }
+  };
+
   // Derived hero metadata: primary artist (album case → tracks share
   // an artist; playlist case → "Various artists" once we see > 1
   // distinct name) and total runtime summed across track durations.
@@ -434,6 +495,16 @@ export const PlaylistDetailPage: FC<PlaylistDetailPageProps> = ({
               track={track}
               index={i + 1}
               playlistId={watchListId}
+              onRemoveFromPlaylist={
+                canRemoveTracks && track.setVideoId && track.videoId
+                  ? () =>
+                      handleRemoveTrack(
+                        track.setVideoId as string,
+                        track.videoId,
+                        track.title,
+                      )
+                  : undefined
+              }
             />
           ),
         )}

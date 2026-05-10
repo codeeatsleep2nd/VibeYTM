@@ -363,6 +363,118 @@ pub async fn remove_playlist_from_library(
 }
 
 #[tauri::command]
+pub async fn add_track_to_playlist(
+    playlist_id: String,
+    video_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<bool, String> {
+    tracing::info!(
+        playlist_id = %playlist_id,
+        video_id = %video_id,
+        "browse::add_track_to_playlist called"
+    );
+    let result = api
+        .add_track_to_playlist(&app, &playlist_id, &video_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "browse::add_track_to_playlist failed");
+            e.to_string()
+        });
+    if let Ok(added) = result.as_ref() {
+        if *added {
+            // Mutation: clear the API cache so the next get_playlist /
+            // get_library_playlists fetch reflects the new track count.
+            crate::webview_bridge::api_cache::clear_all().await;
+        }
+        tracing::info!(added = *added, "browse::add_track_to_playlist done");
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn remove_track_from_playlist(
+    playlist_id: String,
+    set_video_id: String,
+    video_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<(), String> {
+    tracing::info!(
+        playlist_id = %playlist_id,
+        set_video_id = %set_video_id,
+        video_id = %video_id,
+        "browse::remove_track_from_playlist called"
+    );
+    let result = api
+        .remove_track_from_playlist(&app, &playlist_id, &set_video_id, &video_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "browse::remove_track_from_playlist failed");
+            e.to_string()
+        });
+    if result.is_ok() {
+        crate::webview_bridge::api_cache::clear_all().await;
+        tracing::info!("browse::remove_track_from_playlist done");
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn delete_playlist(
+    playlist_id: String,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<(), String> {
+    tracing::info!(playlist_id = %playlist_id, "browse::delete_playlist called");
+    let result = api
+        .delete_playlist(&app, &playlist_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "browse::delete_playlist failed");
+            e.to_string()
+        });
+    if result.is_ok() {
+        crate::webview_bridge::api_cache::clear_all().await;
+        tracing::info!("browse::delete_playlist done");
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn create_playlist(
+    title: String,
+    description: String,
+    privacy: PlaylistPrivacy,
+    seed_video_id: Option<String>,
+    app: AppHandle,
+    api: State<'_, YtmApi>,
+) -> Result<String, String> {
+    tracing::info!(
+        title = %title,
+        privacy = ?privacy,
+        has_seed = seed_video_id.is_some(),
+        "browse::create_playlist called"
+    );
+    let desc = if description.is_empty() { None } else { Some(description.as_str()) };
+    let seed = seed_video_id.as_deref();
+    let result = api
+        .create_playlist(&app, &title, desc, privacy, seed)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "browse::create_playlist failed");
+            e.to_string()
+        });
+    if let Ok(playlist_id) = result.as_ref() {
+        // Clear so LibraryPage's playlists tab picks up the new playlist
+        // on next visit.
+        crate::webview_bridge::api_cache::clear_all().await;
+        tracing::info!(new_playlist_id = %playlist_id, "browse::create_playlist done");
+    }
+    result
+}
+
+#[tauri::command]
 pub async fn get_upcoming_tracks(
     video_id: String,
     limit: Option<usize>,

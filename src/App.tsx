@@ -13,11 +13,14 @@ import { HistoryPage } from './components/pages/HistoryPage';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { UpdateBanner } from './components/UpdateBanner';
 import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
+import { Toast } from './components/Toast';
+import { AddToPlaylistPicker } from './components/contextMenu/AddToPlaylistPicker';
 import { useBootState } from './hooks/useBootState';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
 import { useTauriEvent } from './hooks/useTauriEvent';
 import { ytmApi, playerApi } from './lib/ipc';
 import { clearAllBrowseCaches } from './lib/persistentCache';
+import { subscribeToLibraryMutations } from './lib/libraryMutations';
 import { registerOpenArtist, registerOpenPlaylist } from './lib/appNav';
 import { OverlayStateContext } from './lib/overlayState';
 import type { FocusTimerState } from './components/player/FocusTimer/useFocusTimerCountdown';
@@ -103,6 +106,15 @@ const App: FC = () => {
     resetExplorePageModuleCache();
     setLibraryVersion((v) => v + 1);
   });
+
+  // Library-mutation pub/sub: AddToPlaylistPicker, PlaylistDetailPage
+  // (remove track), and any future mutator calls `notifyLibraryMutated()`
+  // after a successful mutation. Bumping libraryVersion here forces
+  // LibraryPage to refetch the open tab even if it's mounted behind a
+  // detail overlay.
+  useEffect(() => {
+    return subscribeToLibraryMutations(handleLibraryChanged);
+  }, [handleLibraryChanged]);
   // Remembered so "Settings → Settings" toggles back to where the user was.
   const previousPathRef = useRef<string>('home');
 
@@ -534,6 +546,8 @@ const App: FC = () => {
     </OverlayStateContext.Provider>
     <WelcomeScreen isDone={isSplashDone} />
     <UpdateBanner />
+    <Toast />
+    <AddToPlaylistPicker />
     <ShortcutCheatsheet
       isOpen={isCheatsheetOpen}
       onClose={() => setIsCheatsheetOpen(false)}

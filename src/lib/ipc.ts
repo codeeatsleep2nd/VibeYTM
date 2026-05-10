@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import type { AccountInfo, PlayerState, TrackInfo, SearchResults, Shelf, PlaylistSummary, PlaylistDetail, AlbumSummary, ArtistSummary, ArtistDetail, PodcastSummary, PodcastLastEpisode, Lyrics, HistorySection } from './types';
-import type { RepeatMode } from './types';
+import type { RepeatMode, PlaylistPrivacy } from './types';
 
 export interface CacheStats {
   image_count: number;
@@ -300,6 +300,35 @@ export const browseApi = {
     invoke<void>('save_playlist_to_library', { playlistId }),
   removePlaylistFromLibrary: (playlistId: string) =>
     invoke<void>('remove_playlist_from_library', { playlistId }),
+  /** Returns `true` when YTM actually added the track and `false` when
+   *  the track was already in the playlist (YTM deduped it). */
+  addTrackToPlaylist: (playlistId: string, videoId: string) =>
+    invoke<boolean>('add_track_to_playlist', { playlistId, videoId }),
+  removeTrackFromPlaylist: (
+    playlistId: string,
+    setVideoId: string,
+    videoId: string,
+  ) =>
+    invoke<void>('remove_track_from_playlist', {
+      playlistId,
+      setVideoId,
+      videoId,
+    }),
+  deletePlaylist: (playlistId: string) =>
+    invoke<void>('delete_playlist', { playlistId }),
+  /** Returns the new playlist's id. */
+  createPlaylist: (
+    title: string,
+    description: string,
+    privacy: PlaylistPrivacy,
+    seedVideoId: string | null,
+  ) =>
+    invoke<string>('create_playlist', {
+      title,
+      description,
+      privacy,
+      seedVideoId,
+    }),
   getLyrics: (params: {
     videoId: string;
     artist?: string | null;

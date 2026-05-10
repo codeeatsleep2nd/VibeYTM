@@ -1,6 +1,7 @@
 import type { TrackInfo } from '../../lib/types';
 import { playerApi } from '../../lib/ipc';
 import { hasOpenArtistHandler, openArtist } from '../../lib/appNav';
+import { openAddToPlaylistPicker } from '../../lib/addToPlaylistRegistry';
 import type { ContextMenuSection } from './ContextMenu';
 
 interface BuildTrackContextMenuOpts {
@@ -38,6 +39,22 @@ export function buildTrackContextMenu(
         label: 'Add to queue',
         onActivate: () => {
           void playerApi.addToQueue(track).catch(() => {});
+        },
+        disabled: !track.videoId,
+      },
+      {
+        id: 'add-to-playlist',
+        label: 'Add to Playlist…',
+        onActivate: (position) => {
+          if (!track.videoId) return;
+          // Position comes from the ContextMenu activation. Falls back to
+          // (0,0) if the menu was activated without one — the picker
+          // viewport-flips itself to land somewhere visible regardless.
+          openAddToPlaylistPicker({
+            videoId: track.videoId,
+            trackTitle: track.title,
+            position: position ?? { x: 0, y: 0 },
+          });
         },
         disabled: !track.videoId,
       },

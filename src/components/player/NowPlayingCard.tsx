@@ -1,10 +1,12 @@
 import { type FC } from 'react';
+import { Plus } from 'lucide-react';
 import { usePlayerState } from '../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../hooks/useAudioCounterpartArtwork';
 import { useExternalCoverFallback } from '../../hooks/useExternalCoverFallback';
 import { useSmoothedPosition } from '../../hooks/useSmoothedPosition';
 import { albumArtOrNothing } from '../../lib/artwork';
 import { lookupShowCover } from '../../lib/showCoverRegistry';
+import { openAddToPlaylistPicker } from '../../lib/addToPlaylistRegistry';
 import { ArtworkPlaceholder } from '../ArtworkPlaceholder';
 import { CachedImage } from '../CachedImage';
 import { MarqueeText } from '../MarqueeText';
@@ -224,6 +226,46 @@ export const NowPlayingCard: FC<Props> = ({ onOpenNowPlaying, nowPlayingOpen }) 
           }}
         >
           {isLiked ? <HeartFillIcon size={18} /> : <HeartIcon size={18} />}
+        </button>
+      )}
+
+      {track?.videoId && (
+        <button
+          type="button"
+          onClick={(e) => {
+            // Anchor the picker right below the button so it appears next
+            // to the player chrome instead of teleporting to (0,0).
+            const rect = e.currentTarget.getBoundingClientRect();
+            openAddToPlaylistPicker({
+              videoId: track.videoId,
+              trackTitle: track.title,
+              position: { x: rect.left, y: rect.top - 8 },
+            });
+          }}
+          aria-label="Add to playlist"
+          title="Add to playlist"
+          style={{
+            flexShrink: 0,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '26px',
+            height: '26px',
+            padding: 0,
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            color: 'var(--color-text-tertiary)',
+            transition: 'color var(--duration-fast) var(--ease-out)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = 'var(--color-text-primary)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--color-text-tertiary)';
+          }}
+        >
+          <Plus size={18} />
         </button>
       )}
 

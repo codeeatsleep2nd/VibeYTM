@@ -13,11 +13,21 @@ export interface TrackInfo {
   /** Podcast / show episode publish-date display string (e.g.
    *  "Mar 1, 2026" / "3 days ago"). YTM-formatted; not parsed. */
   publishedAt?: string;
+  /** YTM-internal id for THIS occurrence of the video in a specific
+   *  playlist. Required by `remove_track_from_playlist`. Populated only
+   *  when the track was parsed from a playlist/album response; absent
+   *  on search results and bridge-sourced tracks. */
+  setVideoId?: string;
 }
 
 export type PlaybackStatus = 'playing' | 'paused' | 'buffering' | 'idle';
 
 export type RepeatMode = 'none' | 'one' | 'all';
+
+/** Privacy setting for a YTM playlist. Mirrors the Rust `PlaylistPrivacy`
+ *  enum's serialised form — strings MUST be uppercase to match what the
+ *  YTM `playlist/create` endpoint expects. */
+export type PlaylistPrivacy = 'PRIVATE' | 'UNLISTED' | 'PUBLIC';
 
 export interface AccountInfo {
   name: string;

@@ -574,6 +574,121 @@ impl YtmApi {
         check_like_response(&raw, "removelike")
     }
 
+    /// Add a single track to an existing playlist.
+    ///
+    /// Calls YTM's `browse/edit_playlist` endpoint with one
+    /// `ACTION_ADD_VIDEO` action keyed off the playlist + video. We always
+    /// pass `dedupeOption: DEDUPE_OPTION_SKIP` so re-adding the same track
+    /// is a no-op rather than a silent duplicate.
+    ///
+    /// Returns `true` when YTM actually added the track and `false` when
+    /// the track was already present and YTM deduped it. The web UI shows
+    /// distinct toasts for these two outcomes; we surface the same signal
+    /// so the frontend can match.
+    pub async fn add_track_to_playlist(
+        &self,
+        app: &AppHandle,
+        playlist_id: &str,
+        video_id: &str,
+    ) -> anyhow::Result<bool> {
+        let body = serde_json::json!({
+            "playlistId": playlist_id,
+            "actions": [{
+                "action": "ACTION_ADD_VIDEO",
+                "addedVideoId": video_id,
+                "dedupeOption": "DEDUPE_OPTION_SKIP",
+            }]
+        })
+        .to_string();
+        let raw = ytm_api_call(app, "browse/edit_playlist", &body)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        // Status field surfaces dedupe explicitly when YTM rejected the
+        // duplicate. We've observed `STATUS_FAILED` paired with one of
+        // `playlistEditVideoAddedResultData.videoAddResult` =
+        // `VIDEO_ADD_RESULT_VIDEO_ALREADY_IN_PLAYLIST`, but the cheap and
+        // robust signal is: did YTM emit an `addedVideoIds` entry for our
+        // video? If yes, it was a real add. If not, it was deduped.
+        check_like_response(&raw, "edit_playlist")?;
+        Ok(parse_add_track_response(&raw, video_id))
+    }
+
+    /// Remove a single track occurrence from a user-owned playlist.
+    ///
+    /// `set_video_id` identifies WHICH occurrence — YTM stores each row's
+    /// id under `playlistItemData.playlistSetVideoId` in the playlist
+    /// detail response, and our `parse_track_from_list_item` carries it
+    /// onto `TrackInfo.set_video_id`. `video_id` is required too: YTM
+    /// rejects edit_playlist calls that omit it.
+    pub async fn remove_track_from_playlist(
+        &self,
+        app: &AppHandle,
+        playlist_id: &str,
+        set_video_id: &str,
+        video_id: &str,
+    ) -> anyhow::Result<()> {
+        let body = serde_json::json!({
+            "playlistId": playlist_id,
+            "actions": [{
+                "action": "ACTION_REMOVE_VIDEO",
+                "setVideoId": set_video_id,
+                "removedVideoId": video_id,
+            }]
+        })
+        .to_string();
+        let raw = ytm_api_call(app, "browse/edit_playlist", &body)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        check_like_response(&raw, "edit_playlist")
+    }
+
+    /// Delete a user-owned YTM playlist. Auto-generated playlists (mixes,
+    /// radio queues — `RD` prefix) reject this call; the UI filters those
+    /// out before exposing a delete affordance.
+    pub async fn delete_playlist(
+        &self,
+        app: &AppHandle,
+        playlist_id: &str,
+    ) -> anyhow::Result<()> {
+        let body = serde_json::json!({
+            "playlistId": playlist_id,
+        })
+        .to_string();
+        let raw = ytm_api_call(app, "playlist/delete", &body)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        check_like_response(&raw, "playlist_delete")
+    }
+
+    /// Create a new YTM playlist. When `seed_video_id` is provided, the
+    /// new playlist is created with that track already inside — atomic
+    /// vs. a follow-up edit_playlist call (no race where the playlist
+    /// exists but the seed add fails).
+    ///
+    /// Returns the new playlist's `playlistId` extracted from the response.
+    /// Description is plain text only (YTM rejects HTML tags).
+    pub async fn create_playlist(
+        &self,
+        app: &AppHandle,
+        title: &str,
+        description: Option<&str>,
+        privacy: PlaylistPrivacy,
+        seed_video_id: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let mut body_obj = serde_json::json!({
+            "title": title,
+            "description": description.unwrap_or(""),
+            "privacyStatus": privacy,
+        });
+        if let Some(vid) = seed_video_id {
+            body_obj["videoIds"] = serde_json::json!([vid]);
+        }
+        let raw = ytm_api_call(app, "playlist/create", &body_obj.to_string())
+            .await
+            .map_err(anyhow::Error::msg)?;
+        parse_create_playlist_response(&raw)
+    }
+
     /// Fetch lyrics for a track. Two-step flow: `next` with the videoId
     /// surfaces a tabs list; the "Lyrics" tab carries a `browseId` that
     /// returns the actual lyrics text via a second `browse` call.
@@ -1633,6 +1748,55 @@ fn check_like_response(raw: &str, action: &str) -> anyhow::Result<()> {
         anyhow::bail!("YTM error {code}: {message}");
     }
     Ok(())
+}
+
+/// Inspect a `browse/edit_playlist` ACTION_ADD_VIDEO response and decide
+/// whether YTM actually added the requested videoId. Returns `true` when
+/// at least one `actions[*].addedVideoIds` array contains `video_id`,
+/// `false` otherwise (including malformed bodies, empty arrays, or YTM's
+/// dedupe-skip silent-no-op shape `{"status":"STATUS_SUCCEEDED","actions":[]}`).
+///
+/// Keep this defensive — YTM occasionally returns the SUCCEEDED status
+/// with no actions when the dedupe filter swallowed the request. That
+/// path looks identical to a malformed body to us, so the safest answer
+/// is "treat as not-added" and let the UI surface "already in playlist".
+fn parse_add_track_response(raw: &str, video_id: &str) -> bool {
+    let parsed: Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    parsed["actions"]
+        .as_array()
+        .map(|actions| {
+            actions.iter().any(|action| {
+                action["addedVideoIds"]
+                    .as_array()
+                    .map(|ids| ids.iter().any(|id| id.as_str() == Some(video_id)))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Extract the new playlist's id from a `playlist/create` response.
+///
+/// Successful YTM response shape (verified against ytmusicapi's reference
+/// fixture): top-level `playlistId` field. Errors come back as the
+/// standard `{ "error": { code, message } }` envelope.
+fn parse_create_playlist_response(raw: &str) -> anyhow::Result<String> {
+    let parsed: Value = serde_json::from_str(raw)
+        .map_err(|e| anyhow::anyhow!("malformed playlist/create response: {e}"))?;
+    if let Some(err) = parsed.get("error") {
+        let code = err["code"].as_i64().unwrap_or(-1);
+        let message = err["message"].as_str().unwrap_or("");
+        tracing::error!(code, message, "YTM rejected playlist/create call");
+        anyhow::bail!("YTM error {code}: {message}");
+    }
+    parsed
+        .get("playlistId")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("playlist/create response missing playlistId"))
 }
 
 // ---------------------------------------------------------------------------
@@ -3385,6 +3549,16 @@ fn parse_track_from_list_item(renderer: &Value) -> Option<TrackInfo> {
         return None;
     }
 
+    // YTM stores the per-row identifier under `playlistItemData.playlistSetVideoId`.
+    // The same field name shows up in the watchEndpoint when YTM constructs
+    // a watch URL from a playlist row, but the playlistItemData path is the
+    // canonical one — present on every track parsed from a playlist or
+    // album, absent on search-result rows.
+    let set_video_id = renderer["playlistItemData"]["playlistSetVideoId"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
     tracing::debug!(video_id = %video_id, title = %title, "parsed track");
 
     Some(TrackInfo {
@@ -3396,6 +3570,7 @@ fn parse_track_from_list_item(renderer: &Value) -> Option<TrackInfo> {
         album_id: None,
         artwork_url,
         duration_secs,
+        set_video_id,
         ..Default::default()
     })
 }
@@ -3563,6 +3738,7 @@ fn parse_episode_from_multi_row(renderer: &Value) -> Option<TrackInfo> {
         duration_secs,
         description,
         published_at,
+        set_video_id: None,
     })
 }
 
@@ -6008,5 +6184,113 @@ mod tests {
         let detail = super::parse_artist_detail(&data, "UC789");
         assert_eq!(detail.description, "");
         assert_eq!(detail.channel_id, "UC789");
+    }
+
+    // ---- PlaylistPrivacy serialisation -----------------------------------
+    //
+    // YTM's `playlist/create` endpoint rejects anything other than
+    // exactly `PRIVATE`, `UNLISTED`, or `PUBLIC`. Lock the casing so a
+    // future drive-by edit doesn't silently break playlist creation.
+
+    #[test]
+    fn playlist_privacy_serialises_to_uppercase() {
+        assert_eq!(
+            serde_json::to_string(&PlaylistPrivacy::Private).unwrap(),
+            "\"PRIVATE\"",
+        );
+        assert_eq!(
+            serde_json::to_string(&PlaylistPrivacy::Unlisted).unwrap(),
+            "\"UNLISTED\"",
+        );
+        assert_eq!(
+            serde_json::to_string(&PlaylistPrivacy::Public).unwrap(),
+            "\"PUBLIC\"",
+        );
+    }
+
+    // ---- parse_create_playlist_response -----------------------------------
+
+    #[test]
+    fn parse_create_playlist_response_extracts_playlist_id() {
+        // Minimal success fixture mirroring ytmusicapi's reference response.
+        let raw = r#"{"playlistId":"PL_NEW_123","status":"STATUS_SUCCEEDED"}"#;
+        let result = super::parse_create_playlist_response(raw).unwrap();
+        assert_eq!(result, "PL_NEW_123");
+    }
+
+    #[test]
+    fn parse_create_playlist_response_returns_err_on_error_envelope() {
+        let raw = r#"{"error":{"code":401,"message":"unauthorized"}}"#;
+        let err = super::parse_create_playlist_response(raw).unwrap_err();
+        assert!(err.to_string().contains("YTM error 401"));
+        assert!(err.to_string().contains("unauthorized"));
+    }
+
+    #[test]
+    fn parse_create_playlist_response_errs_on_missing_playlist_id() {
+        // Success-shaped response without the field — should be a hard
+        // error rather than a silent empty string.
+        let raw = r#"{"status":"STATUS_SUCCEEDED"}"#;
+        let err = super::parse_create_playlist_response(raw).unwrap_err();
+        assert!(err.to_string().contains("missing playlistId"));
+    }
+
+    #[test]
+    fn parse_create_playlist_response_errs_on_malformed_json() {
+        let err = super::parse_create_playlist_response("{ not json").unwrap_err();
+        assert!(err.to_string().contains("malformed"));
+    }
+
+    // ---- check_like_response handles edit_playlist responses --------------
+    //
+    // We reuse `check_like_response` for `add_track_to_playlist` because
+    // the only failure shape both endpoints share is the top-level
+    // `error` envelope. Pin the contract so a refactor of the parser
+    // doesn't break edit_playlist callers.
+
+    #[test]
+    fn check_like_response_accepts_edit_playlist_success() {
+        let raw = r#"{"status":"STATUS_SUCCEEDED","actions":[{}]}"#;
+        super::check_like_response(raw, "edit_playlist").unwrap();
+    }
+
+    #[test]
+    fn check_like_response_propagates_error_for_edit_playlist() {
+        let raw = r#"{"error":{"code":403,"message":"forbidden"}}"#;
+        let err = super::check_like_response(raw, "edit_playlist").unwrap_err();
+        assert!(err.to_string().contains("YTM error 403"));
+    }
+
+    // ---- parse_add_track_response — dedupe detection ----------------------
+
+    #[test]
+    fn parse_add_track_response_true_when_addedvideoids_contains_video() {
+        let raw = r#"{"status":"STATUS_SUCCEEDED","actions":[{"addedVideoIds":["abc123"]}]}"#;
+        assert!(super::parse_add_track_response(raw, "abc123"));
+    }
+
+    #[test]
+    fn parse_add_track_response_false_when_no_actions() {
+        let raw = r#"{"status":"STATUS_SUCCEEDED","actions":[]}"#;
+        assert!(!super::parse_add_track_response(raw, "abc123"));
+    }
+
+    #[test]
+    fn parse_add_track_response_false_when_action_lacks_addedvideoids() {
+        // Dedupe-skip path: actions array carries the action shell but no
+        // addedVideoIds entry for our video.
+        let raw = r#"{"status":"STATUS_SUCCEEDED","actions":[{}]}"#;
+        assert!(!super::parse_add_track_response(raw, "abc123"));
+    }
+
+    #[test]
+    fn parse_add_track_response_false_when_different_video_added() {
+        let raw = r#"{"status":"STATUS_SUCCEEDED","actions":[{"addedVideoIds":["xyz789"]}]}"#;
+        assert!(!super::parse_add_track_response(raw, "abc123"));
+    }
+
+    #[test]
+    fn parse_add_track_response_false_on_malformed_body() {
+        assert!(!super::parse_add_track_response("{ not json", "abc123"));
     }
 }

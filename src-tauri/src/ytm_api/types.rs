@@ -199,3 +199,15 @@ pub struct LyricLine {
     pub end_ms: Option<u64>,
     pub text: String,
 }
+
+/// Privacy setting for a YTM playlist. Serializes to the EXACT strings YTM's
+/// `playlist/create` endpoint expects (`PRIVATE`, `UNLISTED`, `PUBLIC`) —
+/// any other casing is rejected. The frontend mirrors this as a string-
+/// literal union in `src/lib/types.ts`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum PlaylistPrivacy {
+    Private,
+    Unlisted,
+    Public,
+}

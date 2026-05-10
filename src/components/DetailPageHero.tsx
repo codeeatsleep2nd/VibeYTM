@@ -391,84 +391,100 @@ function withAlpha(color: string, alpha: number): string {
 }
 
 /**
- * Description blurb with a "More" / "Less" toggle that appears only
- * when the text actually overflows the 2-line clamp. Long podcast
- * descriptions stay collapsed by default; users opt in to the full
- * text on demand. Pure presentational; no portals or globals.
+ * Description blurb rendered inside a small, fixed-height scrollable
+ * box. Earlier revisions used a `-webkit-line-clamp` plus a "More"
+ * toggle, but the toggle reflowed the hero on click and felt heavy for
+ * a piece of secondary metadata. The scroll box keeps the hero's
+ * vertical footprint stable: short descriptions read as a paragraph,
+ * long descriptions reveal the rest on user scroll. A bottom fade
+ * hints at the extra content without taking up dedicated UI surface.
  */
-const COLLAPSED_LINE_CLAMP = 2;
+const DESCRIPTION_MAX_HEIGHT_EM = 6;
 
 const ExpandableDescription: FC<{ text: string }> = ({ text }) => {
-  const ref = useRef<HTMLParagraphElement | null>(null);
-  // `null` until we've measured at least once. Drives whether the
-  // toggle button renders (we only show it when the text genuinely
-  // overflows the clamp).
-  const [isOverflowing, setIsOverflowing] = useState<boolean | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  // Drives the bottom-fade visibility: hide it when the user has
+  // scrolled to the end so the fade doesn't fight with the final line.
+  const [hasOverflow, setHasOverflow] = useState(false);
+  const [atBottom, setAtBottom] = useState(false);
 
-  // Re-measure whenever the text changes OR on resize, since the
-  // clamp's overflow status depends on the container width.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    setIsOverflowing(el.scrollHeight > el.clientHeight + 1);
+    setHasOverflow(el.scrollHeight > el.clientHeight + 1);
+    setAtBottom(el.scrollHeight - el.clientHeight - el.scrollTop < 1);
   }, [text]);
 
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const obs = new ResizeObserver(() => {
-      // While expanded the clamp is off, so scrollHeight === clientHeight
-      // and we'd flip overflow off mid-flight. Skip while expanded;
-      // re-evaluate the next time the user collapses.
-      if (isExpanded) return;
-      setIsOverflowing(el.scrollHeight > el.clientHeight + 1);
+      setHasOverflow(el.scrollHeight > el.clientHeight + 1);
+      setAtBottom(el.scrollHeight - el.clientHeight - el.scrollTop < 1);
     });
     obs.observe(el);
     return () => obs.disconnect();
-  }, [isExpanded]);
+  }, []);
 
-  const clampStyle =
-    isExpanded
-      ? {}
-      : {
-          display: '-webkit-box',
-          WebkitLineClamp: COLLAPSED_LINE_CLAMP,
-          WebkitBoxOrient: 'vertical' as const,
-          overflow: 'hidden',
-        };
+  const handleScroll = () => {
+    const el = ref.current;
+    if (!el) return;
+    setAtBottom(el.scrollHeight - el.clientHeight - el.scrollTop < 1);
+  };
 
   return (
-    <div style={{ maxWidth: '500px' }}>
-      <p
+    <div style={{ maxWidth: '500px', position: 'relative' }}>
+      <div
         ref={ref}
+        onScroll={handleScroll}
+        // `tabIndex` makes the scroll box keyboard-reachable so a
+        // keyboard-only user can hit arrow-down to read the full text
+        // without ever leaving the keyboard. Role + label make it
+        // legible to screen readers as a region of text.
+        tabIndex={hasOverflow ? 0 : -1}
+        role="region"
+        aria-label="Description"
         style={{
           fontSize: 'var(--text-sm)',
           color: 'var(--color-text-tertiary)',
           margin: 0,
           lineHeight: 1.5,
-          ...clampStyle,
+          maxHeight: `${DESCRIPTION_MAX_HEIGHT_EM}em`,
+          overflowY: 'auto',
+          // The right gutter gives the (thin) scrollbar breathing room
+          // so its track doesn't crowd the text. Padding rather than
+          // margin so the scrollbar still anchors to the box's edge.
+          paddingRight: 'var(--space-1)',
+          // WebKit overlay scrollbars: keep them visible-on-scroll only,
+          // matching the rest of the app's scrollable surfaces.
+          scrollbarGutter: 'stable',
+          whiteSpace: 'pre-wrap',
+          // The scroll box reads as a discrete affordance only when
+          // there's more to scroll to — otherwise it's just a static
+          // paragraph and the cursor should stay default.
+          cursor: hasOverflow ? 'auto' : 'default',
         }}
       >
         {text}
-      </p>
-      {(isOverflowing || isExpanded) && (
-        <button
-          type="button"
-          onClick={() => setIsExpanded((v) => !v)}
+      </div>
+      {hasOverflow && !atBottom && (
+        // Background-agnostic "there's more below" hint: a slight darken
+        // at the bottom edge. The hero gradient varies per cover, so a
+        // solid-color fade would clash; pure-alpha black sits flatter
+        // against whatever's behind.
+        <div
+          aria-hidden="true"
           style={{
-            marginTop: 'var(--space-1)',
-            padding: 0,
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--color-accent)',
-            fontSize: 'var(--text-sm)',
-            fontWeight: 600,
-            cursor: 'pointer',
+            position: 'absolute',
+            left: 0,
+            right: 'var(--space-1)',
+            bottom: 0,
+            height: '1.5em',
+            pointerEvents: 'none',
+            background:
+              'linear-gradient(to bottom, oklch(0% 0 0 / 0) 0%, oklch(0% 0 0 / 0.35) 100%)',
           }}
-        >
-          {isExpanded ? 'Less' : 'More'}
-        </button>
+        />
       )}
     </div>
   );

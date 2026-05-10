@@ -22,6 +22,14 @@ pub struct TrackInfo {
     /// Populated only for episodes; absent on music tracks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published_at: Option<String>,
+    /// YTM-internal id for THIS occurrence of the video in a specific
+    /// playlist. Required by `browse/edit_playlist` with the
+    /// `ACTION_REMOVE_VIDEO` action — `removedVideoId` alone isn't enough
+    /// because a track can appear multiple times. Populated only when
+    /// the track was parsed from a playlist detail response that carried
+    /// `playlistItemData.playlistSetVideoId`; absent elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_video_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
