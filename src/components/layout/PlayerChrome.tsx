@@ -363,13 +363,15 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
     >
       <LiquidGlass
         borderRadius={150}
-        // blur=40 matches the NowPlaying overlay's
-        // `backdrop-filter: blur(40px) saturate(180%)`. The
-        // LiquidGlass component applies blur via its OWN
-        // backdrop-filter on the capsule div (the inner-content
-        // div's own backdrop-filter only filters the LiquidGlass
-        // output, not the page underneath — filters don't chain).
-        blur={40}
+        // When NowPlaying is open beneath the player chrome, the chrome
+        // would otherwise stack its backdrop-filter against NowPlaying's
+        // (issue #99 paint feedback loop — visible as a continuous
+        // brightness pulse on the chrome). Drop the LiquidGlass blur to
+        // 0 in that state so only NowPlaying's blur is in play; the
+        // chrome's translucent background lets NowPlaying's blur read
+        // through it. When NowPlaying is closed, restore the 40px blur
+        // so the chrome reads as a glass plate against the page below.
+        blur={nowPlayingOpen ? 0 : 40}
         contrast={1.2}
         brightness={1.05}
         saturation={1.8}
@@ -385,16 +387,22 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
           alignItems: 'center',
           padding: '0 var(--space-10)',
           gap: 'var(--space-3)',
-          // Semi-transparent dark wash + heavy backdrop-filter (same
-          // recipe SafeOverlay uses for the NowPlaying / queue
-          // surfaces) so the chrome's blur character matches the
-          // other glass plates instead of relying only on
-          // LiquidGlass's own filter (which WebKit drops the SVG
-          // displacement portion of).
+          // Semi-transparent dark wash. backdrop-filter is conditional
+          // for the same reason the LiquidGlass blur above is: when
+          // NowPlaying is open we drop our own filter so the chrome
+          // surface doesn't stack and feedback-loop against NowPlaying's
+          // backdrop-filter. The dark wash + NowPlaying's blur showing
+          // through still gives the chrome glass character.
           background: 'oklch(20% 0.005 270 / 0.30)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          backdropFilter: nowPlayingOpen
+            ? undefined
+            : 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: nowPlayingOpen
+            ? undefined
+            : 'blur(40px) saturate(180%)',
           borderRadius: 'inherit',
+          transition:
+            'backdrop-filter var(--duration-slow) var(--ease-out)',
         }}
       >
       {/* LEFT — transports (Apple Music: flat white glyphs, prev/play/next

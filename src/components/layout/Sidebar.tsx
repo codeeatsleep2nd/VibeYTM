@@ -1,6 +1,7 @@
 import { type FC, type ReactNode, memo } from 'react';
 import { useAccountInfo } from '../../hooks/useAccountInfo';
 import { useLoginState } from '../../hooks/useLoginState';
+import { useOverlayState } from '../../lib/overlayState';
 import { CachedImage } from '../CachedImage';
 import {
   AlbumsIcon,
@@ -65,7 +66,11 @@ const NavItem: FC<NavItemProps> = ({ label, icon, isActive, onClick }) => (
     }}
     onMouseEnter={(e) => {
       if (!isActive) {
-        e.currentTarget.style.background = 'oklch(100% 0 0 / 0.04)';
+        // Bumped from 0.04 → 0.07 so the hover affordance reads
+        // distinctly against the sidebar's glass background — the
+        // older tint was so faint it could be mistaken for a paint
+        // glitch.
+        e.currentTarget.style.background = 'oklch(100% 0 0 / 0.07)';
         e.currentTarget.style.color = 'var(--color-text-primary)';
       }
     }}
@@ -138,12 +143,22 @@ const SectionLabel: FC<{ children: ReactNode }> = ({ children }) => (
   <div
     style={{
       padding: '0 var(--space-3)',
-      marginBottom: 'var(--space-1)',
+      // Tighter rhythm with the row that follows + a bit of breathing
+      // room above so the label reads as a deliberate group divider,
+      // not an accidental gap.
+      marginBottom: 'var(--space-2)',
+      marginTop: 'var(--space-2)',
       fontSize: 'var(--text-xs)',
-      fontWeight: 600,
-      color: 'var(--color-text-tertiary)',
+      fontWeight: 700,
+      // Bumped from tertiary → secondary so the header's contrast is
+      // closer to the row labels it groups; with the previous tertiary
+      // tone the header was so faint it disappeared into the chrome.
+      color: 'var(--color-text-secondary)',
       textTransform: 'uppercase',
-      letterSpacing: '0.08em',
+      // Wider letter-spacing matches Apple Music's `LIBRARY` header
+      // treatment and gives the all-caps label more presence at small
+      // sizes.
+      letterSpacing: '0.12em',
     }}
   >
     {children}
@@ -153,6 +168,13 @@ const SectionLabel: FC<{ children: ReactNode }> = ({ children }) => (
 export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
   const account = useAccountInfo();
   const loggedIn = useLoginState();
+  // When NowPlaying is open, swap the sidebar's chrome glass for a
+  // background that visually continues the NowPlaying surface — no
+  // dark wash, lighter blur recipe matching NowPlaying's
+  // `blur(40px) saturate(180%)`. Together with the dimmed right rim
+  // they read as one continuous Liquid-Glass plate spanning the full
+  // window instead of two separate panes meeting at a hard edge.
+  const { nowPlayingOpen } = useOverlayState();
 
   return (
     <aside
@@ -162,13 +184,21 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
         width: 'var(--sidebar-width)',
         height: '100%',
         paddingTop: 'var(--title-bar-height)',
-        background: 'var(--glass-bg-chrome)',
-        backdropFilter: 'blur(var(--glass-blur))',
-        WebkitBackdropFilter: 'blur(var(--glass-blur))',
-        borderRight: '1px solid var(--glass-rim-mid)',
+        background: nowPlayingOpen ? 'transparent' : 'var(--glass-bg-chrome)',
+        backdropFilter: nowPlayingOpen
+          ? 'blur(40px) saturate(180%)'
+          : 'blur(var(--glass-blur))',
+        WebkitBackdropFilter: nowPlayingOpen
+          ? 'blur(40px) saturate(180%)'
+          : 'blur(var(--glass-blur))',
+        borderRight: nowPlayingOpen
+          ? '1px solid var(--glass-rim-dim)'
+          : '1px solid var(--glass-rim-mid)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
+        transition:
+          'background var(--duration-slow) var(--ease-out), border-color var(--duration-slow) var(--ease-out)',
       }}
     >
       <nav
@@ -213,8 +243,18 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
         </div>
       </div>
 
-      {/* Settings — pushed to bottom */}
-      <div style={{ marginTop: 'auto', padding: 'var(--space-3)' }}>
+      {/* Spacer pushes the Settings + Account block to the bottom while
+       *  carrying a thin top-rim divider so the chrome reads as two
+       *  intentional groups (nav above, system controls below) instead
+       *  of one block ending in a void. The 1 px line uses
+       *  `--glass-rim-dim` so it's visible but never demands attention. */}
+      <div
+        style={{
+          marginTop: 'auto',
+          padding: 'var(--space-3)',
+          borderTop: '1px solid var(--glass-rim-dim)',
+        }}
+      >
         <NavItem
           label="Settings"
           icon={<SettingsIcon size={16} />}
@@ -224,7 +264,7 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
       </div>
 
       {/* Account — locked to the very bottom of the sidebar */}
-      <div style={{ padding: 'var(--space-3)' }}>
+      <div style={{ padding: '0 var(--space-3) var(--space-3)' }}>
         <AccountCard account={account} loggedIn={loggedIn} />
       </div>
     </aside>
@@ -267,6 +307,11 @@ function AccountCardInner({ account, loggedIn }: AccountCardProps) {
         display: 'flex',
         alignItems: 'center',
         gap: 'var(--space-3)',
+        // No tile background here — the glass-tile recipe is reserved
+        // for selectable / interactive surfaces (active nav row, mood
+        // pills, refresh button). The account card is informational, so
+        // styling it as a tile reads as "currently selected" and
+        // competes visually with the actual active nav item.
         padding: 'var(--space-2) var(--space-3)',
         borderRadius: 'var(--radius-md)',
         minWidth: 0,
@@ -275,10 +320,16 @@ function AccountCardInner({ account, loggedIn }: AccountCardProps) {
     >
       <div
         style={{
-          width: '32px',
-          height: '32px',
+          // Bumped 32 → 36 for stronger presence at the bottom of a tall
+          // sidebar; small enough to keep the row height under 48 px so
+          // it doesn't crowd the Settings row above.
+          width: '36px',
+          height: '36px',
           borderRadius: 'var(--radius-full)',
           background: 'var(--color-surface-3)',
+          // Inset rim mirrors the album-cover treatment so the avatar
+          // reads as a discrete glass disc, not a flat photograph.
+          boxShadow: 'inset 0 1px 0 var(--glass-rim-mid)',
           overflow: 'hidden',
           flexShrink: 0,
           display: 'flex',
@@ -292,8 +343,8 @@ function AccountCardInner({ account, loggedIn }: AccountCardProps) {
           <CachedImage
             src={account.avatarUrl}
             alt={account.name || 'Account avatar'}
-            width={32}
-            height={32}
+            width={36}
+            height={36}
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           />
         ) : (
