@@ -226,11 +226,25 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
     // motion. Previously opacity used the shorter `--duration-normal`
     // (200 ms), which made the close fade out before the slide-down
     // could finish — felt twice as fast as the open.
-    // `left` transition lets overlays slide in lockstep with the sidebar
-    // collapse. Without it the overlay snaps to its new gutter the
-    // instant the sidebar starts moving, which reads as a glitch.
+    // ONLY transition opacity + transform here.
+    //
+    // We previously added `left var(--duration-slow)` so overlays would
+    // slide in lockstep with the sidebar collapse, but that re-opened
+    // issue #99: SafeOverlay carries `backdrop-filter`, and an explicit
+    // transition on a property of a backdrop-filtered element keeps
+    // WebKit's compositing layer "hot" past the willChange demote
+    // below — the layer never settles, the NowPlaying + LyricsOverlay
+    // (or +QueuePanel) paint loop resumes, and the user sees continuous
+    // flicker on whichever overlay is on top. Worst when the sidebar is
+    // hidden because the overlay area is wider (more backdrop-filter
+    // surface to re-rasterize per frame). The cost of dropping the
+    // `left` transition is that an overlay snaps to its new gutter when
+    // the sidebar toggles WHILE it's open — acceptable because users
+    // typically don't toggle the sidebar while watching an overlay, and
+    // the flicker was a real continuous regression versus a one-time
+    // snap when the user actively reorganises chrome.
     transition:
-      'opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1), left var(--duration-slow) var(--ease-out)',
+      'opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1)',
     boxShadow,
     borderRadius,
     border,

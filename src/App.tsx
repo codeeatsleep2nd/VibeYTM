@@ -166,7 +166,11 @@ const App: FC = () => {
 
   // Independent surface: opening it does not open Now Playing, and closing
   // Now Playing does not affect it. It renders over whatever page is behind.
+  // Mirrors `toggleLyrics`: clicking the queue button always dismisses the
+  // lyrics drawer (whether queue is being opened or closed) — the two
+  // surfaces share the same right-slot geometry and shouldn't coexist.
   const toggleQueue = useCallback(() => {
+    setIsLyricsOpen(false);
     setIsQueueOpen((prev) => !prev);
   }, []);
 

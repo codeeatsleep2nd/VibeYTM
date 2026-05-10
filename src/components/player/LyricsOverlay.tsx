@@ -3,6 +3,7 @@ import { usePlayerState } from '../../hooks/usePlayerState';
 import { useLyrics, invalidateLyrics } from '../../hooks/useLyrics';
 import { useLyricsOffset } from '../../hooks/useLyricsOffset';
 import { useSmoothedPosition } from '../../hooks/useSmoothedPosition';
+import { useOverlayState } from '../../lib/overlayState';
 import { SafeOverlay } from '../overlay/SafeOverlay';
 import { LyricsPanel } from './NowPlaying/LyricsPanel';
 
@@ -24,6 +25,13 @@ interface LyricsOverlayProps {
 export const LyricsOverlay: FC<LyricsOverlayProps> = ({ isOpen }) => {
   const { track, positionSecs, status } = usePlayerState();
   const durationSecs = track?.durationSecs ?? 0;
+  // When NowPlaying is open BENEATH this overlay, both surfaces stacking
+  // their own backdrop-filter triggers issue #99's WKWebView paint
+  // feedback loop. Defer the page-blur to NowPlaying in that case
+  // (its blur shows through this card's translucent background); when
+  // this overlay is open ALONE, it owns the page-blur itself so the
+  // glass-card look is preserved on Home / Explore / Library backgrounds.
+  const { nowPlayingOpen } = useOverlayState();
 
   const smoothedPositionSecs = useSmoothedPosition(
     positionSecs,
@@ -94,8 +102,18 @@ export const LyricsOverlay: FC<LyricsOverlayProps> = ({ isOpen }) => {
         bottom: 'calc(var(--player-bar-height) + var(--space-3))',
         left: 'calc(var(--sidebar-effective-width, var(--sidebar-width)) + var(--space-6) + min(800px, calc((2 / 3) * (100vw - var(--sidebar-effective-width, var(--sidebar-width)) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px)) + var(--space-5))',
       }}
+      // backdropFilter is conditional — see `nowPlayingOpen` above.
+      // - NowPlaying open beneath: skip our blur; NowPlaying provides
+      //   the page-blur and ours would stack, triggering issue #99.
+      // - NowPlaying closed (this overlay alone): own the page-blur
+      //   ourselves so the card reads as a Liquid-Glass plate on
+      //   whatever page is behind (Home, Explore, etc.).
       background="linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.10) 100%), var(--glass-bg-card)"
-      backdropFilter="blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))"
+      backdropFilter={
+        nowPlayingOpen
+          ? undefined
+          : 'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))'
+      }
       border="1px solid var(--glass-rim-mid)"
       borderRadius="var(--radius-lg)"
       boxShadow={

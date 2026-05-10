@@ -70,6 +70,24 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
         right: '0',
         bottom: '0',
       }}
+      // Issue #99 (re-surfaced 2026-05-10): when LyricsOverlay or QueuePanel
+      // is open ON TOP of NowPlaying, both surfaces stacking their own
+      // `backdrop-filter` in the same screen region triggers a WKWebView
+      // paint feedback loop (the user sees the blur layer pulse / flicker
+      // continuously). The pre-existing willChange-demote in SafeOverlay
+      // isn't enough — it papered over the symptom while the lyrics/queue
+      // card was narrower (sidebar visible), but a sidebar-hidden window
+      // makes the lyrics card ~240 px wider, the affected area is larger,
+      // and the flicker becomes obvious.
+      //
+      // Fix: only ONE backdrop-filter at a time, on the BOTTOM layer.
+      // NowPlaying KEEPS its blur in every state — it's the visual base
+      // that gives both halves of the screen the glass-page feel. The
+      // overlays that sit on top (LyricsOverlay, QueuePanel) drop their
+      // own backdrop-filter and use a translucent wash instead; since
+      // their card backgrounds are ~70% transparent, NowPlaying's blur
+      // shows through them and the cards still read as glass — no
+      // double blur, no feedback loop.
       background="transparent"
       backdropFilter="blur(40px) saturate(180%)"
       boxShadow="0 -8px 32px oklch(0% 0 0 / 0.35)"

@@ -23,6 +23,7 @@ import {
   subscribeActivePlaylist,
   subscribePredictedTrack,
 } from '../../../lib/ipc';
+import { useOverlayState } from '../../../lib/overlayState';
 import type { TrackInfo } from '../../../lib/types';
 import { SafeOverlay } from '../../overlay/SafeOverlay';
 import { BRIDGE_SETTLE_MS } from '../../../hooks/useBridgeSafeFetch';
@@ -50,6 +51,11 @@ interface QueuePanelProps {
  */
 export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
   const { track, queue: liveQueue } = usePlayerState();
+  // See LyricsOverlay for the same conditional-backdrop logic — when
+  // NowPlaying is open beneath us, defer the page-blur to it (issue
+  // #99 stacked-backdrop feedback loop). When this drawer is open
+  // alone, own the blur so the card stays glass on Home / Explore.
+  const { nowPlayingOpen } = useOverlayState();
   // Audio-counterpart album cover for the live track. Used by the
   // now-playing row inside this panel so it matches the player bar /
   // now-playing page rather than the bridge-captured video frame.
@@ -579,8 +585,18 @@ export const QueuePanel: FC<QueuePanelProps> = ({ isOpen, onClose }) => {
       // floating glass card with rounded corners + bright top inset rim
       // + outer drop shadow. Right inset is space-3 (was 0) so the
       // rounded right corner has breathing room from the window edge.
+      // backdropFilter is conditional — see `nowPlayingOpen` above.
+      // - NowPlaying open beneath: skip our blur; NowPlaying provides
+      //   the page-blur and ours would stack, triggering issue #99.
+      // - NowPlaying closed (this overlay alone): own the page-blur
+      //   ourselves so the card reads as a Liquid-Glass plate on
+      //   whatever page is behind.
       background="linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.10) 100%), var(--glass-bg-card)"
-      backdropFilter="blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))"
+      backdropFilter={
+        nowPlayingOpen
+          ? undefined
+          : 'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))'
+      }
       border="1px solid var(--glass-rim-mid)"
       borderRadius="var(--radius-lg)"
       boxShadow={
