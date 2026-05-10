@@ -357,11 +357,16 @@ export const SearchPage: FC<SearchPageProps> = ({
             }
           }}
           onFocus={(e) => {
+            // Focus state: brighter rim + accent border so the field
+            // visibly elevates without changing layout. Glass tile
+            // shadow already supplies the rest-state depth.
             e.currentTarget.style.borderColor = 'var(--color-accent)';
+            e.currentTarget.style.boxShadow = 'var(--glass-tile-shadow)';
             setShowSuggestions(true);
           }}
           onBlur={(e) => {
-            e.currentTarget.style.borderColor = 'oklch(100% 0 0 / 0.14)';
+            e.currentTarget.style.borderColor = 'var(--color-border)';
+            e.currentTarget.style.boxShadow = 'var(--glass-tile-shadow-rest)';
             // Delay hiding so onMouseDown on a suggestion can fire first.
             window.setTimeout(() => setShowSuggestions(false), 150);
           }}
@@ -369,16 +374,19 @@ export const SearchPage: FC<SearchPageProps> = ({
             width: '100%',
             padding:
               'var(--space-3) var(--space-4) var(--space-3) var(--space-10)',
-            // Translucent so the LiquidGlass plate behind it remains
-            // visible — the previous opaque surface-2 fill broke the
-            // glass effect with a flat dark pill in the middle.
-            background: 'oklch(100% 0 0 / 0.06)',
-            border: '1px solid oklch(100% 0 0 / 0.14)',
+            // Glass tile recipe — translucent fill + rim highlight + lift.
+            // Same shape as the Refresh button / mood pills so the search
+            // input reads as part of the same Liquid-Glass family instead
+            // of a flat dark pill on the page.
+            background: 'var(--glass-tile-bg)',
+            boxShadow: 'var(--glass-tile-shadow-rest)',
+            border: '1px solid var(--color-border)',
             borderRadius: 'var(--radius-full)',
             fontSize: 'var(--text-base)',
             color: 'var(--color-text-primary)',
             outline: 'none',
-            transition: `border-color var(--duration-fast) var(--ease-out)`,
+            transition:
+              'border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out)',
           }}
         />
 
@@ -459,19 +467,23 @@ export const SearchPage: FC<SearchPageProps> = ({
                 flexShrink: 0,
                 padding: 'var(--space-2) var(--space-4)',
                 fontSize: 'var(--text-sm)',
-                // Selection style unified with QueuePanel highlighted
-                // row + Sidebar active item + Home mood pill: white
-                // glass wash, accent-colored text, 600 weight.
+                // Active tab uses the unified glass-tile recipe (rim +
+                // thickness + lift) — same as Sidebar nav, mood pills,
+                // focus chips. Tokens.css owns the recipe.
                 fontWeight: isActive ? 600 : 500,
                 borderRadius: 'var(--radius-full)',
                 border: isActive ? 'none' : '1px solid var(--color-border)',
-                background: isActive ? 'oklch(100% 0 0 / 0.10)' : 'transparent',
+                background: isActive
+                  ? 'var(--glass-tile-bg-active)'
+                  : 'transparent',
+                boxShadow: isActive ? 'var(--glass-tile-shadow)' : undefined,
                 color: isActive
                   ? 'var(--color-accent)'
                   : 'var(--color-text-secondary)',
                 cursor: 'pointer',
                 transition: `background var(--duration-fast) var(--ease-out),
-                             color var(--duration-fast) var(--ease-out)`,
+                             color var(--duration-fast) var(--ease-out),
+                             box-shadow var(--duration-fast) var(--ease-out)`,
                 whiteSpace: 'nowrap',
               }}
             >

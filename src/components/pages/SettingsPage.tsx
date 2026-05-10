@@ -1,4 +1,4 @@
-import { type FC, useEffect, useRef, useState } from 'react';
+import { type FC, type ReactNode, useEffect, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { aboutApi, cacheApi, settingsApi, ytmApi, type AboutInfo, type AppSettings, type CacheStats } from '../../lib/ipc';
 import { debug } from '../../lib/debug';
@@ -120,15 +120,47 @@ const SettingRow: FC<SettingRowProps> = ({ label, description, badge, children }
 const SectionHeading: FC<{ title: string }> = ({ title }) => (
   <h2
     style={{
-      fontSize: 'var(--text-lg)',
-      fontWeight: 600,
-      color: 'var(--color-text-primary)',
+      // iOS-style small-caps section label — sits above the card, not
+      // inside it. Same recipe as the sidebar's `LIBRARY` label so the
+      // settings page reads as part of the same chrome family.
+      fontSize: 'var(--text-xs)',
+      fontWeight: 700,
+      color: 'var(--color-text-secondary)',
+      textTransform: 'uppercase',
+      letterSpacing: '0.12em',
       marginTop: 'var(--space-8)',
-      marginBottom: 'var(--space-3)',
+      marginBottom: 'var(--space-2)',
+      paddingLeft: 'var(--space-4)',
     }}
   >
     {title}
   </h2>
+);
+
+/**
+ * Glass card that groups a section's rows. Liquid-Glass surface with
+ * a real backdrop-filter (Settings pages don't have a parent
+ * backdrop-filter so there's no stacking — see issue #99). Rows inside
+ * keep their existing layout; their padding shifts to come from the
+ * card's horizontal padding instead of the page edge.
+ */
+const SettingsCard: FC<{ children: ReactNode }> = ({ children }) => (
+  <div
+    style={{
+      background: 'var(--glass-bg-card)',
+      backdropFilter: 'blur(24px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+      borderRadius: 'var(--radius-lg)',
+      border: '1px solid var(--glass-rim-mid)',
+      // Inset top rim plus a soft outer drop reads the card as a
+      // floating glass plate, not a flat tinted block.
+      boxShadow:
+        'inset 0 1px 0 var(--glass-rim-bright), 0 2px 12px oklch(0% 0 0 / 0.20)',
+      padding: '0 var(--space-4)',
+    }}
+  >
+    {children}
+  </div>
 );
 
 const Divider: FC = () => (
@@ -293,112 +325,113 @@ export const SettingsPage: FC = () => {
 
       {/* General */}
       <SectionHeading title="General" />
-      <Divider />
-      <SettingRow label="Close to tray" description="Keep VibeYTM running in the menu bar when the window is closed">
-        <ToggleSwitch
-          checked={closeToTray}
-          disabled={!settings}
-          onChange={(v) => updateGeneral({ closeToTray: v })}
-        />
-      </SettingRow>
-      <Divider />
-      <SettingRow label="Background playback" description="Continue playing audio when the app is in the background">
-        <ToggleSwitch
-          checked={backgroundPlayback}
-          disabled={!settings}
-          onChange={(v) => updateGeneral({ backgroundPlayback: v })}
-        />
-      </SettingRow>
-      <Divider />
+      <SettingsCard>
+        <SettingRow label="Close to tray" description="Keep VibeYTM running in the menu bar when the window is closed">
+          <ToggleSwitch
+            checked={closeToTray}
+            disabled={!settings}
+            onChange={(v) => updateGeneral({ closeToTray: v })}
+          />
+        </SettingRow>
+        <Divider />
+        <SettingRow label="Background playback" description="Continue playing audio when the app is in the background">
+          <ToggleSwitch
+            checked={backgroundPlayback}
+            disabled={!settings}
+            onChange={(v) => updateGeneral({ backgroundPlayback: v })}
+          />
+        </SettingRow>
+      </SettingsCard>
 
       {/* Integrations */}
       <SectionHeading title="Integrations" />
-      <Divider />
-      <SettingRow label="Desktop notifications" description="Show notifications when the track changes">
-        <ToggleSwitch
-          checked={desktopNotifications}
-          disabled={!settings}
-          onChange={(v) => updateIntegrations({ notificationsEnabled: v })}
-        />
-      </SettingRow>
-      <Divider />
+      <SettingsCard>
+        <SettingRow label="Desktop notifications" description="Show notifications when the track changes">
+          <ToggleSwitch
+            checked={desktopNotifications}
+            disabled={!settings}
+            onChange={(v) => updateIntegrations({ notificationsEnabled: v })}
+          />
+        </SettingRow>
+      </SettingsCard>
 
       {/* Keyboard Shortcuts */}
       <SectionHeading title="Keyboard Shortcuts" />
-      <Divider />
-      {SHORTCUTS.map((shortcut) => (
-        <div key={shortcut.action}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: 'var(--space-3) 0',
-            }}
-          >
-            <span
+      <SettingsCard>
+        {SHORTCUTS.map((shortcut, idx) => (
+          <div key={shortcut.action}>
+            <div
               style={{
-                fontSize: 'var(--text-base)',
-                color: 'var(--color-text-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: 'var(--space-3) 0',
               }}
             >
-              {shortcut.action}
-            </span>
-            <ShortcutBadge keys={shortcut.keys} />
+              <span
+                style={{
+                  fontSize: 'var(--text-base)',
+                  color: 'var(--color-text-primary)',
+                }}
+              >
+                {shortcut.action}
+              </span>
+              <ShortcutBadge keys={shortcut.keys} />
+            </div>
+            {idx < SHORTCUTS.length - 1 && <Divider />}
           </div>
-          <Divider />
-        </div>
-      ))}
+        ))}
+      </SettingsCard>
 
       {/* YouTube Music */}
       <SectionHeading title="YouTube Music" />
-      <Divider />
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-3)',
-          padding: 'var(--space-3) 0',
-        }}
-      >
-        <OutlinedButton
-          label="Sign in to YouTube Music"
-          onClick={() => {
-            ytmApi.openSignIn().catch((e: unknown) => {
-              debug.error('SettingsPage', 'openSignIn failed', e);
-            });
-            ytmApi.showYtm().catch((e: unknown) => {
-              debug.error('SettingsPage', 'showYtm failed', e);
-            });
+      <SettingsCard>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--space-3)',
+            padding: 'var(--space-3) 0',
           }}
-        />
-        <OutlinedButton label="Hide YouTube Music window" onClick={() => ytmApi.hideYtm()} />
-        <OutlinedButton label="Re-inject player bridge" onClick={() => ytmApi.injectBridge()} />
-      </div>
-      <Divider />
+        >
+          <OutlinedButton
+            label="Sign in to YouTube Music"
+            onClick={() => {
+              ytmApi.openSignIn().catch((e: unknown) => {
+                debug.error('SettingsPage', 'openSignIn failed', e);
+              });
+              ytmApi.showYtm().catch((e: unknown) => {
+                debug.error('SettingsPage', 'showYtm failed', e);
+              });
+            }}
+          />
+          <OutlinedButton label="Hide YouTube Music window" onClick={() => ytmApi.hideYtm()} />
+          <OutlinedButton label="Re-inject player bridge" onClick={() => ytmApi.injectBridge()} />
+        </div>
+      </SettingsCard>
 
       {/* Cache */}
       <SectionHeading title="Cache" />
-      <Divider />
-      <SettingRow
-        label="Disk cache"
-        description={
-          cacheStats
-            ? `${formatBytes(cacheStats.total_bytes)} / ${formatBytes(cacheStats.max_bytes)} — ` +
-              `${cacheStats.image_count} images, ${cacheStats.track_count} tracks, ${cacheStats.lyric_count} lyrics`
-            : 'Loading…'
-        }
-      >
-        <OutlinedButton
-          label={isClearingCache ? 'Clearing…' : 'Clear cache'}
-          onClick={handleClearCache}
-        />
-      </SettingRow>
-      <Divider />
+      <SettingsCard>
+        <SettingRow
+          label="Disk cache"
+          description={
+            cacheStats
+              ? `${formatBytes(cacheStats.total_bytes)} / ${formatBytes(cacheStats.max_bytes)} — ` +
+                `${cacheStats.image_count} images, ${cacheStats.track_count} tracks, ${cacheStats.lyric_count} lyrics`
+              : 'Loading…'
+          }
+        >
+          <OutlinedButton
+            label={isClearingCache ? 'Clearing…' : 'Clear cache'}
+            onClick={handleClearCache}
+          />
+        </SettingRow>
+      </SettingsCard>
 
       {/* About */}
       <SectionHeading title="About" />
-      <Divider />
+      <SettingsCard>
       <div style={{ padding: 'var(--space-4) 0' }}>
         <div
           style={{
@@ -449,6 +482,7 @@ export const SettingsPage: FC = () => {
           {aboutInfo?.visit_suffix ?? 'for more information'}
         </div>
       </div>
+      </SettingsCard>
     </section>
   );
 };
