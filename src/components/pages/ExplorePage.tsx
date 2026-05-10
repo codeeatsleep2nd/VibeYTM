@@ -1,7 +1,8 @@
 import { type FC, useCallback, useEffect, useState } from 'react';
 import type { Shelf } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
-import { readCache, writeCache } from '../../lib/persistentCache';
+import { readCache, writeCache, clearCache } from '../../lib/persistentCache';
+import { useTauriEvent } from '../../hooks/useTauriEvent';
 import { ShelfRow } from '../browse/ShelfRow';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
@@ -21,6 +22,12 @@ interface ExplorePageProps {
 // last-known-good data while a background refresh runs.
 const PERSIST_KEY = 'explore:shelves';
 let exploreCache: Shelf[] | null = readCache<Shelf[]>(PERSIST_KEY);
+
+// Called by App.tsx on every login transition so an unmounted ExplorePage
+// re-reads from a clean slate on its next mount.
+export function resetExplorePageModuleCache(): void {
+  exploreCache = null;
+}
 
 export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
   const [shelves, setShelves] = useState<Shelf[]>(exploreCache ?? []);
@@ -57,6 +64,16 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
     if (exploreCache !== null) return;
     fetchExplore();
   }, [fetchExplore]);
+
+  // Any login transition (sign-in OR sign-out) invalidates the cached
+  // shelves — Explore mixes public and YTM-personalized rails, so the
+  // previous account's data shouldn't bleed into the new session.
+  useTauriEvent<boolean>('player:login-changed', () => {
+    exploreCache = null;
+    clearCache(PERSIST_KEY);
+    setShelves([]);
+    fetchExplore(true);
+  });
 
   const isReloading = isLoading || isRefreshing;
 

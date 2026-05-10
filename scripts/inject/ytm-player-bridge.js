@@ -92,6 +92,26 @@
     // localStorage / JSON parse failure — fall through to live re-fetch.
   }
 
+  // Issue #104 — same seed-then-persist pattern for shuffle/repeat. YTM
+  // resets the shuffle / repeat button visual state across the page nav
+  // that next/prev triggers, even though the user's intent hasn't
+  // changed. Persisting the user's chosen modes to localStorage and
+  // seeding the desired globals at every page-load means the state
+  // reader below can prefer the user's intent over the transient DOM
+  // attribute, so the FE never sees a spurious "off" between track
+  // changes.
+  try {
+    var rawShuffle = localStorage.getItem('__VIBEYTM_SHUFFLE__');
+    if (rawShuffle === '1') window.__VIBEYTM_DESIRED_SHUFFLE__ = true;
+    else if (rawShuffle === '0') window.__VIBEYTM_DESIRED_SHUFFLE__ = false;
+  } catch (e) {}
+  try {
+    var rawRepeat = localStorage.getItem('__VIBEYTM_REPEAT__');
+    if (rawRepeat === 'none' || rawRepeat === 'all' || rawRepeat === 'one') {
+      window.__VIBEYTM_DESIRED_REPEAT__ = rawRepeat;
+    }
+  } catch (e) {}
+
   function log(msg) {
     window.__VIBEYTM_DEBUG__.push(new Date().toISOString() + ': ' + msg);
     if (window.__VIBEYTM_DEBUG__.length > 50) window.__VIBEYTM_DEBUG__.shift();
@@ -172,6 +192,15 @@
         }
       }
     } catch(e) {}
+    // Issue #104 — track-change navigation transiently clears the
+    // `shuffle-on` attribute / aria-pressed state even though the user
+    // hasn't changed shuffle mode. Prefer the user's recorded intent
+    // (set by the toggle_shuffle IPC, persisted to localStorage, seeded
+    // at init) over the DOM-derived value so the FE never sees the
+    // spurious "off" between tracks.
+    if (typeof window.__VIBEYTM_DESIRED_SHUFFLE__ === 'boolean') {
+      shuffleOn = window.__VIBEYTM_DESIRED_SHUFFLE__;
+    }
 
     // Repeat mode: derive from the player bar attr first, then fall back
     // to the repeat button's aria-label which is the most stable contract.
@@ -195,6 +224,16 @@
         }
       }
     } catch(e) {}
+    // Issue #104 — same sticky-intent override as shuffle. Track-change
+    // page nav transiently clears the `repeat-mode` attribute, which
+    // would flicker the FE back to "none" between tracks.
+    if (
+      window.__VIBEYTM_DESIRED_REPEAT__ === 'none'
+      || window.__VIBEYTM_DESIRED_REPEAT__ === 'all'
+      || window.__VIBEYTM_DESIRED_REPEAT__ === 'one'
+    ) {
+      repeatMode = window.__VIBEYTM_DESIRED_REPEAT__;
+    }
 
     // Like status: 'LIKE' | 'DISLIKE' | 'INDIFFERENT'
     var isLiked = false;
@@ -325,6 +364,20 @@
           if (window.__VIBEYTM_STATE__) {
             window.__VIBEYTM_STATE__.isShuffled = !window.__VIBEYTM_STATE__.isShuffled;
           }
+          // Issue #104 — record the user's intent so it survives the
+          // track-change DOM resets. Toggle from the previously-desired
+          // value (or, on the very first click, the just-flipped state
+          // we wrote to __VIBEYTM_STATE__ above).
+          var prevShuf = typeof window.__VIBEYTM_DESIRED_SHUFFLE__ === 'boolean'
+            ? window.__VIBEYTM_DESIRED_SHUFFLE__
+            : !((window.__VIBEYTM_STATE__ && window.__VIBEYTM_STATE__.isShuffled) === true);
+          window.__VIBEYTM_DESIRED_SHUFFLE__ = !prevShuf;
+          try {
+            localStorage.setItem(
+              '__VIBEYTM_SHUFFLE__',
+              window.__VIBEYTM_DESIRED_SHUFFLE__ ? '1' : '0'
+            );
+          } catch (e) {}
         }
         break;
       }
@@ -353,11 +406,21 @@
         }
         if (rb) {
           rb.click();
+          // Cycle from the previously-desired value when present so a
+          // toggle pressed mid-track-nav (where the DOM may transiently
+          // report 'none') still advances correctly. Falls back to the
+          // last-published state, then 'none'.
+          var prevRep = window.__VIBEYTM_DESIRED_REPEAT__
+            || (window.__VIBEYTM_STATE__ && window.__VIBEYTM_STATE__.repeatMode)
+            || 'none';
+          var nextRep = prevRep === 'none' ? 'all' : prevRep === 'all' ? 'one' : 'none';
+          window.__VIBEYTM_DESIRED_REPEAT__ = nextRep;
           if (window.__VIBEYTM_STATE__) {
-            var cur = window.__VIBEYTM_STATE__.repeatMode || 'none';
-            window.__VIBEYTM_STATE__.repeatMode =
-              cur === 'none' ? 'all' : cur === 'all' ? 'one' : 'none';
+            window.__VIBEYTM_STATE__.repeatMode = nextRep;
           }
+          try {
+            localStorage.setItem('__VIBEYTM_REPEAT__', nextRep);
+          } catch (e) {}
         } else {
           log('cycle_repeat: repeat button not found');
         }

@@ -231,11 +231,17 @@ export function usePlayerState(): UsePlayerState {
         if (duration > 0 && positionSecs > duration) {
           return prev;
         }
+        if (prev.positionSecs === positionSecs) return prev;
         return { ...prev, positionSecs };
       });
       return;
     }
-    setState((prev) => ({ ...prev, positionSecs }));
+    // Skip the setState entirely when the value hasn't moved — a re-render
+    // with identical content would still cascade through the chrome and
+    // visibly flicker the prev/play/next cluster while idle (issue #103).
+    setState((prev) =>
+      prev.positionSecs === positionSecs ? prev : { ...prev, positionSecs },
+    );
   });
 
   useTauriEvent<number>(EVENTS.VOLUME_CHANGED, (volume) => {

@@ -132,6 +132,13 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
     // after a page navigation when YTM's fresh <video> momentarily reported
     // its default 1.0 before our `set_volume` push landed).
     let last_emitted_volume = Arc::new(TokioMutex::new(f64::NAN));
+    // Same dedup for `player:position` (issue #103). The bridge JS reports
+    // position every cycle even when YTM is paused / has no track, which
+    // re-emits the same value every 150 ms. The full-state setState in the
+    // FE returns a new object each time and re-renders the entire player
+    // chrome — visible as a flicker on the prev/play/next cluster when
+    // idle. NaN-init so the first real value always emits.
+    let last_emitted_position = Arc::new(TokioMutex::new(f64::NAN));
     // Wall-clock instant of the last `set_volume` push to the bridge (user
     // IPC OR bridge_just_loaded re-seed). Within
     // `VOLUME_PUSH_SETTLE_MS` of a push, we trust `ps.volume` over `bs.volume`
@@ -634,7 +641,17 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                 ps.is_liked = bs.is_liked;
             }
             if !suppress_position {
-                let _ = app.emit("player:position", &bs.position_secs);
+                // De-dup: only emit when the value actually changed (>=10 ms
+                // resolution). Without this, idle/paused tracks fire a
+                // POSITION_UPDATED every 150 ms with the same value, the FE
+                // re-renders the full player chrome on each, and the prev/
+                // play/next cluster visibly flickers (issue #103).
+                let mut last_p = last_emitted_position.lock().await;
+                if (*last_p - bs.position_secs).abs() > 0.01 || last_p.is_nan() {
+                    *last_p = bs.position_secs;
+                    drop(last_p);
+                    let _ = app.emit("player:position", &bs.position_secs);
+                }
             }
             // Only emit when the value actually changes. Every-cycle emission
             // gave stale bridge values (e.g. YTM's default 1.0 right after a

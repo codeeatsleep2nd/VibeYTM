@@ -54,3 +54,22 @@ export function clearCache(key: string): void {
     // Ignore — we'll just have a slightly stale entry until natural TTL.
   }
 }
+
+// Drop every persisted browse cache entry. Called on login transitions so
+// signing in (or switching accounts) doesn't leak the previous user's
+// home shelves / library entries through the localStorage cache when a
+// page mounts before its network refetch completes.
+export function clearAllBrowseCaches(): void {
+  try {
+    const prefix = `${NAMESPACE}:`;
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) keysToRemove.push(key);
+    }
+    for (const k of keysToRemove) localStorage.removeItem(k);
+  } catch {
+    // Storage unavailable — best-effort. The in-memory module-level
+    // resets done alongside this still take effect.
+  }
+}

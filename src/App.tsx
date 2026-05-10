@@ -1,10 +1,10 @@
 import { type FC, useState, useCallback, useEffect, useRef } from 'react';
 import './styles/global.css';
 import { AppShell } from './components/layout/AppShell';
-import { HomePage } from './components/pages/HomePage';
+import { HomePage, resetHomePageModuleCache } from './components/pages/HomePage';
 import { SearchPage } from './components/pages/SearchPage';
 import { LibraryPage } from './components/pages/LibraryPage';
-import { ExplorePage } from './components/pages/ExplorePage';
+import { ExplorePage, resetExplorePageModuleCache } from './components/pages/ExplorePage';
 import { SettingsPage } from './components/pages/SettingsPage';
 import { LoginPage } from './components/pages/LoginPage';
 import { PlaylistDetailPage } from './components/pages/PlaylistDetailPage';
@@ -15,7 +15,9 @@ import { UpdateBanner } from './components/UpdateBanner';
 import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
 import { useBootState } from './hooks/useBootState';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
+import { useTauriEvent } from './hooks/useTauriEvent';
 import { ytmApi, playerApi } from './lib/ipc';
+import { clearAllBrowseCaches } from './lib/persistentCache';
 import { registerOpenArtist, registerOpenPlaylist } from './lib/appNav';
 import { OverlayStateContext } from './lib/overlayState';
 import type { FocusTimerState } from './components/player/FocusTimer/useFocusTimerCountdown';
@@ -63,6 +65,20 @@ const App: FC = () => {
     () => setLibraryVersion((v) => v + 1),
     [],
   );
+
+  // Any login transition (sign-in OR sign-out) invalidates account-scoped
+  // browse data. The page-level handlers reset state for currently-mounted
+  // pages, but unmounted pages would otherwise hydrate from the previous
+  // account's localStorage on their next mount — so wipe the persisted
+  // browse caches and reset module-level singletons here too. Bumping
+  // libraryVersion forces a refetch on whichever LibraryPage tab the user
+  // lands on next (it stays mounted across tab navigation in some flows).
+  useTauriEvent<boolean>('player:login-changed', () => {
+    clearAllBrowseCaches();
+    resetHomePageModuleCache();
+    resetExplorePageModuleCache();
+    setLibraryVersion((v) => v + 1);
+  });
   // Remembered so "Settings → Settings" toggles back to where the user was.
   const previousPathRef = useRef<string>('home');
 

@@ -35,6 +35,16 @@ let cachedShelves: Shelf[] | null = readCache<Shelf[]>(PERSIST_KEY);
 let cachedAt = cachedShelves ? Date.now() - CACHE_TTL_MS : 0;
 let firstLoadDone = false;
 
+// Called by App.tsx on every login transition so an unmounted HomePage
+// re-reads from a clean slate on its next mount instead of seeding from
+// the previous account's shelves.
+export function resetHomePageModuleCache(): void {
+  cachedShelves = null;
+  cachedAt = 0;
+  firstLoadDone = false;
+  cachedMoodSongs = null;
+}
+
 const MOOD_TABS = [
   'All',
   'Energize',
@@ -165,22 +175,20 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
     fetchHome();
   }, [fetchHome]);
 
-  // When the user signs out, the cached shelves represent the previous
-  // account's home feed. Drop them so the next render pulls non-signed-in
-  // content instead of showing stale personalized data (issue #50).
-  useTauriEvent<boolean>('player:login-changed', (nowLoggedIn) => {
-    if (!nowLoggedIn) {
-      cachedShelves = null;
-      cachedAt = 0;
-      firstLoadDone = false;
-      cachedMoodSongs = null;
-      // Drop the persisted shelf cache too — it represents the previous
-      // account's home feed, not what an unauthenticated user should see.
-      clearCache(PERSIST_KEY);
-      setShelves([]);
-      setMoodSongs([]);
-      fetchHome(true);
-    }
+  // Any login transition (sign-in OR sign-out) means the cached shelves
+  // belong to a different account than the one now active. Drop them so
+  // the next render pulls fresh content instead of leaking the previous
+  // user's personalized shelves through this account's home feed
+  // (issue #50, extended for sign-in transitions too).
+  useTauriEvent<boolean>('player:login-changed', () => {
+    cachedShelves = null;
+    cachedAt = 0;
+    firstLoadDone = false;
+    cachedMoodSongs = null;
+    clearCache(PERSIST_KEY);
+    setShelves([]);
+    setMoodSongs([]);
+    fetchHome(true);
   });
 
   // Fetch mood songs when a mood tab other than "All" is selected

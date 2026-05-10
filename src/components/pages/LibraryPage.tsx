@@ -9,7 +9,8 @@ import type {
 } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
 import { debug } from '../../lib/debug';
-import { readCache, writeCache } from '../../lib/persistentCache';
+import { readCache, writeCache, clearCache } from '../../lib/persistentCache';
+import { useTauriEvent } from '../../hooks/useTauriEvent';
 import { rememberTrackArtworks } from '../../lib/trackArtworkRegistry';
 import { AlbumCard } from '../browse/AlbumCard';
 import { SongRow } from '../browse/SongRow';
@@ -97,6 +98,31 @@ export const LibraryPage: FC<LibraryPageProps> = ({
       ) ?? {},
   );
   const [isLoading, setIsLoading] = useState(false);
+  // Bumped on every login transition so the current tab refetches even
+  // when activeTab/refreshKey haven't changed. Without this, signing in
+  // (or switching accounts) leaves the stale list on screen until the
+  // user navigates between tabs.
+  const [loginInvalidationKey, setLoginInvalidationKey] = useState(0);
+
+  // Any login transition invalidates the entire library — every tab is
+  // 100% account-scoped. Clear the persisted caches AND the on-screen
+  // state so neither a remount nor a mid-flight render can leak the
+  // previous account's playlists/songs/albums/artists/podcasts.
+  useTauriEvent<boolean>('player:login-changed', () => {
+    clearCache(PERSIST_KEYS.playlists);
+    clearCache(PERSIST_KEYS.songs);
+    clearCache(PERSIST_KEYS.albums);
+    clearCache(PERSIST_KEYS.artists);
+    clearCache(PERSIST_KEYS.podcasts);
+    clearCache('library:podcasts:recency');
+    setPlaylists([]);
+    setSongs([]);
+    setAlbums([]);
+    setArtists([]);
+    setPodcasts([]);
+    setPodcastRecency({});
+    setLoginInvalidationKey((k) => k + 1);
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -159,7 +185,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [activeTab, refreshKey]);
+  }, [activeTab, refreshKey, loginInvalidationKey]);
 
   // After the podcast list lands, fan out per-show "last updated"
   // probes in parallel with a small concurrency cap. Skip shows
