@@ -24,10 +24,22 @@ interface FocusTimerProps {
   onStateChange?: (state: FocusTimerState) => void;
 }
 
-const MIN_SECS = 5 * 60;
-const MAX_SECS = 120 * 60;
-const STEP_SECS = 5 * 60;
+// Preset durations exposed as chips. Picked to cover the most common
+// focus patterns without flooding the UI: a sub-Pomodoro warm-up (15),
+// classic Pomodoro (25), one-task block (45), classic hour, deep-work
+// session (90). Drops the slider's 5-min and 120-min edges — those
+// were rarely used and not worth a slider's chrome.
+const PRESET_MINUTES = [15, 25, 45, 60, 90] as const;
 const DEFAULT_SECS = 25 * 60;
+
+// Ring geometry. Sized so the ring is the page's focal element — about
+// 60% of the surrounding card's max width. The stroke is thick enough
+// to register against the dark glass without dominating; the radius
+// leaves half-stroke breathing room inside the SVG viewBox.
+const RING_SIZE = 280;
+const RING_STROKE = 6;
+const RING_RADIUS = RING_SIZE / 2 - RING_STROKE / 2;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 function formatRemaining(secs: number): string {
   const m = Math.floor(secs / 60);
@@ -38,17 +50,24 @@ function formatRemaining(secs: number): string {
 /**
  * Focus timer — full-page overlay that mirrors NowPlaying's surface
  * style (slide-from-bottom, heavy backdrop blur, sidebar visible on
- * the left). Single-shot: pick a duration with the slider, hit Start,
- * watch the countdown, get a system notification when it hits 0.
+ * the left). Single-shot: pick a duration with the preset chips, hit
+ * Start, watch the circular countdown ring fill, get a system
+ * notification when it hits 0.
  *
- * Close affordances are gated through `tryClose`: while the timer is
+ * Layout (top to bottom):
+ *   ┌───────────────────────────────┐
+ *   │       FOCUS SESSION           │  eyebrow (state label)
+ *   │     ╭───────────────╮         │
+ *   │    │      25:00      │  ring  │  circular progress + time
+ *   │     ╰───────────────╯         │
+ *   │   Pick a duration and start.  │  subhead
+ *   │   [15] [25] [45] [60] [90]    │  preset chips
+ *   │          [ Start ]            │  primary CTA
+ *   └───────────────────────────────┘
+ *
+ * Close affordances are gated through the parent: while the timer is
  * running, both the explicit close button and the Reset button pop a
  * confirmation modal. Idle and Done states close without prompting.
- *
- * Sidebar nav resets the timer at the App level (silent, mirrors how
- * the queue / lyrics / nowplaying overlays behave) — the confirmation
- * modal is only for close paths originating from inside this page,
- * matching the user's "anything in the page" wording.
  */
 export const FocusTimer: FC<FocusTimerProps> = ({
   isOpen,
@@ -71,8 +90,6 @@ export const FocusTimer: FC<FocusTimerProps> = ({
           'You made it, time to take a break.',
         )
         .catch((e: unknown) => {
-          // Surface to the Rust dev-terminal so issues are visible.
-          // The "Done" view is still the in-app visual confirmation.
           debug.error('FocusTimer', 'notification failed', e);
         });
     },
@@ -94,12 +111,7 @@ export const FocusTimer: FC<FocusTimerProps> = ({
     }
   }, [isOpen, reset]);
 
-  const handleSlider = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setDuration(Number(e.target.value));
-  };
-
-  const headline =
-    state === 'done' ? 'Done' : 'Focus session';
+  const headline = state === 'done' ? 'Done' : 'Focus session';
   const subhead =
     state === 'done'
       ? 'You made it, time to take a break.'
@@ -107,10 +119,13 @@ export const FocusTimer: FC<FocusTimerProps> = ({
         ? 'Stay focused — you can reset anytime.'
         : 'Pick a duration and start your session.';
 
-  const progressPct =
-    state === 'running' || state === 'done'
-      ? Math.max(0, Math.min(100, ((totalSecs - remainingSecs) / totalSecs) * 100))
-      : 0;
+  // Progress fraction of the chosen duration that has elapsed. Clamped
+  // so the ring never overshoots due to rounding at the boundaries.
+  const progress =
+    state === 'idle'
+      ? 0
+      : Math.max(0, Math.min(1, (totalSecs - remainingSecs) / totalSecs));
+  const dashOffset = RING_CIRCUMFERENCE * (1 - progress);
 
   return (
     <SafeOverlay
@@ -138,11 +153,6 @@ export const FocusTimer: FC<FocusTimerProps> = ({
           position: 'relative',
         }}
       >
-        {/* Centered card. LiquidGlass rim matches the surface used by
-            NowPlaying's cover capsule, scaled to a content card. The
-            page has no close-affordance of its own — exit goes through
-            the chrome's clock toggle, which routes through the App-
-            level confirmation gate. */}
         <LiquidGlass
           borderRadius={32}
           blur={0}
@@ -163,35 +173,87 @@ export const FocusTimer: FC<FocusTimerProps> = ({
               alignItems: 'center',
               gap: 'var(--space-5)',
               borderRadius: 'inherit',
-              background:
-                'oklch(15% 0 0 / 0.55)',
+              background: 'oklch(15% 0 0 / 0.55)',
             }}
           >
             <div
               style={{
-                fontSize: 'var(--text-base)',
+                fontSize: 'var(--text-xs)',
                 fontWeight: 600,
                 color: 'var(--color-text-secondary)',
-                letterSpacing: '0.04em',
+                letterSpacing: '0.12em',
                 textTransform: 'uppercase',
               }}
             >
               {headline}
             </div>
 
+            {/* Circular progress ring with the time centered inside.
+                The SVG is decorative; the timer announcement lives on
+                the inner div so screen readers don't double-read the
+                ring's stroke geometry. */}
             <div
-              role="timer"
-              aria-live="polite"
               style={{
-                fontSize: 'clamp(64px, 12vw, 128px)',
-                fontWeight: 200,
-                fontVariantNumeric: 'tabular-nums',
-                color: 'var(--color-text-primary)',
-                letterSpacing: '-0.03em',
-                lineHeight: 1,
+                position: 'relative',
+                width: RING_SIZE,
+                height: RING_SIZE,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
             >
-              {formatRemaining(remainingSecs)}
+              <svg
+                aria-hidden
+                width={RING_SIZE}
+                height={RING_SIZE}
+                viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
+                style={{ position: 'absolute', inset: 0 }}
+              >
+                {/* Track — the unfilled portion of the ring. White at
+                    very low alpha so it reads against the dark glass
+                    without competing with the accent fill. */}
+                <circle
+                  cx={RING_SIZE / 2}
+                  cy={RING_SIZE / 2}
+                  r={RING_RADIUS}
+                  fill="none"
+                  stroke="oklch(100% 0 0 / 0.08)"
+                  strokeWidth={RING_STROKE}
+                />
+                {/* Progress — accent stroke. Rotated -90° so the start
+                    of the dash is at 12 o'clock; rounded cap softens
+                    the leading edge as it sweeps. */}
+                <circle
+                  cx={RING_SIZE / 2}
+                  cy={RING_SIZE / 2}
+                  r={RING_RADIUS}
+                  fill="none"
+                  stroke="var(--color-accent)"
+                  strokeWidth={RING_STROKE}
+                  strokeLinecap="round"
+                  strokeDasharray={RING_CIRCUMFERENCE}
+                  strokeDashoffset={dashOffset}
+                  transform={`rotate(-90 ${RING_SIZE / 2} ${RING_SIZE / 2})`}
+                  style={{
+                    transition:
+                      'stroke-dashoffset 1s linear, stroke 200ms var(--ease-out)',
+                  }}
+                />
+              </svg>
+              <div
+                role="timer"
+                aria-live="polite"
+                style={{
+                  fontSize: 'clamp(56px, 9vw, 88px)',
+                  fontWeight: 200,
+                  fontVariantNumeric: 'tabular-nums',
+                  color: 'var(--color-text-primary)',
+                  letterSpacing: '-0.04em',
+                  lineHeight: 1,
+                }}
+              >
+                {formatRemaining(remainingSecs)}
+              </div>
             </div>
 
             <p
@@ -207,58 +269,60 @@ export const FocusTimer: FC<FocusTimerProps> = ({
               {subhead}
             </p>
 
-            {/* Slider — only interactive while idle. While running/done
-                we still render it (with the active-progress fill) so
-                the layout doesn't shift. */}
-            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-              <input
-                type="range"
-                min={MIN_SECS}
-                max={MAX_SECS}
-                step={STEP_SECS}
-                value={state === 'idle' ? remainingSecs : totalSecs}
-                onChange={handleSlider}
-                disabled={state === 'running'}
-                aria-label="Focus duration in seconds"
-                style={{
-                  width: '100%',
-                  cursor: state === 'running' ? 'default' : 'pointer',
-                  accentColor: 'var(--color-accent)',
-                }}
-              />
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  fontSize: 'var(--text-xs)',
-                  color: 'var(--color-text-tertiary)',
-                }}
-              >
-                <span>5 min</span>
-                <span>120 min</span>
-              </div>
-              {(state === 'running' || state === 'done') && (
-                <div
-                  aria-hidden
-                  style={{
-                    width: '100%',
-                    height: 4,
-                    background: 'rgba(255,255,255,0.08)',
-                    borderRadius: 2,
-                    overflow: 'hidden',
-                    marginTop: 'var(--space-1)',
-                  }}
-                >
-                  <div
+            {/* Preset chips — only meaningful while the timer can be
+                reconfigured (idle or done). Disabled mid-run; the
+                hook's setDuration is a no-op there but disabling the
+                chips makes the affordance match the truth. */}
+            <div
+              role="group"
+              aria-label="Focus duration presets"
+              style={{
+                display: 'flex',
+                gap: 'var(--space-2)',
+                flexWrap: 'wrap',
+                justifyContent: 'center',
+              }}
+            >
+              {PRESET_MINUTES.map((min) => {
+                const secs = min * 60;
+                const isActive = totalSecs === secs;
+                const isDisabled = state === 'running';
+                return (
+                  <button
+                    key={min}
+                    type="button"
+                    onClick={() => setDuration(secs)}
+                    disabled={isDisabled}
+                    aria-pressed={isActive}
+                    aria-label={`${min} minutes`}
                     style={{
-                      width: `${progressPct}%`,
-                      height: '100%',
-                      background: 'var(--color-accent)',
-                      transition: 'width var(--duration-normal) var(--ease-out)',
+                      flexShrink: 0,
+                      padding: 'var(--space-2) var(--space-4)',
+                      minWidth: 56,
+                      fontSize: 'var(--text-sm)',
+                      fontWeight: isActive ? 600 : 500,
+                      borderRadius: 'var(--radius-full)',
+                      border: isActive
+                        ? 'none'
+                        : '1px solid var(--color-border)',
+                      background: isActive
+                        ? 'oklch(100% 0 0 / 0.10)'
+                        : 'transparent',
+                      color: isActive
+                        ? 'var(--color-accent)'
+                        : 'var(--color-text-secondary)',
+                      cursor: isDisabled ? 'default' : 'pointer',
+                      opacity: isDisabled ? 0.5 : 1,
+                      transition: `background var(--duration-fast) var(--ease-out),
+                                   color var(--duration-fast) var(--ease-out),
+                                   opacity var(--duration-fast) var(--ease-out)`,
+                      whiteSpace: 'nowrap',
                     }}
-                  />
-                </div>
-              )}
+                  >
+                    {min}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Primary CTA changes by state. */}

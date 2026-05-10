@@ -19,6 +19,11 @@ vi.mock('@liquidglass/react', () => ({
 
 const { FocusTimer } = await import('./index');
 
+// The 2026-05-09 redesign replaced the duration slider with five
+// preset chips (15 / 25 / 45 / 60 / 90 minutes) and added a circular
+// progress ring around the time. These tests drive duration changes
+// via the chip aria-labels instead of the old slider, and pick 15 min
+// as the test duration since it's the smallest preset.
 describe('FocusTimer', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -29,13 +34,11 @@ describe('FocusTimer', () => {
     vi.useRealTimers();
   });
 
-  it('idle: slider sets the readout, Start latches running', () => {
+  it('idle: clicking the 15-minute chip sets the readout, Start latches running', () => {
     render(<FocusTimer isOpen onClose={() => {}} />);
 
-    fireEvent.change(screen.getByRole('slider'), {
-      target: { value: String(5 * 60) },
-    });
-    expect(screen.getByText('05:00')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '15 minutes' }));
+    expect(screen.getByText('15:00')).toBeTruthy();
 
     fireEvent.click(screen.getByText(/^start$/i));
     expect(screen.getByText(/^reset$/i)).toBeTruthy();
@@ -43,13 +46,11 @@ describe('FocusTimer', () => {
 
   it('running: hits zero, fires notification, transitions to done', async () => {
     render(<FocusTimer isOpen onClose={() => {}} />);
-    fireEvent.change(screen.getByRole('slider'), {
-      target: { value: String(5 * 60) },
-    });
+    fireEvent.click(screen.getByRole('button', { name: '15 minutes' }));
     fireEvent.click(screen.getByText(/^start$/i));
 
     await act(async () => {
-      vi.advanceTimersByTime(5 * 60 * 1000);
+      vi.advanceTimersByTime(15 * 60 * 1000);
     });
 
     expect(notificationApi.show).toHaveBeenCalledTimes(1);
@@ -84,14 +85,12 @@ describe('FocusTimer', () => {
     // Initial idle on mount
     expect(onStateChange).toHaveBeenCalledWith('idle');
 
-    fireEvent.change(screen.getByRole('slider'), {
-      target: { value: String(5 * 60) },
-    });
+    fireEvent.click(screen.getByRole('button', { name: '15 minutes' }));
     fireEvent.click(screen.getByText(/^start$/i));
     expect(onStateChange).toHaveBeenCalledWith('running');
 
     await act(async () => {
-      vi.advanceTimersByTime(5 * 60 * 1000);
+      vi.advanceTimersByTime(15 * 60 * 1000);
     });
     expect(onStateChange).toHaveBeenCalledWith('done');
   });
@@ -99,12 +98,10 @@ describe('FocusTimer', () => {
   it('done view: Close calls onClose without any internal modal', async () => {
     const onClose = vi.fn();
     render(<FocusTimer isOpen onClose={onClose} />);
-    fireEvent.change(screen.getByRole('slider'), {
-      target: { value: String(5 * 60) },
-    });
+    fireEvent.click(screen.getByRole('button', { name: '15 minutes' }));
     fireEvent.click(screen.getByText(/^start$/i));
     await act(async () => {
-      vi.advanceTimersByTime(5 * 60 * 1000);
+      vi.advanceTimersByTime(15 * 60 * 1000);
     });
     fireEvent.click(screen.getByText(/^close$/i));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -112,5 +109,33 @@ describe('FocusTimer', () => {
     expect(
       screen.queryByText(/closing this page will reset the countdown/i),
     ).toBeNull();
+  });
+
+  it('active chip is announced via aria-pressed; running disables chips', () => {
+    render(<FocusTimer isOpen onClose={() => {}} />);
+    // Default duration is 25 min — that chip should be pressed at mount.
+    expect(
+      screen.getByRole('button', { name: '25 minutes' }).getAttribute('aria-pressed'),
+    ).toBe('true');
+    expect(
+      screen.getByRole('button', { name: '15 minutes' }).getAttribute('aria-pressed'),
+    ).toBe('false');
+
+    // Switch to 45.
+    fireEvent.click(screen.getByRole('button', { name: '45 minutes' }));
+    expect(
+      screen.getByRole('button', { name: '45 minutes' }).getAttribute('aria-pressed'),
+    ).toBe('true');
+
+    // Start running — chips should disable.
+    fireEvent.click(screen.getByText(/^start$/i));
+    expect(
+      (screen.getByRole('button', { name: '15 minutes' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: '90 minutes' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 });
