@@ -50,6 +50,27 @@
      new token so a single source of truth governs the chrome look. */
   --glass-bg: var(--glass-bg-chrome);
 
+  /* Glass-tile recipe — used by every "active" / "selected" surface that
+   * sits inside an already-blurred parent (sidebar nav active row, mood
+   * pills, focus-timer chips, refresh buttons). Cannot use nested
+   * backdrop-filter — WKWebView feedback-loops on stacked glass layers
+   * (issue #99). The visual signature comes from THREE shadow layers:
+   *   1. inset top: bright rim, the "lit edge" of a glass tile
+   *   2. inset bottom: subtle dark line, hints at the tile's thickness
+   *   3. outer drop: tile lifts slightly off the parent surface
+   * Combined with a brighter white tint than the legacy 0.10 alpha
+   * (which read as a flat highlight), the tile reads as a discrete
+   * Liquid-Glass plate. */
+  --glass-tile-bg: oklch(100% 0 0 / 0.10);
+  --glass-tile-bg-active: oklch(100% 0 0 / 0.14);
+  --glass-tile-shadow:
+    inset 0 1px 0 var(--glass-rim-bright),
+    inset 0 -1px 0 oklch(0% 0 0 / 0.10),
+    0 2px 6px oklch(0% 0 0 / 0.20);
+  --glass-tile-shadow-rest:
+    inset 0 1px 0 var(--glass-rim-mid),
+    0 1px 3px oklch(0% 0 0 / 0.15);
+
   /* Ambient page colour. Without this every backdrop-filter just
      sees the uniform --color-bg and refracts to dark — making the
      glass invisible. Two soft radial colour washes on the body give

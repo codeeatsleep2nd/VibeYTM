@@ -271,17 +271,33 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
             disabled={isRefreshing}
             aria-busy={isRefreshing}
             style={{
-              background: 'none',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-1) var(--space-3)',
-              color: 'var(--color-text-tertiary)',
+              // Glass pill — see HomePage refresh button for the recipe.
+              background: 'var(--glass-tile-bg)',
+              boxShadow: 'var(--glass-tile-shadow-rest)',
+              border: 'none',
+              borderRadius: 'var(--radius-full)',
+              padding: 'var(--space-1) var(--space-4)',
+              color: 'var(--color-text-secondary)',
               cursor: isRefreshing ? 'wait' : 'pointer',
               fontSize: 'var(--text-sm)',
               opacity: isRefreshing ? 0.6 : 1,
               display: 'inline-flex',
               alignItems: 'center',
               gap: 'var(--space-1)',
+              transition:
+                'background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)',
+            }}
+            onMouseEnter={(e) => {
+              if (isRefreshing) return;
+              e.currentTarget.style.background = 'var(--glass-tile-bg-active)';
+              e.currentTarget.style.boxShadow = 'var(--glass-tile-shadow)';
+              e.currentTarget.style.color = 'var(--color-text-primary)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'var(--glass-tile-bg)';
+              e.currentTarget.style.boxShadow =
+                'var(--glass-tile-shadow-rest)';
+              e.currentTarget.style.color = 'var(--color-text-secondary)';
             }}
           >
             <span
@@ -324,13 +340,21 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
                     fontWeight: isActive ? 600 : 500,
                     borderRadius: 'var(--radius-full)',
                     border: isActive ? 'none' : '1px solid var(--color-border)',
-                    background: isActive ? 'oklch(100% 0 0 / 0.10)' : 'transparent',
+                    // Active pill becomes a Liquid-Glass tile (rim
+                    // highlight + thickness + lift). See tokens.css.
+                    background: isActive
+                      ? 'var(--glass-tile-bg-active)'
+                      : 'transparent',
+                    boxShadow: isActive
+                      ? 'var(--glass-tile-shadow)'
+                      : undefined,
                     color: isActive
                       ? 'var(--color-accent)'
                       : 'var(--color-text-secondary)',
                     cursor: 'pointer',
                     transition: `background var(--duration-fast) var(--ease-out),
-                                 color var(--duration-fast) var(--ease-out)`,
+                                 color var(--duration-fast) var(--ease-out),
+                                 box-shadow var(--duration-fast) var(--ease-out)`,
                     whiteSpace: 'nowrap',
                   }}
                 >

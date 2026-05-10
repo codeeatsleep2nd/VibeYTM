@@ -44,19 +44,20 @@ const NavItem: FC<NavItemProps> = ({ label, icon, isActive, onClick }) => (
       padding: 'var(--space-2) var(--space-3)',
       border: 'none',
       borderRadius: 'var(--radius-md)',
-      // Selection style unified across the app: same white-wash glass
-      // tint used by the QueuePanel highlighted row
-      // (`QueueRow.tsx` baseStyle.background). Replaces the previous
-      // accent-tinted red so every "selected" surface in the UI reads
-      // the same visual weight against the liquid-glass plates.
-      background: isActive ? 'oklch(100% 0 0 / 0.10)' : 'transparent',
+      // Active row reads as a discrete Liquid-Glass tile via the
+      // `--glass-tile-*` recipe (rim highlight + thickness shadow +
+      // outer lift) — see tokens.css. Replaces the legacy flat 0.10
+      // white tint so the active row has visible depth instead of
+      // looking like a hover highlight.
+      background: isActive ? 'var(--glass-tile-bg-active)' : 'transparent',
+      boxShadow: isActive ? 'var(--glass-tile-shadow)' : undefined,
       color: isActive
         ? 'var(--color-accent)'
         : 'var(--color-text-secondary)',
       fontSize: 'var(--text-sm)',
       fontWeight: isActive ? 600 : 500,
       transition:
-        'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)',
+        'background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out)',
       cursor: 'pointer',
       textAlign: 'left',
       whiteSpace: 'nowrap',

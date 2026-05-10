@@ -227,13 +227,29 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
           onClick={() => fetchHome(true)}
           disabled={isLoading}
           style={{
-            background: 'none',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-1) var(--space-3)',
-            color: 'var(--color-text-tertiary)',
+            // Glass pill — replaces the wireframe 1px border. Reads as a
+            // tile sitting on the greeting plate, not a stamp on it.
+            background: 'var(--glass-tile-bg)',
+            boxShadow: 'var(--glass-tile-shadow-rest)',
+            border: 'none',
+            borderRadius: 'var(--radius-full)',
+            padding: 'var(--space-1) var(--space-4)',
+            color: 'var(--color-text-secondary)',
             cursor: isLoading ? 'wait' : 'pointer',
             fontSize: 'var(--text-sm)',
+            transition:
+              'background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)',
+          }}
+          onMouseEnter={(e) => {
+            if (isLoading) return;
+            e.currentTarget.style.background = 'var(--glass-tile-bg-active)';
+            e.currentTarget.style.boxShadow = 'var(--glass-tile-shadow)';
+            e.currentTarget.style.color = 'var(--color-text-primary)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'var(--glass-tile-bg)';
+            e.currentTarget.style.boxShadow = 'var(--glass-tile-shadow-rest)';
+            e.currentTarget.style.color = 'var(--color-text-secondary)';
           }}
         >
           ↻ Refresh

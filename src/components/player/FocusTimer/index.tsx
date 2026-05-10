@@ -307,9 +307,15 @@ export const FocusTimer: FC<FocusTimerProps> = ({
                       border: isActive
                         ? 'none'
                         : '1px solid var(--color-border)',
+                      // Active chip reads as a Liquid-Glass tile (rim +
+                      // thickness + lift), unified with sidebar nav and
+                      // mood pills. Recipe lives in tokens.css.
                       background: isActive
-                        ? 'oklch(100% 0 0 / 0.10)'
+                        ? 'var(--glass-tile-bg-active)'
                         : 'transparent',
+                      boxShadow: isActive
+                        ? 'var(--glass-tile-shadow)'
+                        : undefined,
                       color: isActive
                         ? 'var(--color-accent)'
                         : 'var(--color-text-secondary)',
@@ -317,7 +323,8 @@ export const FocusTimer: FC<FocusTimerProps> = ({
                       opacity: isDisabled ? 0.5 : 1,
                       transition: `background var(--duration-fast) var(--ease-out),
                                    color var(--duration-fast) var(--ease-out),
-                                   opacity var(--duration-fast) var(--ease-out)`,
+                                   opacity var(--duration-fast) var(--ease-out),
+                                   box-shadow var(--duration-fast) var(--ease-out)`,
                       whiteSpace: 'nowrap',
                     }}
                   >
