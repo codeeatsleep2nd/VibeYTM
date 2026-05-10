@@ -696,6 +696,21 @@ export const browseApi = {
   searchSuggestions: (query: string) => invoke<string[]>('search_suggestions', { query }),
   savePlaylistToLibrary: (playlistId: string) => invoke('save_playlist_to_library', { playlistId }),
   removePlaylistFromLibrary: (playlistId: string) => invoke('remove_playlist_from_library', { playlistId }),
+  // Returns `true` when YTM actually added the track, `false` when YTM
+  // deduped it (track was already in the playlist). UI surfaces the two
+  // outcomes as distinct toasts.
+  addTrackToPlaylist: (playlistId: string, videoId: string) =>
+    invoke<boolean>('add_track_to_playlist', { playlistId, videoId }),
+  // `setVideoId` is YTM's per-row id (carried on TrackInfo by the playlist
+  // parser). Both ids are required — `removedVideoId` alone can't address
+  // duplicate occurrences of the same video.
+  removeTrackFromPlaylist: (
+    playlistId: string, setVideoId: string, videoId: string,
+  ) => invoke('remove_track_from_playlist', { playlistId, setVideoId, videoId }),
+  createPlaylist: (
+    title: string, description: string, privacy: PlaylistPrivacy, seedVideoId: string | null,
+  ) => invoke<string>('create_playlist', { title, description, privacy, seedVideoId }),
+  deletePlaylist: (playlistId: string) => invoke('delete_playlist', { playlistId }),
 };
 ```
 
