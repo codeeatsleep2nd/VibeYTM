@@ -47,12 +47,19 @@ export const SongRow: FC<SongRowProps> = ({ track, index, onClick, playlistId })
         // paddingRight stays so the duration column doesn't crowd
         // the row's right edge.
         padding: 'var(--space-2) var(--space-3) var(--space-2) 0',
-        background: isHovered ? 'var(--color-surface-2)' : 'transparent',
+        // Glass-tile hover (rim + thickness + lift) replaces the flat
+        // `--color-surface-2` fill so the hovered row reads as a
+        // discrete glass plate floating above the list. Tokens.css
+        // owns the recipe — same as sidebar nav, mood pills, focus
+        // chips, search category tabs.
+        background: isHovered ? 'var(--glass-tile-bg-active)' : 'transparent',
+        boxShadow: isHovered ? 'var(--glass-tile-shadow)' : undefined,
         border: 'none',
         borderRadius: 'var(--radius-md)',
         cursor: 'pointer',
         textAlign: 'left',
-        transition: `background var(--duration-fast) var(--ease-out)`,
+        transition:
+          'background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out)',
       }}
     >
       {index !== undefined && (

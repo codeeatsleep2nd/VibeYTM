@@ -71,12 +71,18 @@ export const EpisodeRow: FC<EpisodeRowProps> = ({ track, playlistId }) => {
           gap: 'var(--space-4)',
           width: '100%',
           padding: 'var(--space-3) var(--space-3) var(--space-3) 0',
-          background: isHovered ? 'var(--color-surface-2)' : 'transparent',
+          // Same glass-tile hover treatment as SongRow — rim + thickness
+          // + lift instead of a flat surface-2 fill.
+          background: isHovered
+            ? 'var(--glass-tile-bg-active)'
+            : 'transparent',
+          boxShadow: isHovered ? 'var(--glass-tile-shadow)' : undefined,
           border: 'none',
           borderRadius: 'var(--radius-md)',
           cursor: 'pointer',
           textAlign: 'left',
-          transition: 'background var(--duration-fast) var(--ease-out)',
+          transition:
+            'background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out)',
         }}
       >
         <div
