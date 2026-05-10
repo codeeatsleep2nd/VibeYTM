@@ -60,11 +60,13 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
       zIndex={80}
       // Cover the entire main content area (right of the sidebar) —
       // top to bottom of the window, edge to edge of the right side.
-      // Sidebar stays visible on the left; title-bar drag region and
-      // player chrome remain on top via their higher z-indexes.
+      // Reads `--sidebar-effective-width` (set on AppShell root) so the
+      // overlay slides flush to the left edge when the sidebar is
+      // collapsed. Title-bar drag region and player chrome remain on top
+      // via their higher z-indexes.
       inset={{
         top: '0',
-        left: 'var(--sidebar-width)',
+        left: 'var(--sidebar-effective-width, var(--sidebar-width))',
         right: '0',
         bottom: '0',
       }}
@@ -289,7 +291,7 @@ interface CoverProps {
   //   • the viewport height minus chrome + title block so the cover fits.
   const SPLIT_ROW_MAX = 1200;
   const SPLIT_COVER_FRACTION = 2 / 3;
-  const coverSide = `min(${SPLIT_ROW_MAX * SPLIT_COVER_FRACTION}px, calc(${SPLIT_COVER_FRACTION} * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px))`;
+  const coverSide = `min(${SPLIT_ROW_MAX * SPLIT_COVER_FRACTION}px, calc(${SPLIT_COVER_FRACTION} * (100vw - var(--sidebar-effective-width, var(--sidebar-width)) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px))`;
 
 const Cover: FC<CoverProps> = ({ track, size, activePlaylistId }) => {
   void size; // kept for API compatibility; both modes now share one size

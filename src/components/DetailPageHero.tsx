@@ -155,7 +155,11 @@ export const DetailPageHero: FC<DetailPageHeroProps> = ({
             // y-band as a window-drag handle.
             position: 'fixed',
             top: 'var(--space-2)',
-            left: 'calc(var(--sidebar-width) + var(--space-6))',
+            // Tracks `--sidebar-effective-width` so the back button slides
+            // left in lockstep with the sidebar collapse.
+            left:
+              'calc(var(--sidebar-effective-width, var(--sidebar-width)) + var(--space-6))',
+            transition: 'left var(--duration-slow) var(--ease-out)',
             zIndex: 250,
             // @ts-expect-error -- non-standard WebKit property for Tauri window dragging
             WebkitAppRegion: 'no-drag',

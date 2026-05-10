@@ -92,7 +92,7 @@ export const LyricsOverlay: FC<LyricsOverlayProps> = ({ isOpen }) => {
         top: 'calc(var(--title-bar-height) + var(--space-3))',
         right: 'var(--space-6)',
         bottom: 'calc(var(--player-bar-height) + var(--space-3))',
-        left: 'calc(var(--sidebar-width) + var(--space-6) + min(800px, calc((2 / 3) * (100vw - var(--sidebar-width) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px)) + var(--space-5))',
+        left: 'calc(var(--sidebar-effective-width, var(--sidebar-width)) + var(--space-6) + min(800px, calc((2 / 3) * (100vw - var(--sidebar-effective-width, var(--sidebar-width)) - var(--space-6) * 2)), calc(100vh - var(--title-bar-height) - var(--player-bar-height) - var(--space-3) - 160px)) + var(--space-5))',
       }}
       background="linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.10) 100%), var(--glass-bg-card)"
       backdropFilter="blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))"

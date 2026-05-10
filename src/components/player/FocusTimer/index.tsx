@@ -135,7 +135,9 @@ export const FocusTimer: FC<FocusTimerProps> = ({
       zIndex={80}
       inset={{
         top: '0',
-        left: 'var(--sidebar-width)',
+        // Reads `--sidebar-effective-width` (set on AppShell root) so the
+        // page slides left when the sidebar is collapsed.
+        left: 'var(--sidebar-effective-width, var(--sidebar-width))',
         right: '0',
         bottom: '0',
       }}

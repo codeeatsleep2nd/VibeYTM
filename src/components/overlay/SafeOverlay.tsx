@@ -77,9 +77,13 @@ interface SafeOverlayProps {
   border?: CSSProperties['border'];
 }
 
+// Default left inset reads `--sidebar-effective-width` (set on the AppShell
+// root) so overlays slide left when the sidebar collapses. Falls back to
+// the fixed `--sidebar-width` so callers rendered outside an AppShell
+// (e.g. focused tests) still get the legacy 240px gutter.
 const DEFAULT_INSET: Required<SafeOverlayInset> = {
   top: 'var(--title-bar-height)',
-  left: 'var(--sidebar-width)',
+  left: 'var(--sidebar-effective-width, var(--sidebar-width))',
   right: '0',
   bottom: 'var(--player-bar-height)',
 };
@@ -222,8 +226,11 @@ export const SafeOverlay = forwardRef<HTMLElement, SafeOverlayProps>(function Sa
     // motion. Previously opacity used the shorter `--duration-normal`
     // (200 ms), which made the close fade out before the slide-down
     // could finish — felt twice as fast as the open.
+    // `left` transition lets overlays slide in lockstep with the sidebar
+    // collapse. Without it the overlay snaps to its new gutter the
+    // instant the sidebar starts moving, which reads as a glitch.
     transition:
-      'opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1)',
+      'opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1), left var(--duration-slow) var(--ease-out)',
     boxShadow,
     borderRadius,
     border,

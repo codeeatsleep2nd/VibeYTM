@@ -54,6 +54,12 @@ export {
   // glyph (SF Symbol `clock.arrow.circlepath`); lucide's `History`
   // is the closest visual match available.
   History as HistoryIcon,
+  // Sidebar collapse/expand toggle. Apple Music uses `sidebar.left`
+  // (single-state) but the affordance is much clearer when the icon
+  // physically flips orientation: PanelLeftClose says "hide" while the
+  // sidebar is open, PanelLeftOpen says "show" while it's hidden.
+  PanelLeftClose as SidebarHideIcon,
+  PanelLeftOpen as SidebarShowIcon,
 } from 'lucide-react';
 
 import { Heart } from 'lucide-react';

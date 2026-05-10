@@ -338,12 +338,19 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
         // Both gutters use `--space-6` (24 px) — same as the page
         // section's horizontal padding above. Equal visible gap on
         // both sides of the chrome capsule, window-size-independent.
-        // Bumped from `--space-4` (16 px) so the right gap visually
-        // matches the left despite the window's rounded bottom-right
-        // corner curving inward (the bottom-left is hidden behind
-        // the sidebar so no curve is visible there).
-        left: 'calc(var(--sidebar-width) + var(--space-6))',
+        // Reads `--sidebar-effective-width` (set on AppShell root) so
+        // the chrome slides left in lockstep with the sidebar's
+        // collapse animation. Falls back to `--sidebar-width` for any
+        // ancestor that didn't define the effective variable, matching
+        // the legacy "always pinned right of the sidebar" behavior.
+        left:
+          'calc(var(--sidebar-effective-width, var(--sidebar-width)) + var(--space-6))',
         right: 'var(--space-6)',
+        // Slide left/right at the same cadence as the sidebar collapses
+        // so the chrome doesn't snap mid-animation. The grid column
+        // shrinks via the AppShell's transition; this keeps the chrome's
+        // computed `left` in step with it.
+        transition: 'left var(--duration-slow) var(--ease-out)',
         // Explicit height — `<LiquidGlass>` inside takes 100 % of its
         // parent. Without this the footer auto-fits and the WebGL/SVG
         // wrapper collapses, clipping the controls' top edge.

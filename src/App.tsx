@@ -40,6 +40,30 @@ const App: FC = () => {
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isFocusTimerOpen, setIsFocusTimerOpen] = useState(false);
+  // Sidebar visibility — persisted to localStorage so the choice survives
+  // launches. Read once at mount; subsequent toggles persist via
+  // `toggleSidebar` below. Apple Music's ⌘\ shortcut is wired up alongside
+  // the other global shortcuts.
+  const [isSidebarVisible, setIsSidebarVisible] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      return localStorage.getItem('vibeytm:sidebar-visible') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const toggleSidebar = useCallback(() => {
+    setIsSidebarVisible((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem('vibeytm:sidebar-visible', next ? '1' : '0');
+      } catch {
+        // localStorage unavailable — value lives only in memory for this
+        // session, no recovery needed.
+      }
+      return next;
+    });
+  }, []);
   // FocusTimer reports its current state up via `onStateChange`. Held
   // here so the App-level close gate (`requestCloseFocusTimer`) can
   // decide whether to prompt before any close path completes.
@@ -310,6 +334,13 @@ const App: FC = () => {
           onActivate: () => goSidebar('settings'),
         },
         {
+          key: '\\',
+          meta: true,
+          label: 'Toggle sidebar',
+          hint: '⌘\\',
+          onActivate: toggleSidebar,
+        },
+        {
           key: '/',
           meta: true,
           label: 'Show keyboard shortcuts',
@@ -448,6 +479,8 @@ const App: FC = () => {
       onFocusTimerClose={() =>
         requestCloseFocusTimer(() => setIsFocusTimerOpen(false))
       }
+      sidebarVisible={isSidebarVisible}
+      onToggleSidebar={toggleSidebar}
     >
       {/*
         The underlying page (home/search/explore/library/settings) stays
