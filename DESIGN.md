@@ -4,6 +4,135 @@
 
 ---
 
+## 0. Design System — One-Page Cheatsheet
+
+The system this app is actually built against. Read this before adding a new
+component or choosing a value inline. The deeper architecture sections below
+remain canonical for IPC, state, and data flow; for visual language, this
+cheatsheet supersedes the older §9 token block.
+
+### North star
+
+Apple-Music-style desktop music player. Dark luxury, OKLCH palette, Liquid
+Glass surfaces refracting an ambient page gradient. Visual fidelity to Apple
+Music is the rubric — when in doubt, pull a real screenshot of
+music.apple.com (per CLAUDE.md "Visual fidelity" rule), don't design from
+memory.
+
+### Palette (OKLCH only — no hex, no rgb)
+
+Authoritative source: `src/styles/tokens.css`. The tokens listed here mirror
+that file at the time of writing; treat tokens.css as the source of truth.
+
+| Token | Value | Use |
+|---|---|---|
+| `--color-bg` | `oklch(10% 0.005 270)` | Page base. |
+| `--color-surface-1/2/3` | `14% / 18% / 22%` lightness | Card / row / hover surfaces. |
+| `--color-text-primary` | `oklch(95% 0 0)` | Body, titles. |
+| `--color-text-secondary` | `oklch(82% 0 0)` | Subtitles, secondary metadata. |
+| `--color-text-tertiary` | `oklch(75% 0 0)` | Labels, time codes, tertiary chrome. |
+| `--color-accent` | `oklch(63% 0.258 29)` | YouTube red. The ONLY accent color. |
+| `--color-accent-hover` | `oklch(69% 0.258 29)` | Lifts lightness, holds hue/chroma. |
+
+The ambient page gradient (`--ambient-tint-1` violet, `--ambient-tint-2`
+red) exists ONLY to give Liquid Glass surfaces something to refract. It must
+never read as foreground content.
+
+### Liquid Glass — three tiers
+
+Every glass surface uses `backdrop-filter: blur(...) saturate(220%)
+brightness(1.05)`. The saturate boost keeps the bleed-through from
+desaturating to gray.
+
+| Tier | Token | Where |
+|---|---|---|
+| Chrome | `--glass-bg-chrome` (0.40 opacity) | Sidebar, player chrome, queue drawer. |
+| Card | `--glass-bg-card` (0.30) | Album cards, song rows, content surfaces. |
+| Subtle | `--glass-bg-subtle` (0.18) | Section headers, faint background tints. |
+
+Rim brightness: `--glass-rim-bright/mid/dim` for plate edges. Bright on the
+player chrome, mid on sidebars, dim on cards.
+
+### Typography
+
+System font stack — `-apple-system, BlinkMacSystemFont, 'SF Pro Text',
+'Helvetica Neue', Arial, sans-serif`. On macOS this resolves to SF Pro,
+which is the right Apple Music expectation. Cross-platform behavior: revisit
+when shipping on Windows / Linux.
+
+| Token | Pixel | Use |
+|---|---|---|
+| `--text-xs` | 11 | Tertiary labels, sidebar section headers. |
+| `--text-sm` | 13 | Sidebar nav, button captions, metadata. |
+| `--text-base` | 15 | Body. |
+| `--text-lg` | 18 | Subheads, in-card titles. |
+| `--text-xl` | 22 | Detail-page secondary headings. |
+| `--text-2xl` | 28 | Detail-page H1 (album / playlist titles). |
+| `--text-display-sm` | 26 | Section H2 on Home/Explore (Listen again, ...). |
+| `--text-display` | 32 | Page-level H1 (greeting, page title). |
+
+Hierarchy on Home: greeting (`--text-display`) > section H2
+(`--text-display-sm`) > content. Letter-spacing tightens as size grows:
+`-0.025em` at display sizes, `-0.02em` at 2xl, `-0.01em` at lg.
+
+### Spacing — 4px grid
+
+`--space-1` (4) through `--space-16` (64). No half-steps. If a layout needs
+6px, you're solving the wrong problem. `--sidebar-width: 240`,
+`--player-bar-height: 72`, `--title-bar-height: 38`,
+`--now-playing-width: 320` — fixed, do not inline-override.
+
+### Radius
+
+`--radius-sm` (4) inline pills, `--radius-md` (8) buttons + nav items,
+`--radius-lg` (12) cards, `--radius-xl` (16) hero surfaces, `--radius-full`
+circular.
+
+### Motion
+
+| Token | ms | Use |
+|---|---|---|
+| `--duration-fast` | 100 | Hover, focus, slider thumb size. |
+| `--duration-normal` | 200 | Page chrome reveals, button state. |
+| `--duration-slow` | 400 | Overlay opens (NowPlaying, Lyrics, Queue). |
+| `--ease-out` | `cubic-bezier(0.16, 1, 0.3, 1)` | Apple ease-out-expo. Default. |
+
+`prefers-reduced-motion: reduce` flattens animation/transition to 0.01ms via
+the global rule in `global.css`. Add overrides for any new keyframe.
+
+### Banned patterns (WKWebView landmines from CLAUDE.md)
+
+These are not opinions, they are documented bug traps:
+
+- **Real `<button>` for click targets.** `<div role="button">` silently
+  drops onClick in this WKWebView. Inner spans with `role="button"` are OK
+  to avoid nested buttons.
+- **No `transform` on `ReloadOverlay`'s children-wrapping layer.** Creates
+  a stacking context WKWebView mishandles for hit-testing. Blur is the cue;
+  transform is forbidden.
+- **No `pointer-events: none` on a wrapper that should keep cards
+  clickable** during refresh. Block events on a tiny corner spinner only.
+- **AND child `pointer-events: auto` with parent open state** — otherwise
+  an inert-looking overlay steals clicks.
+- **No video thumbnails on cards.** Album art only, filtered by
+  `isAlbumArtUrl` or recovered via `useAudioCounterpartArtwork`.
+- **State pushed to YTM via IPC must persist to YTM-origin localStorage**
+  so the bridge can re-seed before the new `<video>` exists. See volume /
+  account / shuffle / repeat seed-then-persist in CLAUDE.md.
+
+### When to add a token vs inline a value
+
+If you reach for an inline value not in this doc and it will recur, add a
+token. If it's a one-off, inline is fine — but leave a code comment naming
+the one-offness so the next reader doesn't assume it's a system value.
+
+### When to extract a component
+
+After two copies of the same JSX block. Three is the abstraction threshold.
+Files cap at ~400 lines; split by sub-component when bigger.
+
+---
+
 ## 1. Architecture Overview
 
 The key insight: **YouTube Music's web player is hidden**. It runs in an invisible WebView purely as an audio engine. The user sees only our custom React UI, styled like Apple Music.
@@ -657,6 +786,13 @@ Integrations: `media_controls`, `notifications`, `global_shortcuts` — each lis
 ---
 
 ## 9. Design Tokens
+
+> **DEPRECATED — see §0 Design System Cheatsheet (top of this file) for the
+> current token values.** The block below was the original token plan when
+> this design doc was written; it has since drifted from `src/styles/tokens.css`
+> (e.g. `--text-2xl` is 28px in code, not 32px as listed below). Treat this
+> section as historical context only. The cheatsheet at §0 is the canonical
+> visual reference; `tokens.css` is the runtime source of truth.
 
 ```css
 /* src/styles/tokens.css */

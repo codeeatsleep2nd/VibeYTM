@@ -1,5 +1,5 @@
 import { type FC, useCallback, useEffect, useState } from 'react';
-import type { Shelf } from '../../lib/types';
+import type { Shelf, TrackInfo } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
 import { readCache, writeCache, clearCache } from '../../lib/persistentCache';
 import { useTauriEvent } from '../../hooks/useTauriEvent';
@@ -9,6 +9,34 @@ import { SongRow } from '../browse/SongRow';
 import { CachedImage } from '../CachedImage';
 import { LoadingSpinner, ReloadOverlay } from '../LoadingOverlay';
 import { LiquidGlass } from '@liquidglass/react';
+
+// Mood / genre pills — Apple Music puts these on Browse, not Home.
+// Selecting a mood other than "All" replaces the explore shelves with a
+// single 3-column "<mood> Songs" grid; selecting "All" returns to the
+// curated explore feed.
+const MOOD_TABS = [
+  'All',
+  'Energize',
+  'Party',
+  'Feel good',
+  'Relax',
+  'Workout',
+  'Commute',
+  'Romance',
+  'Sad',
+  'Focus',
+  'Sleep',
+] as const;
+
+type MoodTab = (typeof MOOD_TABS)[number];
+
+// Module-level so the mood selection survives tab-switch remounts — users
+// expect returning to Explore to land them back on the tab they were
+// browsing, not snap-reset to "All".
+let lastActiveMood: MoodTab = 'All';
+let cachedMoodSongs: { mood: MoodTab; songs: TrackInfo[] } | null = null;
+
+const SONGS_FILTER = 'EgWKAQIIAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 
 interface ExplorePageProps {
   onOpenPlaylist?: (playlistId: string) => void;
@@ -27,6 +55,8 @@ let exploreCache: Shelf[] | null = readCache<Shelf[]>(PERSIST_KEY);
 // re-reads from a clean slate on its next mount.
 export function resetExplorePageModuleCache(): void {
   exploreCache = null;
+  cachedMoodSongs = null;
+  lastActiveMood = 'All';
 }
 
 export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
@@ -38,6 +68,18 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
   // show feedback (spin + disabled) without swapping out the whole page.
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeMood, setActiveMood] = useState<MoodTab>(lastActiveMood);
+  const [moodSongs, setMoodSongs] = useState<TrackInfo[]>(
+    cachedMoodSongs && cachedMoodSongs.mood === lastActiveMood
+      ? cachedMoodSongs.songs
+      : [],
+  );
+  const [isMoodLoading, setIsMoodLoading] = useState(false);
+
+  const selectMood = useCallback((mood: MoodTab) => {
+    lastActiveMood = mood;
+    setActiveMood(mood);
+  }, []);
 
   const fetchExplore = useCallback((userInitiated = false) => {
     if (exploreCache === null) setIsLoading(true);
@@ -67,13 +109,59 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
 
   // Any login transition (sign-in OR sign-out) invalidates the cached
   // shelves — Explore mixes public and YTM-personalized rails, so the
-  // previous account's data shouldn't bleed into the new session.
+  // previous account's data shouldn't bleed into the new session. Also
+  // snap back to "All" so the user lands on the curated feed for the
+  // new account; without this, a previously-selected mood (say,
+  // "Workout") stays active but the song grid goes blank because the
+  // effect's `[activeMood]` dep doesn't change and so it never refires
+  // a fetch — the user would have to click "All" manually to recover.
   useTauriEvent<boolean>('player:login-changed', () => {
     exploreCache = null;
+    cachedMoodSongs = null;
+    lastActiveMood = 'All';
     clearCache(PERSIST_KEY);
     setShelves([]);
+    setMoodSongs([]);
+    setActiveMood('All');
     fetchExplore(true);
   });
+
+  // Fetch mood songs when a mood tab other than "All" is selected.
+  useEffect(() => {
+    if (activeMood === 'All') {
+      setMoodSongs([]);
+      return;
+    }
+
+    if (cachedMoodSongs && cachedMoodSongs.mood === activeMood) {
+      setMoodSongs(cachedMoodSongs.songs);
+      setIsMoodLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsMoodLoading(true);
+
+    browseApi
+      .search(activeMood, SONGS_FILTER)
+      .then((results) => {
+        if (!cancelled) {
+          cachedMoodSongs = { mood: activeMood, songs: results.songs };
+          setMoodSongs(results.songs);
+          setIsMoodLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMoodSongs([]);
+          setIsMoodLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMood]);
 
   const isReloading = isLoading || isRefreshing;
 
@@ -153,16 +241,21 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
               'calc(var(--title-bar-height) - var(--space-3)) var(--space-10) var(--space-3)',
             background: 'oklch(20% 0.005 270 / 0.30)',
             borderRadius: 'inherit',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
           }}
         >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 'var(--space-4)',
+            }}
+          >
           <h1
             style={{
-              fontSize: 'var(--text-2xl)',
+              fontSize: 'var(--text-display)',
               fontWeight: 700,
-              letterSpacing: '-0.02em',
+              letterSpacing: '-0.025em',
               color: 'var(--color-text-primary)',
               margin: 0,
             }}
@@ -204,16 +297,110 @@ export const ExplorePage: FC<ExplorePageProps> = ({ onOpenPlaylist }) => {
             </span>
             {isRefreshing ? 'Refreshing…' : 'Refresh'}
           </button>
+          </div>
+
+          {/* Mood / genre tabs — moved here from Home so the personalized
+              greeting page stays personal, and the discovery surface owns
+              the genre filtering (Apple Music parity). */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 'var(--space-2)',
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              scrollbarWidth: 'none',
+            }}
+          >
+            {MOOD_TABS.map((tab) => {
+              const isActive = tab === activeMood;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => selectMood(tab)}
+                  style={{
+                    flexShrink: 0,
+                    padding: 'var(--space-2) var(--space-4)',
+                    fontSize: 'var(--text-sm)',
+                    fontWeight: isActive ? 600 : 500,
+                    borderRadius: 'var(--radius-full)',
+                    border: isActive ? 'none' : '1px solid var(--color-border)',
+                    background: isActive ? 'oklch(100% 0 0 / 0.10)' : 'transparent',
+                    color: isActive
+                      ? 'var(--color-accent)'
+                      : 'var(--color-text-secondary)',
+                    cursor: 'pointer',
+                    transition: `background var(--duration-fast) var(--ease-out),
+                                 color var(--duration-fast) var(--ease-out)`,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {tab}
+                </button>
+              );
+            })}
+          </div>
         </div></LiquidGlass>
       </div>
 
-      {shelves.map((shelf) => (
-        <ShelfRow key={shelf.title} title={shelf.title}>
-          {renderShelfContent(shelf, onOpenPlaylist)}
-        </ShelfRow>
-      ))}
+      {activeMood !== 'All' && (
+        <>
+          {isMoodLoading && (
+            <p
+              style={{
+                fontSize: 'var(--text-base)',
+                color: 'var(--color-text-tertiary)',
+              }}
+            >
+              Loading {activeMood} songs...
+            </p>
+          )}
+          {!isMoodLoading && moodSongs.length > 0 && (
+            <ShelfRow title={`${activeMood} Songs`}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  columnGap: 'var(--space-4)',
+                  rowGap: 'var(--space-1)',
+                }}
+              >
+                {moodSongs.map((track, i) => (
+                  <SongRow key={track.videoId || `mood-${i}`} track={track} />
+                ))}
+              </div>
+            </ShelfRow>
+          )}
+          {!isMoodLoading && moodSongs.length === 0 && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '120px',
+              }}
+            >
+              <p
+                style={{
+                  fontSize: 'var(--text-base)',
+                  color: 'var(--color-text-tertiary)',
+                  textAlign: 'center',
+                }}
+              >
+                No songs found for "{activeMood}"
+              </p>
+            </div>
+          )}
+        </>
+      )}
 
-      {shelves.length === 0 && (
+      {activeMood === 'All' &&
+        shelves.map((shelf) => (
+          <ShelfRow key={shelf.title} title={shelf.title}>
+            {renderShelfContent(shelf, onOpenPlaylist)}
+          </ShelfRow>
+        ))}
+
+      {activeMood === 'All' && shelves.length === 0 && (
         <div
           style={{
             display: 'flex',

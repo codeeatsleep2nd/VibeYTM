@@ -69,6 +69,16 @@
   --text-lg: 1.125rem;
   --text-xl: 1.375rem;
   --text-2xl: 1.75rem;
+  /* Display-size for section H2s. Sits between --text-2xl (page H1)
+     and the greeting display below. Used by ShelfRow so each shelf on
+     Home reads as a distinct discovery destination, not a meek
+     subheading. */
+  --text-display-sm: 1.625rem;
+  /* Greeting / page H1 display size. Was previously --text-2xl (28px);
+     bumped here so the greeting plate carries weight even without a
+     refresh button, and so section H2s can grow to --text-display-sm
+     without out-ranking the page title. */
+  --text-display: 2rem;
 
   /* Spacing */
   --space-1: 4px;

@@ -1,5 +1,5 @@
 import { type FC, useCallback, useEffect, useState } from 'react';
-import type { Shelf, TrackInfo } from '../../lib/types';
+import type { Shelf } from '../../lib/types';
 import { browseApi, playFirstFromPlaylist } from '../../lib/ipc';
 import { debug } from '../../lib/debug';
 import { useTauriEvent } from '../../hooks/useTauriEvent';
@@ -42,32 +42,7 @@ export function resetHomePageModuleCache(): void {
   cachedShelves = null;
   cachedAt = 0;
   firstLoadDone = false;
-  cachedMoodSongs = null;
 }
-
-const MOOD_TABS = [
-  'All',
-  'Energize',
-  'Party',
-  'Feel good',
-  'Relax',
-  'Workout',
-  'Commute',
-  'Romance',
-  'Sad',
-  'Focus',
-  'Sleep',
-] as const;
-
-type MoodTab = (typeof MOOD_TABS)[number];
-
-// Module-level so the mood selection survives tab-switch remounts — users
-// expect returning to Home to land them back on the tab they were browsing,
-// not snap-reset to "All".
-let lastActiveMood: MoodTab = 'All';
-let cachedMoodSongs: { mood: MoodTab; songs: TrackInfo[] } | null = null;
-
-const SONGS_FILTER = 'EgWKAQIIAWoSEA4QCRAKEAUQBBADEBUQEBAR';
 
 // Personal shelves users want pinned to the top of Home, in this exact
 // display order. Each slot accepts multiple title variants for forward
@@ -124,18 +99,6 @@ const getGreeting = (): string => {
 export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
   const [shelves, setShelves] = useState<Shelf[]>(cachedShelves ?? []);
   const [isLoading, setIsLoading] = useState(!cachedShelves);
-  const [activeMood, setActiveMood] = useState<MoodTab>(lastActiveMood);
-  const [moodSongs, setMoodSongs] = useState<TrackInfo[]>(
-    cachedMoodSongs && cachedMoodSongs.mood === lastActiveMood
-      ? cachedMoodSongs.songs
-      : [],
-  );
-  const [isMoodLoading, setIsMoodLoading] = useState(false);
-
-  const selectMood = useCallback((mood: MoodTab) => {
-    lastActiveMood = mood;
-    setActiveMood(mood);
-  }, []);
 
   const fetchHome = useCallback((force = false) => {
     // Always force on the very first load of the app session
@@ -184,51 +147,10 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
     cachedShelves = null;
     cachedAt = 0;
     firstLoadDone = false;
-    cachedMoodSongs = null;
     clearCache(PERSIST_KEY);
     setShelves([]);
-    setMoodSongs([]);
     fetchHome(true);
   });
-
-  // Fetch mood songs when a mood tab other than "All" is selected
-  useEffect(() => {
-    if (activeMood === 'All') {
-      setMoodSongs([]);
-      return;
-    }
-
-    // If we still have the same mood's songs cached from a previous visit,
-    // render them immediately and skip the fetch.
-    if (cachedMoodSongs && cachedMoodSongs.mood === activeMood) {
-      setMoodSongs(cachedMoodSongs.songs);
-      setIsMoodLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setIsMoodLoading(true);
-
-    browseApi
-      .search(activeMood, SONGS_FILTER)
-      .then((results) => {
-        if (!cancelled) {
-          cachedMoodSongs = { mood: activeMood, songs: results.songs };
-          setMoodSongs(results.songs);
-          setIsMoodLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setMoodSongs([]);
-          setIsMoodLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeMood]);
 
   if (isLoading && shelves.length === 0) {
     return <LoadingSpinner />;
@@ -281,32 +203,20 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
           // Top padding includes `--title-bar-height` so the title
           // text clears the drag region (the plate now touches y=0
           // of the window — see AppShell main's removed paddingTop).
-          // Title text lands at `y = title-bar-height` (just under the
-          // drag region). main has `paddingTop: var(--space-3)` (the
-          // visible seam), so the plate's own paddingTop only needs
-          // to cover the remaining `title-bar-height - space-3`.
           padding:
             'calc(var(--title-bar-height) - var(--space-3)) var(--space-10) var(--space-3)',
-          // Same semi-transparent dark wash as the player chrome — the
-          // capsule reads as a discrete plate even when WebKit drops
-          // the LiquidGlass SVG displacement filter.
           background: 'oklch(20% 0.005 270 / 0.30)',
           borderRadius: 'inherit',
-        }}
-      >
-      <div
-        style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          marginBottom: 'var(--space-4)',
         }}
       >
         <h1
           style={{
-            fontSize: 'var(--text-2xl)',
+            fontSize: 'var(--text-display)',
             fontWeight: 700,
-            letterSpacing: '-0.02em',
+            letterSpacing: '-0.025em',
             color: 'var(--color-text-primary)',
             margin: 0,
           }}
@@ -329,111 +239,14 @@ export const HomePage: FC<HomePageProps> = ({ onOpenPlaylist, onReady }) => {
           ↻ Refresh
         </button>
       </div>
-
-      {/* Mood / genre tabs */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 'var(--space-2)',
-          overflowX: 'auto',
-          overflowY: 'hidden',
-          scrollbarWidth: 'none',
-        }}
-      >
-        {MOOD_TABS.map((tab) => {
-          const isActive = tab === activeMood;
-          return (
-            <button
-              key={tab}
-              onClick={() => selectMood(tab)}
-              style={{
-                flexShrink: 0,
-                padding: 'var(--space-2) var(--space-4)',
-                fontSize: 'var(--text-sm)',
-                // Selection style unified with QueuePanel highlighted
-                // row + Sidebar active item: white-wash glass tint,
-                // accent-colored text, 600 weight. Replaces the prior
-                // solid-accent pill so every "selected" surface in the
-                // UI reads the same visual weight.
-                fontWeight: isActive ? 600 : 500,
-                borderRadius: 'var(--radius-full)',
-                border: isActive ? 'none' : '1px solid var(--color-border)',
-                background: isActive ? 'oklch(100% 0 0 / 0.10)' : 'transparent',
-                color: isActive
-                  ? 'var(--color-accent)'
-                  : 'var(--color-text-secondary)',
-                cursor: 'pointer',
-                transition: `background var(--duration-fast) var(--ease-out),
-                             color var(--duration-fast) var(--ease-out)`,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {tab}
-            </button>
-          );
-        })}
-      </div>
-      </div>
       </LiquidGlass>
       </div>
 
-      {activeMood !== 'All' && (
-        <>
-          {isMoodLoading && (
-            <p
-              style={{
-                fontSize: 'var(--text-base)',
-                color: 'var(--color-text-tertiary)',
-              }}
-            >
-              Loading {activeMood} songs...
-            </p>
-          )}
-          {!isMoodLoading && moodSongs.length > 0 && (
-            <ShelfRow title={`${activeMood} Songs`}>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                  columnGap: 'var(--space-4)',
-                  rowGap: 'var(--space-1)',
-                }}
-              >
-                {moodSongs.map((track, i) => (
-                  <SongRow key={track.videoId || `mood-${i}`} track={track} />
-                ))}
-              </div>
-            </ShelfRow>
-          )}
-          {!isMoodLoading && moodSongs.length === 0 && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                minHeight: '120px',
-              }}
-            >
-              <p
-                style={{
-                  fontSize: 'var(--text-base)',
-                  color: 'var(--color-text-tertiary)',
-                  textAlign: 'center',
-                }}
-              >
-                No songs found for "{activeMood}"
-              </p>
-            </div>
-          )}
-        </>
-      )}
-
-      {activeMood === 'All' &&
-        reorderShelves(shelves).map((shelf) => (
-          <ShelfRow key={shelf.title} title={shelf.title}>
-            {renderShelfContent(shelf, onOpenPlaylist)}
-          </ShelfRow>
-        ))}
+      {reorderShelves(shelves).map((shelf) => (
+        <ShelfRow key={shelf.title} title={shelf.title}>
+          {renderShelfContent(shelf, onOpenPlaylist)}
+        </ShelfRow>
+      ))}
       {/* Spacer reserves scroll room above the floating player chrome.
           A real DOM child (not padding-bottom) — WebKit drops
           padding-bottom from `scrollHeight` on overflow containers. */}

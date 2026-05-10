@@ -98,6 +98,41 @@ a {
   text-decoration: none;
 }
 
+/* Vestibular-safe motion. Users with `prefers-reduced-motion: reduce`
+ * still get state changes (active/hover/seek tints) but no spring
+ * bounces, no ambient flashes, and no looping spinners. Two layers:
+ * (1) a wildcard cap that flattens any animation/transition the
+ *     codebase declares without us having to audit every component;
+ * (2) explicit overrides for the named-keyframe animations (queue
+ *     flash, refresh spinner) so they don't briefly tween to their
+ *     end frame and read as a flicker.
+ * Order matters — the wildcard MUST come before the named overrides,
+ * otherwise the wildcard's `!important` would win the cascade. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .vibeytm-queue-current-flash {
+    animation: none !important;
+  }
+  /* The refresh button uses `animation: vibeytm-spin 0.9s linear infinite`.
+   * The wildcard above caps `animation-iteration-count: 1`, so without this
+   * override the spinner would rotate exactly once and freeze tilted at
+   * ~360° — looking broken, not still. Kill the animation entirely so the
+   * glyph sits upright; the disabled / "Refreshing…" label still
+   * communicates that a request is in flight. Selector matches both the
+   * inline `style.animation` form (Explore's Refresh button) and any
+   * future class-based use. */
+  [style*='vibeytm-spin'] {
+    animation: none !important;
+  }
+}
+
 button {
   font: inherit;
   color: inherit;
