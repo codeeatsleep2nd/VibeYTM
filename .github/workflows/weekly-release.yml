@@ -1,0 +1,119 @@
+name: Weekly Release
+
+# Runs every Sunday at 16:00 UTC (08:00 PST / 09:00 PDT).
+# GitHub Actions cron always runs in UTC; if you want literal 08:00 PDT
+# during US summer, change the cron to "0 15 * * 0".
+on:
+  schedule:
+    - cron: '0 16 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump minor version
+        id: bump
+        run: |
+          set -euo pipefail
+          current=$(node -p "require('./package.json').version")
+          IFS='.' read -r major minor _ <<< "$current"
+          next="${major}.$((minor + 1)).0"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+
+          node -e "
+            const fs=require('fs');
+            const pkg=require('./package.json');
+            pkg.version='$next';
+            fs.writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
+            const tcPath='./src-tauri/tauri.conf.json';
+            const tc=JSON.parse(fs.readFileSync(tcPath, 'utf8'));
+            tc.version='$next';
+            fs.writeFileSync(tcPath, JSON.stringify(tc, null, 2) + '\n');
+          "
+
+          echo "Bumped $current -> $next"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build DMG
+        run: pnpm tauri build
+
+      - name: Locate DMG
+        id: dmg
+        run: |
+          dmg=$(ls src-tauri/target/release/bundle/dmg/VibeYTM_*.dmg | head -n1)
+          echo "path=$dmg" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$dmg")" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump
+        env:
+          NEXT: ${{ steps.bump.outputs.next }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json src-tauri/tauri.conf.json
+          git commit -m "chore(release): bump version to ${NEXT}"
+          git push origin HEAD:main
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT: ${{ steps.bump.outputs.next }}
+          PREV: ${{ steps.bump.outputs.current }}
+          DMG_PATH: ${{ steps.dmg.outputs.path }}
+        run: |
+          tag="v${NEXT}"
+
+          notes_file=$(mktemp)
+          {
+            echo "## Installation"
+            echo
+            echo "> **macOS Gatekeeper:** This app is unsigned. After installing, run \`xattr -cr /Applications/VibeYTM.app\` in Terminal if macOS says the app is damaged."
+            echo
+            echo "## Changes since v${PREV}"
+            echo
+            git log "v${PREV}..HEAD" --pretty=format:'- %s' 2>/dev/null || echo "- Weekly automated release."
+          } > "$notes_file"
+
+          gh release create "$tag" \
+            "$DMG_PATH" \
+            --title "VibeYTM ${NEXT}" \
+            --notes-file "$notes_file" \
+            --target main
