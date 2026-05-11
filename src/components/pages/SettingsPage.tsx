@@ -148,14 +148,13 @@ const SettingsCard: FC<{ children: ReactNode }> = ({ children }) => (
   <div
     style={{
       background: 'var(--glass-bg-card)',
-      backdropFilter: 'blur(24px) saturate(180%)',
-      WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+      backdropFilter: 'var(--glass-recipe)',
+      WebkitBackdropFilter: 'var(--glass-recipe)',
       borderRadius: 'var(--radius-lg)',
       border: '1px solid var(--glass-rim-mid)',
       // Inset top rim plus a soft outer drop reads the card as a
       // floating glass plate, not a flat tinted block.
-      boxShadow:
-        'inset 0 1px 0 var(--glass-rim-bright), 0 2px 12px oklch(0% 0 0 / 0.20)',
+      boxShadow: 'var(--glass-card-shadow)',
       padding: '0 var(--space-4)',
     }}
   >
@@ -483,6 +482,18 @@ export const SettingsPage: FC = () => {
         </div>
       </div>
       </SettingsCard>
+      {/* Reserve scroll room above the floating player chrome so the
+          last card isn't hidden behind it. Same pattern as HomePage /
+          ExplorePage etc. — real DOM child, not padding-bottom, since
+          WebKit drops padding-bottom from `scrollHeight` on overflow
+          containers. */}
+      <div
+        style={{
+          height: 'calc(var(--player-bar-height) + var(--space-6))',
+          flexShrink: 0,
+        }}
+        aria-hidden="true"
+      />
     </section>
   );
 };

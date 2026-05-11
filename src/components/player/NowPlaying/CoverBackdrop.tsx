@@ -26,10 +26,10 @@ export const CoverBackdrop: FC<CoverBackdropProps> = () => {
   // The playing-page background no longer tints to the song's cover
   // colours (per request) — it stays a uniform neutral wash regardless
   // of the current track. The blurred backdrop visible behind the
-  // panel comes from the parent SafeOverlay's
-  // `backdrop-filter: blur(40px) saturate(180%)` which frosts the page
-  // underneath the overlay. This component now only owns the
-  // ambient gradient seen layered on top of that frost.
+  // panel comes from the parent SafeOverlay's `backdrop-filter:
+  // var(--glass-recipe-strong)` which frosts the page underneath the
+  // overlay. This component now only owns the ambient gradient seen
+  // layered on top of that frost.
   return (
     <div
       aria-hidden

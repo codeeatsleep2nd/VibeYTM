@@ -24,7 +24,10 @@ import {
   useAddToPlaylistRequest,
 } from '../../lib/addToPlaylistRegistry';
 import { useLoginState } from '../../hooks/useLoginState';
-import { notifyLibraryMutated } from '../../lib/libraryMutations';
+import {
+  notifyLibraryMutated,
+  subscribeToLibraryMutations,
+} from '../../lib/libraryMutations';
 import { toast } from '../../lib/toast';
 import { CachedImage } from '../CachedImage';
 import type { PlaylistPrivacy, PlaylistSummary } from '../../lib/types';
@@ -56,6 +59,15 @@ function invalidatePlaylistCache(): void {
   playlistCache = null;
   playlistCacheAt = 0;
 }
+
+// Track-level mutations elsewhere in the app (e.g. PlaylistDetailPage's
+// "Remove from playlist" trash button) change the trackCount that the
+// picker shows next to each row. Without this subscription the picker
+// would happily render stale counts from a fresh-looking 60s cache for
+// up to a full minute after a remove. The picker's own add/create/delete
+// already invalidate inline; this catches everything else that calls
+// `notifyLibraryMutated()`.
+subscribeToLibraryMutations(invalidatePlaylistCache);
 
 /** Test-only — clear all module state. */
 export function __resetAddToPlaylistPickerForTests(): void {
@@ -390,8 +402,7 @@ const PickerInner: FC<PickerInnerProps> = ({ request }) => {
     // extra filter layer.
     background:
       'linear-gradient(180deg, oklch(100% 0 0 / 0.04) 0%, oklch(100% 0 0 / 0) 30%), oklch(14% 0.005 270 / 0.96)',
-    boxShadow:
-      'inset 0 1px 0 var(--glass-rim-bright), 0 24px 60px oklch(0% 0 0 / 0.5)',
+    boxShadow: 'var(--glass-plate-shadow)',
     border: '1px solid var(--glass-rim-mid)',
     borderRadius: 'var(--radius-lg)',
     padding: 'var(--space-3)',

@@ -170,10 +170,10 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
   const loggedIn = useLoginState();
   // When NowPlaying is open, swap the sidebar's chrome glass for a
   // background that visually continues the NowPlaying surface — no
-  // dark wash, lighter blur recipe matching NowPlaying's
-  // `blur(40px) saturate(180%)`. Together with the dimmed right rim
-  // they read as one continuous Liquid-Glass plate spanning the full
-  // window instead of two separate panes meeting at a hard edge.
+  // dark wash, and use `--glass-recipe-strong` (the same recipe
+  // NowPlaying paints with) so the sidebar reads as one continuous
+  // Liquid-Glass plate spanning the full window instead of two
+  // separate panes meeting at a hard edge.
   const { nowPlayingOpen } = useOverlayState();
 
   return (
@@ -186,11 +186,11 @@ export const Sidebar: FC<SidebarProps> = ({ currentPath, onNavigate }) => {
         paddingTop: 'var(--title-bar-height)',
         background: nowPlayingOpen ? 'transparent' : 'var(--glass-bg-chrome)',
         backdropFilter: nowPlayingOpen
-          ? 'blur(40px) saturate(180%)'
-          : 'blur(var(--glass-blur))',
+          ? 'var(--glass-recipe-strong)'
+          : 'var(--glass-recipe)',
         WebkitBackdropFilter: nowPlayingOpen
-          ? 'blur(40px) saturate(180%)'
-          : 'blur(var(--glass-blur))',
+          ? 'var(--glass-recipe-strong)'
+          : 'var(--glass-recipe)',
         borderRight: nowPlayingOpen
           ? '1px solid var(--glass-rim-dim)'
           : '1px solid var(--glass-rim-mid)',

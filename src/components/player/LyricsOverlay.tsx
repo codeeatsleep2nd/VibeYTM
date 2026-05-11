@@ -109,18 +109,10 @@ export const LyricsOverlay: FC<LyricsOverlayProps> = ({ isOpen }) => {
       //   ourselves so the card reads as a Liquid-Glass plate on
       //   whatever page is behind (Home, Explore, etc.).
       background="linear-gradient(180deg, oklch(100% 0 0 / 0.10) 0%, oklch(100% 0 0 / 0.02) 6%, oklch(100% 0 0 / 0) 30%, oklch(0% 0 0 / 0.10) 100%), var(--glass-bg-card)"
-      backdropFilter={
-        nowPlayingOpen
-          ? undefined
-          : 'blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness))'
-      }
+      backdropFilter={nowPlayingOpen ? undefined : 'var(--glass-recipe)'}
       border="1px solid var(--glass-rim-mid)"
       borderRadius="var(--radius-lg)"
-      boxShadow={
-        isOpen
-          ? 'inset 0 1px 0 var(--glass-rim-bright), 0 24px 60px oklch(0% 0 0 / 0.5)'
-          : undefined
-      }
+      boxShadow={isOpen ? 'var(--glass-plate-shadow)' : undefined}
       display="flex"
       flexDirection="column"
     >

@@ -142,7 +142,7 @@ export const FocusTimer: FC<FocusTimerProps> = ({
         bottom: '0',
       }}
       background="transparent"
-      backdropFilter="blur(40px) saturate(180%)"
+      backdropFilter="var(--glass-recipe-strong)"
       boxShadow="0 -8px 32px oklch(0% 0 0 / 0.35)"
     >
       <div

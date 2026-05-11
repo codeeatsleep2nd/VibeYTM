@@ -274,18 +274,43 @@
       isLiked: isLiked,
     };
 
-    // Try Tauri IPC if available
+    // Try Tauri IPC if available — but only when the track-identity
+    // fields have actually changed. update() fires every 150 ms via
+    // setInterval; without this dedup the IPC is invoked ~6.7×/sec
+    // and the Rust handler used to forward every call to the FE as a
+    // `player:track-changed` event, re-rendering the entire player
+    // chrome (issue #106). The Rust side now also dedups defensively;
+    // this guard saves the IPC marshaling cost on the hot path.
     if (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke) {
-      try {
-        window.__TAURI__.core.invoke('on_track_changed', {
-          track: window.__VIBEYTM_STATE__
-        });
-      } catch(e) {
-        // Route to the debug ring so the Rust poller surfaces it via
-        // tracing. Silently dropping this catch hides the case where
-        // the IPC channel isn't actually available — which would mean
-        // every track-change notification is lost until the next poll.
-        log('IPC on_track_changed failed: ' + (e && e.message ? e.message : e));
+      var last = window.__VIBEYTM_LAST_IPC_TRACK__;
+      var changed =
+        !last ||
+        last.videoId !== window.__VIBEYTM_STATE__.videoId ||
+        last.title !== window.__VIBEYTM_STATE__.title ||
+        last.artist !== window.__VIBEYTM_STATE__.artist ||
+        last.album !== window.__VIBEYTM_STATE__.album ||
+        last.artworkUrl !== window.__VIBEYTM_STATE__.artworkUrl ||
+        Math.abs((last.durationSecs || 0) - (window.__VIBEYTM_STATE__.durationSecs || 0)) > 0.5;
+      if (changed) {
+        window.__VIBEYTM_LAST_IPC_TRACK__ = {
+          videoId: window.__VIBEYTM_STATE__.videoId,
+          title: window.__VIBEYTM_STATE__.title,
+          artist: window.__VIBEYTM_STATE__.artist,
+          album: window.__VIBEYTM_STATE__.album,
+          artworkUrl: window.__VIBEYTM_STATE__.artworkUrl,
+          durationSecs: window.__VIBEYTM_STATE__.durationSecs,
+        };
+        try {
+          window.__TAURI__.core.invoke('on_track_changed', {
+            track: window.__VIBEYTM_STATE__
+          });
+        } catch(e) {
+          // Route to the debug ring so the Rust poller surfaces it via
+          // tracing. Silently dropping this catch hides the case where
+          // the IPC channel isn't actually available — which would mean
+          // every track-change notification is lost until the next poll.
+          log('IPC on_track_changed failed: ' + (e && e.message ? e.message : e));
+        }
       }
     }
   }

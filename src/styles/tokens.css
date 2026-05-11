@@ -35,20 +35,35 @@
      surface, matching the uniform liquidGL look. */
   --glass-bg-chrome: oklch(30% 0.005 270 / 0.40);
   --glass-bg-card: oklch(28% 0.005 270 / 0.30);
-  --glass-bg-subtle: oklch(24% 0.005 270 / 0.18);
-  --glass-bg-hover: oklch(80% 0.02 270 / 0.14);
   --glass-blur: 48px;
-  --glass-blur-strong: 64px;
+  --glass-blur-strong: 40px; /* full-screen overlays (NowPlaying, FocusTimer) */
   --glass-saturate: 220%;
   --glass-brightness: 1.05;
   --glass-rim-bright: oklch(100% 0 0 / 0.28);
   --glass-rim-mid: oklch(100% 0 0 / 0.18);
   --glass-rim-dim: oklch(100% 0 0 / 0.10);
-  --glass-shadow: 0 8px 24px oklch(0% 0 0 / 0.28);
-  --glass-shadow-strong: 0 12px 36px oklch(0% 0 0 / 0.35);
-  /* Legacy alias — still consumed by older components; points at the
-     new token so a single source of truth governs the chrome look. */
-  --glass-bg: var(--glass-bg-chrome);
+
+  /* The CANONICAL backdrop-filter recipe. Every glass surface in the
+     app should set `backdrop-filter: var(--glass-recipe)` (and the
+     `-webkit-` mirror). The three components — blur + saturate +
+     brightness — are what turns translucent dark into a colour-aware
+     glass plate; dropping any one (e.g. `blur` only) re-introduces the
+     "desaturated gray wash" failure mode the tokens block warns about.
+     The `-strong` variant uses a tighter blur tuned for full-screen
+     scrims (NowPlaying, FocusTimer) where a 48px wash dilutes the
+     underlying art too much. */
+  --glass-recipe: blur(var(--glass-blur)) saturate(var(--glass-saturate))
+    brightness(var(--glass-brightness));
+  --glass-recipe-strong: blur(var(--glass-blur-strong)) saturate(180%);
+
+  /* Plate shadow — popovers, dialogs, drawers (AddToPlaylistPicker,
+     LyricsOverlay, QueuePanel). Inset rim + heavy outer drop. */
+  --glass-plate-shadow: inset 0 1px 0 var(--glass-rim-bright),
+    0 24px 60px oklch(0% 0 0 / 0.5);
+  /* Card lift — tinted content blocks that aren't floating off the
+     page (Settings sections). Inset rim + soft drop. */
+  --glass-card-shadow: inset 0 1px 0 var(--glass-rim-bright),
+    0 2px 12px oklch(0% 0 0 / 0.20);
 
   /* Glass-tile recipe — used by every "active" / "selected" surface that
    * sits inside an already-blurred parent (sidebar nav active row, mood
