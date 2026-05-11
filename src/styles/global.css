@@ -155,6 +155,18 @@ input {
   }
 }
 
+/* Used by the focus-timer-close confirm scrim in App.tsx. Without this
+ * keyframe the browser silently ignored the `animation: fadeIn …` on
+ * the modal so it popped in flatly instead of fading. */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 /* Three-bar "now playing" indicator overlaid on the queue's current row.
    Each bar is staggered via inline animation-delay; this keyframe just
    defines the bounce. */
@@ -298,8 +310,7 @@ body.vibeytm-nowplaying-open [data-detail-back-button] {
  * NowPlaying, so dropping its blur is purely a perf optimisation
  * with zero visible change. */
 :root {
-  --page-sticky-blur: blur(var(--glass-blur)) saturate(var(--glass-saturate))
-    brightness(var(--glass-brightness));
+  --page-sticky-blur: var(--glass-recipe);
 }
 body:has([aria-label='Now playing'][aria-hidden='false']) {
   --page-sticky-blur: none;

@@ -89,7 +89,7 @@ export const NowPlaying: FC<NowPlayingProps> = ({ isOpen, showLyrics = false, qu
       // shows through them and the cards still read as glass — no
       // double blur, no feedback loop.
       background="transparent"
-      backdropFilter="blur(40px) saturate(180%)"
+      backdropFilter="var(--glass-recipe-strong)"
       boxShadow="0 -8px 32px oklch(0% 0 0 / 0.35)"
     >
       <NowPlayingBody

@@ -13,6 +13,23 @@ use crate::state::settings::{self, SharedSettings};
 
 const EPISODE_PROGRESS_SAVE_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Compare only the track fields the bridge JS actually populates
+/// (`update()` in `ytm-player-bridge.js`). The stored track may carry
+/// richer metadata seeded by `play_track` (`artist_id`, `album_id`,
+/// `set_video_id`, …) that the bridge can't replicate; checking those
+/// would falsely report "changed" on every bridge tick and re-introduce
+/// issue #106. Duration uses a 0.5 s tolerance because YTM occasionally
+/// jitters `getDuration()` by a few hundred ms during the first poll
+/// cycles after loading a track.
+fn track_bridge_fields_equal(a: &TrackInfo, b: &TrackInfo) -> bool {
+    a.video_id == b.video_id
+        && a.title == b.title
+        && a.artist == b.artist
+        && a.album == b.album
+        && a.artwork_url == b.artwork_url
+        && (a.duration_secs - b.duration_secs).abs() < 0.5
+}
+
 #[tauri::command]
 pub async fn on_track_changed(
     track: TrackInfo,
@@ -21,6 +38,27 @@ pub async fn on_track_changed(
     cache: State<'_, Cache>,
     app: AppHandle,
 ) -> Result<(), String> {
+    // Dedup against the stored track BEFORE emitting (issue #106). The
+    // bridge JS calls this IPC every 150 ms from its `setInterval(update,
+    // 150)` tick regardless of whether the track changed; without this
+    // guard the FE receives ~6.7 `player:track-changed` events per second
+    // and six `usePlayerState` instances each re-render the entire player
+    // chrome on every one. Cascading consequences:
+    //   - `useSmoothedPosition`'s rAF baseline resets ~6.7×/sec, visible
+    //     as progress-bar flicker during steady playback.
+    //   - `LyricsPanel`'s active-line scroll effect re-fires on every
+    //     re-render, jittering the highlight.
+    let unchanged = {
+        let player = state.read().await;
+        match player.track.as_ref() {
+            None => false,
+            Some(t) => track_bridge_fields_equal(t, &track),
+        }
+    };
+    if unchanged {
+        return Ok(());
+    }
+
     // Persist duration so home/search shelves (which don't ship durations)
     // can backfill this track in future responses.
     if track.duration_secs > 0.0 && !track.video_id.is_empty() {
@@ -618,6 +656,70 @@ pub(crate) fn lookup_episode_resume(
 mod tests {
     use super::*;
     use crate::state::episode_progress::{upsert, EpisodeProgressStore};
+
+    fn bridge_track(video_id: &str, title: &str, artist: &str) -> TrackInfo {
+        TrackInfo {
+            video_id: video_id.into(),
+            title: title.into(),
+            artist: artist.into(),
+            album: String::new(),
+            artwork_url: Some("https://i.ytimg.com/vi/x/sddefault.jpg".into()),
+            duration_secs: 236.05,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn track_bridge_fields_equal_dedups_identical_bridge_snapshots() {
+        // Two snapshots that differ only in fields the bridge can't
+        // populate (artist_id, set_video_id) — the dedup MUST return
+        // true so `on_track_changed` doesn't emit on every 150 ms tick.
+        let mut stored = bridge_track("vid1", "Bad Day", "Daniel Powter");
+        stored.artist_id = Some("UC123".into());
+        stored.set_video_id = Some("SVID".into());
+        let incoming = bridge_track("vid1", "Bad Day", "Daniel Powter");
+        assert!(track_bridge_fields_equal(&stored, &incoming));
+    }
+
+    #[test]
+    fn track_bridge_fields_equal_returns_false_on_real_track_change() {
+        let stored = bridge_track("vid1", "Bad Day", "Daniel Powter");
+        let incoming = bridge_track("vid2", "Hey There Delilah", "Plain White T's");
+        assert!(!track_bridge_fields_equal(&stored, &incoming));
+    }
+
+    #[test]
+    fn track_bridge_fields_equal_returns_false_on_artwork_change() {
+        // Real bridge case: artwork URL is refined from the bar
+        // thumbnail to the high-res song-image during the first
+        // ~1 s of playback. That IS a real change worth emitting.
+        let stored = bridge_track("vid1", "Bad Day", "Daniel Powter");
+        let mut incoming = bridge_track("vid1", "Bad Day", "Daniel Powter");
+        incoming.artwork_url = Some("https://i.ytimg.com/vi/x/hqdefault.jpg".into());
+        assert!(!track_bridge_fields_equal(&stored, &incoming));
+    }
+
+    #[test]
+    fn track_bridge_fields_equal_tolerates_sub_half_second_duration_jitter() {
+        // YTM's getDuration() occasionally drifts by a few hundred ms
+        // during the first poll cycles; the dedup must treat 236.05 vs
+        // 236.20 as the SAME track to avoid re-emitting.
+        let stored = bridge_track("vid1", "Bad Day", "Daniel Powter");
+        let mut incoming = bridge_track("vid1", "Bad Day", "Daniel Powter");
+        incoming.duration_secs = stored.duration_secs + 0.2;
+        assert!(track_bridge_fields_equal(&stored, &incoming));
+    }
+
+    #[test]
+    fn track_bridge_fields_equal_detects_meaningful_duration_growth() {
+        // Initial bridge frame reports duration 0; a later frame fills
+        // in the real length. That MUST count as a change so the
+        // emitted track carries the correct duration to the FE.
+        let mut stored = bridge_track("vid1", "Bad Day", "Daniel Powter");
+        stored.duration_secs = 0.0;
+        let incoming = bridge_track("vid1", "Bad Day", "Daniel Powter");
+        assert!(!track_bridge_fields_equal(&stored, &incoming));
+    }
 
     #[test]
     fn lookup_episode_resume_returns_saved_position_for_mpsp_context() {

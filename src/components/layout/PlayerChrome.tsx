@@ -396,10 +396,10 @@ export const PlayerChrome: FC<PlayerChromeProps> = ({
           background: 'oklch(20% 0.005 270 / 0.30)',
           backdropFilter: nowPlayingOpen
             ? undefined
-            : 'blur(40px) saturate(180%)',
+            : 'var(--glass-recipe-strong)',
           WebkitBackdropFilter: nowPlayingOpen
             ? undefined
-            : 'blur(40px) saturate(180%)',
+            : 'var(--glass-recipe-strong)',
           borderRadius: 'inherit',
           transition:
             'backdrop-filter var(--duration-slow) var(--ease-out)',

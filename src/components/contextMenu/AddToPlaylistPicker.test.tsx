@@ -406,6 +406,49 @@ describe('AddToPlaylistPicker', () => {
     expect(getLibraryPlaylistsMock).toHaveBeenCalledTimes(1);
   });
 
+  it('refetches on next open after a library-mutation notification', async () => {
+    const { notifyLibraryMutated } = await import(
+      '../../lib/libraryMutations'
+    );
+    // First open: 23 tracks.
+    getLibraryPlaylistsMock.mockResolvedValueOnce([
+      mkPlaylist('PL_1', 'Workout', 23),
+    ]);
+    render(<AddToPlaylistPicker />);
+    act(() => {
+      openAddToPlaylistPicker({
+        videoId: 'v1',
+        trackTitle: 'A',
+        position: { x: 0, y: 0 },
+      });
+    });
+    await screen.findByText('23 tracks');
+    expect(getLibraryPlaylistsMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      closeAddToPlaylistPicker();
+    });
+
+    // Simulate a track being removed elsewhere in the app. The cache
+    // must invalidate so the next open shows the fresh count.
+    act(() => {
+      notifyLibraryMutated();
+    });
+
+    getLibraryPlaylistsMock.mockResolvedValueOnce([
+      mkPlaylist('PL_1', 'Workout', 22),
+    ]);
+    act(() => {
+      openAddToPlaylistPicker({
+        videoId: 'v2',
+        trackTitle: 'B',
+        position: { x: 0, y: 0 },
+      });
+    });
+    await screen.findByText('22 tracks');
+    expect(getLibraryPlaylistsMock).toHaveBeenCalledTimes(2);
+  });
+
   it('filters out auto-generated mix playlists (RD prefix)', async () => {
     getLibraryPlaylistsMock.mockResolvedValue([
       mkPlaylist('PL_1', 'Workout'),
