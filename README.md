@@ -1,3 +1,7 @@
+# VibeYTM
+
+A YouTube Music desktop app built with Tauri, React, and Rust.
+
 <p align="center">
   <video src="https://github.com/user-attachments/assets/8a887eca-3226-43d9-95f3-d8b0fad3aa35" poster="https://github.com/codeeatsleep2nd/VibeYTM/raw/main/docs/screenshot-home.png" width="800" autoplay loop muted playsinline controls>
     <img src="https://github.com/codeeatsleep2nd/VibeYTM/raw/main/docs/screenshot-home.png" alt="VibeYTM" width="800">
@@ -10,18 +14,6 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/codeeatsleep2nd/VibeYTM?style=flat-square&color=green" alt="License"></a>
   <a href="https://github.com/sponsors/codeeatsleep2nd"><img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?style=flat-square&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors"></a>
   <a href="https://buymeacoffee.com/codeeatsle9"><img src="https://img.shields.io/badge/buy%20me%20a%20coffee-FFDD00?style=flat-square&logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
-</p>
-
-# VibeYTM
-
-A YouTube Music desktop app built with Tauri, React, and Rust.
-
-## Screenshots
-
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/8a887eca-3226-43d9-95f3-d8b0fad3aa35" poster="https://github.com/codeeatsleep2nd/VibeYTM/raw/main/docs/screenshot-home.png" width="800" autoplay loop muted playsinline controls>
-    <img src="https://github.com/codeeatsleep2nd/VibeYTM/raw/main/docs/screenshot-home.png" alt="Home Page" width="800">
-  </video>
 </p>
 
 ## Tech Stack
