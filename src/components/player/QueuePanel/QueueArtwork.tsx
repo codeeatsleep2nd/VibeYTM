@@ -2,7 +2,7 @@ import { type FC, useEffect, useState } from 'react';
 import { ArtworkPlaceholder } from '../../ArtworkPlaceholder';
 import { CachedImage } from '../../CachedImage';
 import type { TrackInfo } from '../../../lib/types';
-import { usePlayerState } from '../../../hooks/usePlayerState';
+import { usePlayerSelector } from '../../../hooks/usePlayerState';
 import { useAudioCounterpartArtwork } from '../../../hooks/useAudioCounterpartArtwork';
 import { BRIDGE_SETTLE_MS } from '../../../hooks/useBridgeSafeFetch';
 import { lookupShowCover } from '../../../lib/showCoverRegistry';
@@ -46,7 +46,12 @@ export const QueueArtwork: FC<QueueArtworkProps> = ({ track, liveTrack }) => {
   // strict album-art chain. Bypasses the album-art-only host filter
   // because the channel page renders the same URL via `<CachedImage>`
   // with no host check, so we trust it here too.
-  const { activePlaylistId } = usePlayerState();
+  //
+  // Selector subscription (NOT the full `usePlayerState`): ~100 of these
+  // rows stay mounted via SafeOverlay even when the queue is closed.
+  // Subscribing to the whole player state would re-render every row on
+  // every `player:position` tick — see `lib/playerStore.ts`.
+  const activePlaylistId = usePlayerSelector((s) => s.activePlaylistId);
   const isPodcastContext = (activePlaylistId ?? '').startsWith('MPSP');
   const showCoverUrl = isPodcastContext
     ? lookupShowCover(activePlaylistId)

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { computeSyncSnap } from './useSmoothedPosition';
+import {
+  BACKWARD_SNAP_THRESHOLD_SECS,
+  computeSyncSnap,
+} from './useSmoothedPosition';
 
 const OFFSET_MS = 450;
 
@@ -27,6 +30,32 @@ describe('computeSyncSnap', () => {
       value: 45 + OFFSET_MS / 1000,
       lastSeen: 45,
     });
+  });
+
+  it('does NOT snap on sub-threshold backward jitter — bumps lastSeen', () => {
+    // The backend position only advances ~1×/sec (YouTube's
+    // getCurrentTime steps in ~1.0s increments), so a fresh sample
+    // routinely lands a few hundred ms BEHIND where the rAF clock has
+    // already extrapolated. Snapping `value` backward for that jitter is
+    // the progress-bar flicker / lyric-desync bug. A backward step
+    // smaller than the threshold must be treated like forward progress.
+    const decision = computeSyncSnap(60.3, 60.9, OFFSET_MS);
+    expect(decision).toEqual({ kind: 'bump-last-seen', lastSeen: 60.3 });
+  });
+
+  it('snaps once a backward jump exceeds the threshold', () => {
+    const justOver = BACKWARD_SNAP_THRESHOLD_SECS + 0.01;
+    const decision = computeSyncSnap(60 - justOver, 60, OFFSET_MS);
+    expect(decision.kind).toBe('snap');
+  });
+
+  it('does NOT snap a backward jump exactly at the threshold', () => {
+    const decision = computeSyncSnap(
+      60 - BACKWARD_SNAP_THRESHOLD_SECS,
+      60,
+      OFFSET_MS,
+    );
+    expect(decision.kind).toBe('bump-last-seen');
   });
 
   it('only bumps lastSeen on a forward jump (seek-forward, normal playback)', () => {
@@ -67,8 +96,8 @@ describe('computeSyncSnap', () => {
     });
   });
 
-  it('handles fractional positions on either side', () => {
-    expect(computeSyncSnap(59.7, 60.3, OFFSET_MS)).toEqual({
+  it('snaps on a large fractional backward jump', () => {
+    expect(computeSyncSnap(59.7, 90.3, OFFSET_MS)).toEqual({
       kind: 'snap',
       value: 59.7 + OFFSET_MS / 1000,
       lastSeen: 59.7,
