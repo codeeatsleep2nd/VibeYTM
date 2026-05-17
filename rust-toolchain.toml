@@ -1,0 +1,8 @@
+# Pinned so CI and local builds use the same rustc. Bump in lockstep
+# with whatever the maintainers are developing against — toolchain drift
+# is invisible until a release DMG renders subtly differently than a
+# local one. Paired with `dtolnay/rust-toolchain@1.94.1` in the release
+# workflows.
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]

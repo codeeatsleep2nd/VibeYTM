@@ -44,19 +44,26 @@ jobs:
 
           echo "Bumped $current -> $next"
 
+      # Versions pinned to match the maintainer's local toolchain so a CI
+      # DMG and a local `pnpm tauri build` DMG are bit-equivalent. Drift
+      # in any of these silently produces different bundled CSS / asset
+      # order / native code, which surfaces as layout-shift discrepancies
+      # in the release DMG that the maintainer can't reproduce locally.
+      # Bump together with `package.json#packageManager` and
+      # `rust-toolchain.toml` at the repo root.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '25'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10.31.0
           run_install: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.94.1
 
       - name: Cache Cargo
         uses: actions/cache@v4
