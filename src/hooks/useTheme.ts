@@ -28,6 +28,7 @@ export function useTheme(mode: ThemeMode): void {
 
   useEffect(() => {
     applyTheme(resolveTheme(mode));
+    try { localStorage.setItem('vibeytm:theme-mode', mode); } catch { /* */ }
 
     if (mode !== 'system') return;
 
