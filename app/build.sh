@@ -168,8 +168,108 @@ if [ "$INSTALL" -eq 1 ]; then
   mkdir -p "$DEST"
   rm -rf "$DEST/VibeYTM.app"
   cp -R "$APP" "$DEST/VibeYTM.app"
-  echo "✓ installed to $DEST/VibeYTM.app — open via Spotlight or:"
-  echo "  open \"$DEST/VibeYTM.app\""
+  echo "✓ installed to $DEST/VibeYTM.app"
+
+  # ── Visible-window smoke test ────────────────────────────────────────
+  # Catches three classes of regression that previously shipped silently:
+  #   1. NSWindow creation during App @State init (BridgeHost.start() in
+  #      AppBootstrap.init blocked the WindowGroup from rendering on
+  #      macOS 26 Tahoe — main window stayed onScreen=false, no dock icon)
+  #   2. Entitlement-vs-signing TCC prompts (App Group entitlement on
+  #      an ad-hoc-signed bundle triggered a per-launch user-trust prompt
+  #      that intercepted window display)
+  #   3. Auth-sync regressions (AuthWebView signed in but bridge didn't
+  #      reload → app stuck on visible WebView; main window IS up but
+  #      shows web UI instead of native SwiftUI)
+  # (1) and (2) are caught directly. (3) requires sign-in state; it's
+  # checked indirectly — if AuthWebView is the detail pane, the main
+  # window will still be onScreen, so this test passes. (3) needs the
+  # auth-sync XCUITest from SWIFTUI_CHECKLIST.md to fully cover.
+  #
+  # Disable with VERIFY_LAUNCH=0 (useful in CI without a windowserver
+  # session).
+  if [ "${VERIFY_LAUNCH:-1}" = "1" ]; then
+    echo ""
+    echo "[smoke test] verifying app launches with a visible window …"
+    # Kill any running instance so we test a fresh launch.
+    pkill -9 -f "$DEST/VibeYTM.app/Contents/MacOS/VibeYTM" 2>/dev/null || true
+    sleep 1
+    open "$DEST/VibeYTM.app"
+    # Give SwiftUI a fair shake — WindowGroup mounts at first scene
+    # appearance, which lands after AppBootstrap.init + the .task block
+    # fires. 5 s covers a worst-case cold start on a busy machine.
+    sleep 5
+
+    # Use a Swift one-liner to query CGWindowList. The audio-engine
+    # window has a fixed signature: alpha=0, x<-1000 (BridgeHost parks
+    # it at x=-10000). Any OTHER VibeYTM-owned window with onScreen=true
+    # counts as a visible main window.
+    VISIBLE=$(swift -e '
+import AppKit
+import CoreGraphics
+let opts = CGWindowListOption(arrayLiteral: .optionAll)
+guard let wins = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else { exit(1) }
+var found = false
+for w in wins {
+    guard let owner = w[kCGWindowOwnerName as String] as? String, owner == "VibeYTM" else { continue }
+    let onScreen = (w[kCGWindowIsOnscreen as String] as? Bool) ?? false
+    let alpha = (w[kCGWindowAlpha as String] as? Double) ?? 1.0
+    let bounds = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+    let x = (bounds["X"] as? Double) ?? 0
+    let width = (bounds["Width"] as? Double) ?? 0
+    // Filter out the audio-engine window (off-screen alpha-0) and the
+    // menu bar windows (1512x33 at y=0 — too thin to be the main UI).
+    if onScreen && alpha > 0.5 && x > -1000 && width > 200 {
+        print("VISIBLE")
+        found = true
+        break
+    }
+}
+if !found { print("NO_VISIBLE_WINDOW") }
+' 2>/dev/null)
+
+    if [ "$VISIBLE" = "VISIBLE" ]; then
+      echo "✓ smoke test passed — visible main window detected"
+      echo ""
+      echo "  Open via Spotlight or:  open \"$DEST/VibeYTM.app\""
+    else
+      echo "✗ smoke test FAILED — app launched but no visible main window after 5s" >&2
+      echo "" >&2
+      echo "  Likely causes:" >&2
+      echo "  - NSWindow created during @State init (move to .task block)" >&2
+      echo "  - Entitlement requiring Developer ID (App Group, etc.) declared" >&2
+      echo "    on an ad-hoc-signed bundle (triggers TCC prompt that blocks launch)" >&2
+      echo "  - SwiftUI scene body throws / hangs before window orders front" >&2
+      echo "" >&2
+      echo "  Diagnostic windows:" >&2
+      swift -e '
+import AppKit
+import CoreGraphics
+let opts = CGWindowListOption(arrayLiteral: .optionAll)
+if let wins = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] {
+    for w in wins {
+        guard let owner = w[kCGWindowOwnerName as String] as? String, owner == "VibeYTM" else { continue }
+        let onScreen = (w[kCGWindowIsOnscreen as String] as? Bool) ?? false
+        let alpha = (w[kCGWindowAlpha as String] as? Double) ?? 1.0
+        let bounds = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+        let x = (bounds["X"] as? Double) ?? 0
+        let y = (bounds["Y"] as? Double) ?? 0
+        let width = (bounds["Width"] as? Double) ?? 0
+        let height = (bounds["Height"] as? Double) ?? 0
+        let title = (w[kCGWindowName as String] as? String) ?? ""
+        print("    onScreen=\(onScreen) alpha=\(alpha) pos=(\(Int(x)),\(Int(y))) size=\(Int(width))x\(Int(height)) title=\"\(title)\"")
+    }
+}
+' 2>/dev/null >&2
+      echo "" >&2
+      echo "  Re-run without smoke test:  VERIFY_LAUNCH=0 bash app/build.sh --install" >&2
+      pkill -9 -f "$DEST/VibeYTM.app/Contents/MacOS/VibeYTM" 2>/dev/null || true
+      exit 1
+    fi
+  else
+    echo "  (smoke test skipped — VERIFY_LAUNCH=0)"
+    echo "  Open via Spotlight or:  open \"$DEST/VibeYTM.app\""
+  fi
 else
   echo "  Drag to /Applications, or rerun with --install to copy to ~/Applications."
   echo "  Open via:  open \"$APP\""
