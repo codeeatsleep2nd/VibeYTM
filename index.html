@@ -6,6 +6,28 @@
     <title>VibeYTM</title>
   </head>
   <body>
+    <script>
+      // Synchronous theme init — runs before React to prevent flash of wrong theme.
+      (function() {
+        try {
+          var mode = localStorage.getItem('vibeytm:theme-mode');
+          var resolved;
+          if (mode === 'light') {
+            resolved = 'light';
+          } else if (mode === 'system') {
+            resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          } else {
+            // 'dark', missing, or invalid — fall back to the cached resolved theme or dark
+            var cached = localStorage.getItem('vibeytm:theme');
+            resolved = (cached === 'light') ? 'light' : 'dark';
+          }
+          document.documentElement.setAttribute('data-theme', resolved);
+        } catch(e) {
+          // localStorage unavailable — dark is the default
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
