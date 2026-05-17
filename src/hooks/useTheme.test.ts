@@ -12,12 +12,12 @@ describe('useTheme', () => {
 
     vi.spyOn(window, 'matchMedia').mockImplementation(() => ({
       matches: matchesValue,
-      addEventListener: (_event: string, handler: () => void) => {
-        listeners.push(handler);
-      },
-      removeEventListener: (_event: string, handler: () => void) => {
-        listeners = listeners.filter((l) => l !== handler);
-      },
+      addEventListener: vi.fn((_event: string, handler: EventListenerOrEventListenerObject) => {
+        listeners.push(handler as unknown as () => void);
+      }),
+      removeEventListener: vi.fn((_event: string, handler: EventListenerOrEventListenerObject) => {
+        listeners = listeners.filter((l) => l !== (handler as unknown as () => void));
+      }),
       media: '(prefers-color-scheme: dark)',
       onchange: null,
       addListener: vi.fn(),
