@@ -146,7 +146,15 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
     // 1-2 poll cycles after a page reload.
     let last_volume_push_at: Arc<Mutex<Option<std::time::Instant>>> =
         Arc::new(Mutex::new(None));
-    #[cfg(debug_assertions)]
+    // Cursor into the bridge's `__VIBEYTM_DEBUG__` ring so we only react to
+    // NEW lines on each cycle (not the whole 20-entry tail). Used by both
+    // dev (for tracing each new line) and release (for "bridge loaded on"
+    // detection). MUST be unconditional — a release-only cursor that
+    // wasn't keyed on len would re-trigger `bridge_just_loaded` every
+    // cycle once a single "bridge loaded on" line landed in the ring,
+    // which silently reset `player:position` to 0 every 150 ms and made
+    // the bottom-bar progress fill flicker on every release build (the
+    // dev/release symptom asymmetry the user reported).
     let last_debug_len = Arc::new(TokioMutex::new(0usize));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
@@ -240,8 +248,15 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
             // stays undefined until the user touches the slider — and
             // YTM's <video> happily plays at its own default volume on
             // every navigation.
+            // Walk only the NEW debug lines since the last cycle, in both
+            // dev and release. Using `last_debug_len` as a cursor prevents
+            // a stale "bridge loaded on …" line from re-triggering
+            // `bridge_just_loaded` every poll cycle (and through it the
+            // position-reset + volume-push side effects). `bs.debug` is
+            // the last-20 ring; when the bridge re-injects after a YT
+            // page nav the ring resets, so a shrinking len means "treat
+            // all current entries as new".
             let mut bridge_just_loaded = false;
-            #[cfg(debug_assertions)]
             if !bs.debug.is_empty() {
                 let mut seen = last_debug_len.lock().await;
                 let new_lines = if bs.debug.len() > *seen {
@@ -257,18 +272,12 @@ pub fn start_poller(app: AppHandle, player_state: SharedPlayerState, bus: Arc<Ev
                     if line.contains("bridge loaded on ") {
                         bridge_just_loaded = true;
                     }
+                    // Surface bridge-side debug lines only in dev — release
+                    // builds skip this so diagnostic strings (which can
+                    // occasionally include account-adjacent data) never
+                    // hit on-disk log files.
+                    #[cfg(debug_assertions)]
                     tracing::info!(bridge = %line, "bridge debug");
-                }
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                // Release builds still need to detect bridge reloads to
-                // re-seed the volume.
-                for line in bs.debug.iter() {
-                    if line.contains("bridge loaded on ") {
-                        bridge_just_loaded = true;
-                        break;
-                    }
                 }
             }
             if bridge_just_loaded {
