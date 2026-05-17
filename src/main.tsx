@@ -87,6 +87,10 @@ class RootErrorBoundary extends React.Component<
             flexDirection: 'column',
             gap: '1rem',
             padding: '2rem',
+            // Hardcoded dark background + light text — intentional.
+            // This error boundary renders when the React tree (and
+            // therefore CSS custom-property injection) may be broken,
+            // so we cannot rely on design tokens from tokens.css.
             background: 'oklch(12% 0.005 270)',
             color: 'oklch(85% 0 0)',
             fontFamily:
@@ -118,6 +122,7 @@ class RootErrorBoundary extends React.Component<
             style={{
               marginTop: '0.5rem',
               padding: '0.6rem 1.4rem',
+              // Hardcoded accent — intentional (see comment above).
               background: 'oklch(63% 0.258 29)',
               color: 'white',
               border: 'none',
