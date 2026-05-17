@@ -18,17 +18,21 @@ struct VibeYTMApp: App {
     @NSApplicationDelegateAdaptor(VibeYTMAppDelegate.self) private var appDelegate
 
     init() {
-        #if DEBUG && SPM_DEV_HARNESS
-        // Dev-launch hack — only fires under SPM (`swift run VibeYTMApp`).
-        // The Xcode project does NOT define SPM_DEV_HARNESS, so real .app
-        // builds skip this. Without a real .app bundle, the OS treats
-        // `swift run` binaries as background helpers — windows materialize
-        // but never come to the front, sometimes never become visible at
-        // all. Forcing .regular policy + activate(ignoringOtherApps:) at
-        // App init gives us a proper foreground app for SPM dev iteration.
+        // Force foreground activation at App init. Originally added for
+        // `swift run` dev iteration (no .app bundle = launchd treats the
+        // binary as a background helper), the assumption was that a real
+        // .app bundle made this hop unnecessary. EMPIRICAL FINDING (Sprint
+        // 0 commit 709bd6b): the .app bundle ALONE does not bring the
+        // main window on-screen — the windows materialize (CGWindowList
+        // shows them) but onScreen=false. Manual `.regular` + `activate`
+        // is required for both SPM dev runs AND build.sh-produced .app
+        // bundles. The earlier #if DEBUG && SPM_DEV_HARNESS gate broke
+        // user-facing launch; removed.
+        //
+        // If Xcode 26's full project + signed bundle later turns out to
+        // make this unnecessary, gate it then — for now, run always.
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        #endif
     }
 
     var body: some Scene {

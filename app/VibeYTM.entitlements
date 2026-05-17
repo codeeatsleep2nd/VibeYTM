@@ -22,15 +22,24 @@
   <key>com.apple.security.cs.disable-library-validation</key><true/>
   <key>com.apple.security.network.client</key><true/>
   <!--
-    Sprint 4 — App Group for SharedPlaybackSnapshot IPC with widgets /
-    Control Center / AppIntents extensions. Ad-hoc signing DECLARES
-    this entitlement but the OS won't honor it until a Developer ID
-    provisioning profile (paid Apple Developer Program, Sprint 6).
-    SharedPlaybackSnapshotWriter handles this gracefully.
+    App Group entitlement INTENTIONALLY ABSENT until Developer ID
+    signing is in place. Declaring this entitlement on an ad-hoc-signed
+    bundle causes macOS Tahoe to prompt the user on every launch
+    ("VibeYTM wants to access data beyond its own folder") AND prevents
+    the SwiftUI main window from coming forward properly. Verified
+    empirically (Sprint 0 follow-up, commit 709bd6b regression).
+
+    Re-enable when paying for Apple Developer Program (Sprint 6 cutover)
+    by uncommenting the block below — and apply the same change to
+    app/build.sh's inline entitlements block:
+
+      <key>com.apple.security.application-groups</key>
+      <array>
+        <string>group.com.vibeytm.dev</string>
+      </array>
+
+    SharedPlaybackSnapshotWriter handles the missing container
+    gracefully (logs once, skips writes) until then.
   -->
-  <key>com.apple.security.application-groups</key>
-  <array>
-    <string>group.com.vibeytm.dev</string>
-  </array>
 </dict>
 </plist>

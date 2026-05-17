@@ -113,15 +113,28 @@ PLIST
 
 echo "[4/5] writing entitlements + signing (ad-hoc) …"
 # NOTE: Apple's AMFIUnserializeXML parser rejects XML comments inside
-# <dict>. Keep this entitlements XML comment-free. The CANONICAL
-# entitlements file (with explanatory comments) lives at
-# app/VibeYTM.entitlements for human readers — both must stay in sync.
+# <dict>. Keep this entitlements XML comment-free.
 #
 # App Group entitlement (com.apple.security.application-groups) is
-# declared here but only HONORED when signed with a Developer ID
-# provisioning profile (paid Apple Developer Program — Sprint 6 cutover).
-# Until then, FileManager.containerURL(forSecurityApplicationGroupIdentifier:)
-# returns nil; SharedPlaybackSnapshotWriter handles this gracefully.
+# INTENTIONALLY OMITTED from ad-hoc-signed builds.
+#
+# Declaring it without a Developer ID provisioning profile causes
+# macOS Tahoe to:
+#   1. Prompt the user on EVERY launch ("VibeYTM wants to access data
+#      beyond its own folder") — incredibly annoying, can't be silenced.
+#   2. Intercept the launch in a way that prevents the SwiftUI WindowGroup
+#      from coming forward properly (windows materialize but stay
+#      onScreen=false). Verified empirically.
+#
+# `SharedPlaybackSnapshotWriter` handles the missing container gracefully
+# (logs once, skips writes). Re-add this block AT THE SAME TIME you
+# switch to Developer ID signing (Apple Developer Program / Sprint 6
+# cutover):
+#
+#   <key>com.apple.security.application-groups</key>
+#   <array>
+#     <string>group.com.vibeytm.dev</string>
+#   </array>
 ENT_FILE="$BUILD_DIR/VibeYTM.entitlements"
 cat > "$ENT_FILE" <<'ENT'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -132,10 +145,6 @@ cat > "$ENT_FILE" <<'ENT'
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
   <key>com.apple.security.cs.disable-library-validation</key><true/>
   <key>com.apple.security.network.client</key><true/>
-  <key>com.apple.security.application-groups</key>
-  <array>
-    <string>group.com.vibeytm.dev</string>
-  </array>
 </dict>
 </plist>
 ENT
