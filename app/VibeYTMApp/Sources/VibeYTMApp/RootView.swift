@@ -99,6 +99,8 @@ private struct AuthScaffold: View {
             + "&continue=https%3A%2F%2Fmusic.youtube.com"
     )!
 
+    @Environment(AppBootstrap.self) private var bootstrap
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -120,7 +122,20 @@ private struct AuthScaffold: View {
 
             Divider()
 
-            AuthWebView(url: Self.authURL)
+            // When AuthWebView lands on music.youtube.com (sign-in
+            // complete), tell the bridge to reload its hidden WebView
+            // so it picks up the new cookies and flips
+            // `__VIBEYTM_LOGGED_IN__` to true. The next bridge poll
+            // then switches `playerStore.state.authState` to `.signedIn`,
+            // and DetailContent's switch renders `SectionScaffold`
+            // (native SwiftUI) instead of this AuthScaffold. Without
+            // this callback the user stays staring at the visible
+            // WebView forever even after technically signing in — the
+            // exact regression captured in
+            // /tmp/vibeytm-current-state.png before this fix.
+            AuthWebView(url: Self.authURL, onAuthenticated: {
+                bootstrap.reloadBridgeForAuth()
+            })
         }
     }
 }

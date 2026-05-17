@@ -128,6 +128,26 @@ public final class BridgeHost {
         self.webView.customUserAgent = self.configuration.userAgent
     }
 
+    /// Force a reload of the hidden WebView. Used after a successful
+    /// sign-in via the visible `AuthWebView` — both views share the
+    /// `WKWebsiteDataStore.default()` cookie store, but the hidden
+    /// WebView already loaded music.youtube.com as signed-out and cached
+    /// `window.__VIBEYTM_LOGGED_IN__ = false`. Cookies alone don't flip
+    /// that flag; the page must re-execute with the new cookie set,
+    /// which only happens on reload. Call this from `AuthWebView`'s
+    /// navigation delegate when it lands on `music.youtube.com`.
+    ///
+    /// Idempotent / safe to call multiple times. No-op until `start()`
+    /// has run.
+    public func reload() {
+        guard isStarted else {
+            bridgeLog.debug("reload() called before start() — ignored")
+            return
+        }
+        bridgeLog.debug("Reloading hidden WebView to pick up new cookies")
+        webView.reload()
+    }
+
     /// Begin loading YTM and polling the state global. Idempotent — safe
     /// to call once during app launch and ignore the result.
     public func start() {

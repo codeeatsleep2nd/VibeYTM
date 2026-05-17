@@ -344,6 +344,19 @@ final class AppBootstrap {
         host.start()
     }
 
+    /// Force the hidden bridge WebView to reload. Called by `AuthScaffold`'s
+    /// `AuthWebView` after the user signs in (visible WebView lands on
+    /// `music.youtube.com`). Cookies are shared via
+    /// `WKWebsiteDataStore.default()` but the hidden WebView cached the
+    /// signed-out state of the page; reloading lets the inject script
+    /// re-evaluate the avatar selector with the now-signed-in DOM and
+    /// flip `__VIBEYTM_LOGGED_IN__` to true. Next bridge poll picks it up
+    /// and `playerStore.state.authState` flips to `.signedIn`, swapping
+    /// the AuthScaffold (visible WebView) out for the native SectionScaffold.
+    func reloadBridgeForAuth() {
+        bridge?.reload()
+    }
+
     // MARK: - Player commands (forwarded to BridgeHost)
     //
     // These wrap the BridgeHost command methods so the wiring layer can
