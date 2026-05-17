@@ -30,10 +30,24 @@ pub struct GeneralSettings {
     /// Defaults to 1.0 (full volume) on a clean install.
     #[serde(default = "default_volume")]
     pub last_volume: f64,
+    #[serde(default = "default_theme")]
+    pub theme: ThemeMode,
 }
 
 fn default_volume() -> f64 {
     1.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ThemeMode {
+    Dark,
+    Light,
+    System,
+}
+
+fn default_theme() -> ThemeMode {
+    ThemeMode::Dark
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -57,6 +71,7 @@ impl Default for AppSettings {
                 close_to_tray: true,
                 background_playback: true,
                 last_volume: default_volume(),
+                theme: default_theme(),
             },
             integrations: IntegrationSettings {
                 notifications_enabled: true,
@@ -148,5 +163,38 @@ mod tests {
         assert!(v["general"]["closeToTray"].is_boolean());
         assert!(v["general"]["backgroundPlayback"].is_boolean());
         assert!(v["integrations"]["notificationsEnabled"].is_boolean());
+    }
+
+    #[test]
+    fn default_theme_is_dark() {
+        let s = AppSettings::default();
+        assert_eq!(s.general.theme, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn theme_roundtrips_via_json() {
+        let mut s = AppSettings::default();
+        s.general.theme = ThemeMode::System;
+        let bytes = serde_json::to_vec(&s).unwrap();
+        let parsed: AppSettings = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.general.theme, ThemeMode::System);
+    }
+
+    #[test]
+    fn theme_serializes_camel_case() {
+        let s = AppSettings::default();
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["general"]["theme"], "dark");
+    }
+
+    #[test]
+    fn missing_theme_field_defaults_to_dark() {
+        let json = r#"{
+            "general": { "closeToTray": true, "backgroundPlayback": true, "lastVolume": 0.5 },
+            "integrations": { "notificationsEnabled": true },
+            "shortcuts": { "playPause": "X", "nextTrack": "Y", "prevTrack": "Z" }
+        }"#;
+        let parsed: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.general.theme, ThemeMode::Dark);
     }
 }
