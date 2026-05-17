@@ -48,6 +48,13 @@ struct VibeYTMApp: App {
                     router.handle(deepLink: url)
                 }
                 .task {
+                    // Bridge start MUST happen here, NOT in
+                    // AppBootstrap.init — see the long comment in
+                    // AppBootstrap.init for why. TL;DR: creating the
+                    // BridgeHost's hidden NSWindow during App @State
+                    // init blocks the WindowGroup's primary window
+                    // from coming on-screen on macOS 26.
+                    bootstrap.startBridgeIfNeeded()
                     bootstrap.startNowPlayingIntegration()
                     bootstrap.installShutdownHook()
                     bootstrap.installWindowHooks()
@@ -200,11 +207,24 @@ final class AppBootstrap {
         var initial = store.state
         initial.volume = saved.volume
         store.apply(initial)
-        // Bridge construction lives in a separate method so the closure
-        // can safely capture `self` after init — capturing self inside
-        // the BridgeHost initializer trips the "used before being
-        // initialized" check.
-        startBridge()
+        // Bridge construction is INTENTIONALLY deferred — see comment
+        // below. The `bridge` property stays nil here; `.task { }` on
+        // the WindowGroup calls `startBridgeIfNeeded()` after the main
+        // window is on-screen.
+        //
+        // CRITICAL — deferred to `.task { }` (Sprint 0 follow-up): the
+        // BridgeHost.start() creates a hidden NSWindow for its WKWebView.
+        // On macOS 26 Tahoe, creating an NSWindow during a SwiftUI App's
+        // @State init phase prevents the WindowGroup's primary window
+        // from coming on-screen — process launches but main window
+        // stays onScreen=false, no dock icon, no menu bar. Verified
+        // empirically by writing a minimal SwiftUI app that DOES launch
+        // visibly, then adding the BridgeHost NSWindow creation =
+        // regression reappears. The fix is to defer startBridge() to
+        // the WindowGroup's `.task { }` modifier — same pattern that
+        // NowPlayingIntegration already uses for the same kind of
+        // reason. See `bootstrap.startBridgeIfNeeded()` call below.
+        //
         // NowPlayingIntegration is started from the WindowGroup's
         // `.task` modifier instead of here. Initializing it inside
         // AppBootstrap.init() — which fires from a SwiftUI @State
@@ -214,6 +234,14 @@ final class AppBootstrap {
         // before the app's bundle is fully registered with the system
         // media remote daemon. `.task` runs after the scene is on
         // screen, by which point everything is in place.
+    }
+
+    /// Idempotent bridge starter — safe to call from `.task` even if it
+    /// somehow fires twice. The bridge instance is held in `self.bridge`;
+    /// the guard short-circuits a second call.
+    func startBridgeIfNeeded() {
+        guard bridge == nil else { return }
+        startBridge()
     }
 
     /// Called from the WindowGroup's `.task`. Idempotent.
