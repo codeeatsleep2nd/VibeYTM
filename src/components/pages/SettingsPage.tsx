@@ -2,6 +2,7 @@ import { type FC, type ReactNode, useEffect, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { aboutApi, cacheApi, settingsApi, ytmApi, type AboutInfo, type AppSettings, type CacheStats } from '../../lib/ipc';
 import { debug } from '../../lib/debug';
+import { notifyThemeChanged } from '../../lib/themeMutations';
 
 declare const __APP_VERSION__: string;
 // Fallback only — the real version is fetched at runtime via Tauri's getVersion()
@@ -166,7 +167,7 @@ const Divider: FC = () => (
   <div
     style={{
       height: '1px',
-      background: 'oklch(100% 0 0 / 0.06)',
+      background: 'var(--glass-tile-bg)',
       margin: 'var(--space-1) 0',
     }}
   />
@@ -240,7 +241,7 @@ const SegmentedControl: FC<SegmentedControlProps> = ({ value, onChange, disabled
               background: isActive
                 ? 'var(--color-accent)'
                 : isHovered
-                  ? 'oklch(100% 0 0 / 0.06)'
+                  ? 'var(--glass-tile-bg)'
                   : 'transparent',
               color: isActive ? '#fff' : 'var(--color-text-secondary)',
             }}
@@ -392,7 +393,7 @@ export const SettingsPage: FC = () => {
           <SegmentedControl
             value={settings?.general.theme ?? 'dark'}
             disabled={!settings}
-            onChange={(v) => updateGeneral({ theme: v })}
+            onChange={(v) => { updateGeneral({ theme: v }); notifyThemeChanged(v); }}
           />
         </SettingRow>
       </SettingsCard>
