@@ -361,6 +361,13 @@ public enum Innertube {
         let artwork = firstThumbnail(in: renderer?["thumbnail"] as? [String: Any])
 
         let nav = item["navigationEndpoint"] as? [String: Any]
+        // Filter out pure UGC (user-generated YouTube videos) — they're
+        // not music and surface in YTM's "music videos for you" shelves
+        // mixed with legitimate official content. ATV (audio track),
+        // OMV (official music video), and OFFICIAL_SOURCE_MUSIC stay
+        // in. Items without a musicVideoType (e.g. albums / playlists)
+        // also stay in — only the explicit UGC marker is rejected.
+        if isUGCMusicVideo(nav) { return nil }
         let parsedNav = parseNavigation(nav)
         let id = parsedNav.video ?? parsedNav.playlist ?? parsedNav.browse ?? UUID().uuidString
 
@@ -428,6 +435,23 @@ public enum Innertube {
               let url = last["url"] as? String
         else { return nil }
         return url
+    }
+
+    /// Whether the navigation endpoint indicates a non-music user-
+    /// generated video (`MUSIC_VIDEO_TYPE_UGC`). YTM's home and
+    /// "music videos for you" shelves occasionally mix these UGC
+    /// uploads with legitimate official music content; rejecting
+    /// them here keeps the home/explore feeds true to the YouTube
+    /// **Music** identity. ATV (audio track), OMV (official music
+    /// video), and OFFICIAL_SOURCE_MUSIC are all accepted.
+    private static func isUGCMusicVideo(_ endpoint: [String: Any]?) -> Bool {
+        guard let watch = endpoint?["watchEndpoint"] as? [String: Any] else {
+            return false
+        }
+        let configs = watch["watchEndpointMusicSupportedConfigs"] as? [String: Any]
+        let cfg = configs?["watchEndpointMusicConfig"] as? [String: Any]
+        let kind = cfg?["musicVideoType"] as? String ?? ""
+        return kind == "MUSIC_VIDEO_TYPE_UGC"
     }
 
     private static func parseNavigation(_ endpoint: [String: Any]?) -> (video: String?, playlist: String?, browse: String?) {

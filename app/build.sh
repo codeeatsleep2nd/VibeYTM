@@ -78,7 +78,12 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>VibeYTM</string>
-  <key>CFBundleIdentifier</key><string>com.vibeytm.app</string>
+  <!--
+    Bundle ID = com.vibeytm.dev (Sprint 0 eng-review D4): preserves the
+    Tauri-era WKWebsiteDataStore cookie storage so existing users don't
+    re-sign-in to YouTube Music. Logger subsystem matches.
+  -->
+  <key>CFBundleIdentifier</key><string>com.vibeytm.dev</string>
   <key>CFBundleName</key><string>VibeYTM</string>
   <key>CFBundleDisplayName</key><string>VibeYTM</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -90,11 +95,33 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>NSAppTransportSecurity</key>
   <dict><key>NSAllowsArbitraryLoads</key><true/></dict>
   <key>NSMicrophoneUsageDescription</key><string>Used by YTM for video conferencing pages — never recorded.</string>
+  <!--
+    Sprint 3 — URL scheme registration for vibeytm:// deep links.
+    AppRouter.handle(deepLink:) parses these into AppRoute values.
+  -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>com.vibeytm.dev.deeplink</string>
+      <key>CFBundleURLSchemes</key>
+      <array><string>vibeytm</string></array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST
 
 echo "[4/5] writing entitlements + signing (ad-hoc) …"
+# NOTE: Apple's AMFIUnserializeXML parser rejects XML comments inside
+# <dict>. Keep this entitlements XML comment-free. The CANONICAL
+# entitlements file (with explanatory comments) lives at
+# app/VibeYTM.entitlements for human readers — both must stay in sync.
+#
+# App Group entitlement (com.apple.security.application-groups) is
+# declared here but only HONORED when signed with a Developer ID
+# provisioning profile (paid Apple Developer Program — Sprint 6 cutover).
+# Until then, FileManager.containerURL(forSecurityApplicationGroupIdentifier:)
+# returns nil; SharedPlaybackSnapshotWriter handles this gracefully.
 ENT_FILE="$BUILD_DIR/VibeYTM.entitlements"
 cat > "$ENT_FILE" <<'ENT'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -105,6 +132,10 @@ cat > "$ENT_FILE" <<'ENT'
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
   <key>com.apple.security.cs.disable-library-validation</key><true/>
   <key>com.apple.security.network.client</key><true/>
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>group.com.vibeytm.dev</string>
+  </array>
 </dict>
 </plist>
 ENT

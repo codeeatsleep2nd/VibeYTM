@@ -180,9 +180,11 @@ struct ShelfRow: View {
                 ShelfCard(item: item)
             }
             .buttonStyle(.plain)
+            .modifier(ShelfItemContextMenu(item: item))
         } else {
             ShelfCard(item: item)
                 .onTapGesture { bootstrap.play(item: item) }
+                .modifier(ShelfItemContextMenu(item: item))
         }
     }
 }

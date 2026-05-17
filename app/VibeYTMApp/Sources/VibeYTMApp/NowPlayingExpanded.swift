@@ -7,24 +7,37 @@ import YTMBridge
 /// left, title + artist + scrubber + transport on the right.
 ///
 /// **DISMISSAL CONTRACT (regression-prevention).** This sheet has been
-/// broken THREE times in a row. The dismissal contract is now defensive
-/// to the point of redundancy:
+/// dismiss-trapped FOUR times. The current contract has FIVE redundant
+/// paths and three forbidden anti-patterns:
 ///
 ///   1. Caller passes an explicit `onDismiss` closure that flips its
 ///      own presentation state. We do NOT use `@Environment(\.dismiss)`
-///      — it's been observed to fail silently inside sheets that mix
-///      keyboardShortcut bindings with focus-effect modifiers.
-///   2. Visible chevron-down button (top-leading) — calls onDismiss.
-///   3. Visible "Done" button (top-trailing) — calls onDismiss.
-///   4. Tap on the dark backdrop area outside the content layer.
+///      — it has been observed to fail silently inside sheets that
+///      mix keyboardShortcut bindings with focus-effect modifiers.
+///   2. Visible chevron-down button (top-leading) — calls onDismiss
+///      directly. Bound to `.keyboardShortcut(.cancelAction)`.
+///   3. Visible "Done" button (top-trailing) — calls onDismiss
+///      directly. Bound to `.keyboardShortcut(.defaultAction)`.
+///   4. Full-frame click-catcher Button beneath the content layer:
+///      a transparent Button with `Rectangle().fill(opacity 0.001)`
+///      as its label. SwiftUI's Button hit-testing makes inner
+///      Buttons consume their own clicks first; clicks on empty
+///      backdrop area fall through to the catcher. This is the
+///      mouse-only-dismiss path. Implemented as a Button (NOT an
+///      `.onTapGesture`) because tap-gestures on a parent block
+///      child Button taps in some macOS 26 builds.
 ///   5. Local NSEvent monitor watches for the Esc key while the sheet
-///      is on screen and calls onDismiss directly. This is the safety
-///      net for the case where SwiftUI's `.keyboardShortcut(.cancelAction)`
-///      doesn't reach the button (focus chain interference).
+///      is on screen and calls onDismiss directly. Returns `nil` from
+///      the monitor to consume the event.
 ///
-/// DO NOT attach nested `.sheet(isPresented:)` modifiers to this view —
-/// SwiftUI honours only the most recent .sheet on a given subtree, and
-/// nested presentations consume the parent sheet's keyboard shortcuts.
+/// FORBIDDEN PATTERNS (each one previously re-opened this regression):
+///   • `@Environment(\.dismiss)` — failed silently in earlier rounds.
+///   • `.contentShape(Rectangle()).onTapGesture` on the content
+///     VStack as a "swallow" — hijacked chevron + Done button clicks.
+///     Use a real Button as the click-catcher (path 4) instead.
+///   • Nested `.sheet(isPresented:)` — only the most-recent .sheet
+///     modifier on a subtree wins, and nested presentations consume
+///     the parent's keyboard shortcuts.
 struct NowPlayingExpanded: View {
     let onDismiss: () -> Void
 
@@ -35,14 +48,26 @@ struct NowPlayingExpanded: View {
     var body: some View {
         let state = store.state
         ZStack(alignment: .top) {
-            // Path 4 — backdrop tap. Sits as the lowest layer so any
-            // tap that doesn't hit the content above falls through to
-            // it. The content layer has its own contentShape +
-            // tapGesture below to swallow taps on interactive area.
+            // Layer 1 — backdrop visual.
             backdrop(track: state.track)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: onDismiss)
 
+            // Layer 2 — full-frame transparent button that calls
+            // onDismiss. Sits BENEATH the content layer. SwiftUI's
+            // Button hit-testing means inner Buttons (chevron, Done,
+            // transport controls, etc.) receive clicks first; only
+            // taps on empty backdrop regions fall through to this
+            // catcher. The previous swallow-gesture approach blocked
+            // inner button taps too — using a real Button instead of
+            // an `.onTapGesture` is the reliable form.
+            Button(action: onDismiss) {
+                Rectangle().fill(Color.black.opacity(0.001))
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Layer 3 — actual player content. No swallow gestures
+            // here; each interactive child (chevron, Done, slider,
+            // transport buttons) consumes its own click events.
             VStack(spacing: 0) {
                 header
                 Spacer(minLength: 24)
@@ -50,10 +75,6 @@ struct NowPlayingExpanded: View {
                     .padding(.horizontal, 40)
                 Spacer(minLength: 24)
             }
-            .contentShape(Rectangle())
-            .onTapGesture { /* swallow — keeps backdrop tap from firing
-                               when the user clicks anywhere on the
-                               player content (buttons / slider / cover) */ }
         }
         .frame(minWidth: 880, minHeight: 600, idealHeight: 700)
         // Path 5 — install a local NSEvent monitor for Esc. The

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Canonical entitlements file for the VibeYTM macOS app.
+
+  Sprint 0 (this commit): the file lives here ready for Xcode 26 to
+  reference once `app/VibeYTM.xcodeproj` lands (see app/README.md "Status
+  Sprint 0 Task 1 — partial"). Until Xcode is installed, `app/build.sh`
+  uses its own inline copy (see step [4/5] of that script). Both files
+  must stay in sync; the inline copy is a temporary measure.
+
+  Why two copies: Xcode wants entitlements as a project-referenced file;
+  build.sh works without Xcode at all and inlines them. They're identical
+  in content. When Xcode 26 lands and the .xcodeproj is created, point
+  Xcode's Signing & Capabilities at THIS file and delete the inline copy
+  from build.sh (or leave both — duplication is annoying but harmless).
+-->
+<dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+  <key>com.apple.security.network.client</key><true/>
+  <!--
+    Sprint 4 — App Group for SharedPlaybackSnapshot IPC with widgets /
+    Control Center / AppIntents extensions. Ad-hoc signing DECLARES
+    this entitlement but the OS won't honor it until a Developer ID
+    provisioning profile (paid Apple Developer Program, Sprint 6).
+    SharedPlaybackSnapshotWriter handles this gracefully.
+  -->
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>group.com.vibeytm.dev</string>
+  </array>
+</dict>
+</plist>

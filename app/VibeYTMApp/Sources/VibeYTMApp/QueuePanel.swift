@@ -6,9 +6,13 @@ import YTMBridge
 /// Shows the upcoming tracks (live from the bridge poller's queue read)
 /// with the currently-playing track highlighted at the top.
 struct QueuePanel: View {
+    /// Closure-based dismissal (Sprint 0 AppRouter migration). Caller
+    /// flips `router.isQueueOpen = false` via this closure. See LyricsPanel
+    /// for the rationale.
+    let onDismiss: () -> Void
+
     @Environment(PlayerStore.self) private var store
     @Environment(AppBootstrap.self) private var bootstrap
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let state = store.state
@@ -17,8 +21,12 @@ struct QueuePanel: View {
                 Text("Queue")
                     .font(.title2.weight(.semibold))
                 Spacer()
-                Button("Done") { dismiss() }
+                Button("Done", action: onDismiss)
                     .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .glassEffect(in: .capsule)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)

@@ -17,14 +17,16 @@ import YTMBridge
 struct PlayerChrome: View {
     @Environment(PlayerStore.self) private var store
     @Environment(AppBootstrap.self) private var bootstrap
-    @State private var showQueue = false
-    @State private var showLyrics = false
-    @State private var showExpanded = false
+    @Environment(AppRouter.self) private var router
 
     var body: some View {
+        // @Bindable lets us pass `$router.isXOpen` bindings into
+        // `.sheet(isPresented:)`. @Observable types need this wrapper
+        // when SwiftUI wants a Binding<T> rather than a value read.
+        @Bindable var router = router
         let state = store.state
         HStack(spacing: 12) {
-            Button { showExpanded.toggle() } label: {
+            Button { router.isNowPlayingExpanded.toggle() } label: {
                 ArtworkThumb(track: state.track)
             }
             .buttonStyle(.plain)
@@ -61,15 +63,15 @@ struct PlayerChrome: View {
 
             Spacer(minLength: 8)
 
-            Button { showLyrics.toggle() } label: {
+            Button { router.isLyricsOpen.toggle() } label: {
                 Image(systemName: "text.quote")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
 
-            Button { showQueue.toggle() } label: {
+            Button { router.isQueueOpen.toggle() } label: {
                 Image(systemName: "list.bullet")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
 
             VolumeRow()
         }
@@ -78,23 +80,33 @@ struct PlayerChrome: View {
         .frame(maxWidth: .infinity)
         .glassEffect(in: .capsule)
         // Suppress the focus ring across every chrome control. macOS
-        // auto-focuses the first focusable button on launch (the
-        // artwork tap-to-expand or the prev button), which draws a
-        // distracting rounded-square selection halo. Users still get
-        // hover and active feedback; only the keyboard focus ring is
-        // hidden.
+        // auto-focuses the first focusable button on launch — usually
+        // the prev button — and draws a distracting rounded-square
+        // halo around it. `.focusEffectDisabled()` on the parent
+        // wasn't reliably propagating through `.buttonStyle(.plain)`,
+        // so we additionally remove every chrome button from the
+        // focus chain via `.focusable(false)`. Users still get hover
+        // and active feedback; only the keyboard focus ring is hidden.
         .focusEffectDisabled()
-        .sheet(isPresented: $showQueue) {
-            QueuePanel()
+        .focusable(false)
+        .sheet(isPresented: $router.isQueueOpen) {
+            // Closure-based dismissal (Sprint 0 AppRouter migration).
+            // The sheet's `isPresented` is bound to the router flag, so
+            // an AppIntent can dismiss by flipping `router.isQueueOpen`;
+            // the user's Done button does the same through this closure.
+            QueuePanel(onDismiss: { router.isQueueOpen = false })
         }
-        .sheet(isPresented: $showLyrics) {
-            LyricsPanel()
+        .sheet(isPresented: $router.isLyricsOpen) {
+            LyricsPanel(onDismiss: { router.isLyricsOpen = false })
         }
-        .sheet(isPresented: $showExpanded) {
+        .sheet(isPresented: $router.isNowPlayingExpanded) {
             // Closure-based dismissal — see the doc comment at the top
             // of NowPlayingExpanded.swift. We deliberately do NOT use
-            // Environment(\.dismiss) inside the presented view.
-            NowPlayingExpanded(onDismiss: { showExpanded = false })
+            // Environment(\.dismiss) inside the presented view. The
+            // 5-path dismissal contract still holds: each path calls the
+            // closure, which flips the router flag, which triggers
+            // .sheet dismissal.
+            NowPlayingExpanded(onDismiss: { router.isNowPlayingExpanded = false })
         }
     }
 }
@@ -190,7 +202,7 @@ private struct TransportRow: View {
                 Image(systemName: "forward.fill")
             }
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
     }
 }
 
@@ -214,7 +226,7 @@ private struct ToggleRow: View {
                     .foregroundStyle(state.isLiked ? Color.pink : .primary)
             }
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
     }
 }
 

@@ -4,7 +4,7 @@ import AppKit
 import OSLog
 @preconcurrency import WebKit
 
-private let bridgeLog = Logger(subsystem: "com.vibeytm.app", category: "YTMBridge")
+private let bridgeLog = Logger(subsystem: "com.vibeytm.dev", category: "YTMBridge")
 
 // Hidden WKWebView host for YouTube Music. Replaces the Rust-side
 // `webview_bridge` crate from the Tauri tree. WebKit APIs are mostly

@@ -3,24 +3,32 @@ import AppKit
 import OSLog
 import PlayerCore
 import YTMBridge
+import VibeYTMIntents
 
-private let appLog = Logger(subsystem: "com.vibeytm.app", category: "AppBootstrap")
+private let appLog = Logger(subsystem: "com.vibeytm.dev", category: "AppBootstrap")
 
 @main
 struct VibeYTMApp: App {
     @State private var bootstrap = AppBootstrap()
+    /// AppRouter (Sprint 0) — single source of truth for sidebar
+    /// selection, drill-down stack, and sheet/overlay flags. Injected
+    /// into the environment so any view, AppIntent (Sprint 3), or
+    /// deep-link handler can push navigation.
+    @State private var router = AppRouter()
     @NSApplicationDelegateAdaptor(VibeYTMAppDelegate.self) private var appDelegate
 
     init() {
-        // Without a real .app bundle, the OS treats `swift run` binaries
-        // as background helpers — windows materialize but never come to
-        // the front, sometimes never become visible at all. Forcing
-        // .regular policy + activate(ignoringOtherApps:) at App init
-        // gives us a proper foreground app for development. Once the
-        // Xcode project lands and a real bundle is produced, this hop
-        // becomes unnecessary but harmless.
+        #if DEBUG && SPM_DEV_HARNESS
+        // Dev-launch hack — only fires under SPM (`swift run VibeYTMApp`).
+        // The Xcode project does NOT define SPM_DEV_HARNESS, so real .app
+        // builds skip this. Without a real .app bundle, the OS treats
+        // `swift run` binaries as background helpers — windows materialize
+        // but never come to the front, sometimes never become visible at
+        // all. Forcing .regular policy + activate(ignoringOtherApps:) at
+        // App init gives us a proper foreground app for SPM dev iteration.
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        #endif
     }
 
     var body: some Scene {
@@ -29,11 +37,24 @@ struct VibeYTMApp: App {
                 .frame(minWidth: 1024, minHeight: 640)
                 .environment(bootstrap.playerStore)
                 .environment(bootstrap)
+                .environment(router)
+                .onOpenURL { url in
+                    // Deep-link entry point. Sprint 3 AppIntents and the
+                    // `vibeytm://` URL scheme both land here.
+                    router.handle(deepLink: url)
+                }
                 .task {
                     bootstrap.startNowPlayingIntegration()
                     bootstrap.installShutdownHook()
                     bootstrap.installWindowHooks()
                     appDelegate.bootstrap = bootstrap
+                    // Sprint 3 — register the host-side AppIntent
+                    // dispatcher. After this call, AppIntent invocations
+                    // from Siri / Shortcuts.app / Spotlight route into
+                    // the running BridgeHost via AppBootstrap.
+                    await PlaybackIntentRegistry.shared.set(
+                        HostPlaybackIntentDispatcher(bootstrap: bootstrap)
+                    )
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -52,6 +73,62 @@ struct VibeYTMApp: App {
                     .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
                 Button("Previous Track") { bootstrap.previous() }
                     .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                Button("Like Current Track") { bootstrap.toggleLike() }
+                    .keyboardShortcut("l", modifiers: [.command])
+            }
+            // Sprint 1 — discoverability for the in-app shortcut surface.
+            // ⌘/ is the macOS convention for "show me what I can do here"
+            // (Apple Music uses it for Settings → Keyboard Shortcuts;
+            // we use it for the cheatsheet sheet).
+            CommandGroup(replacing: .help) {
+                Button("Keyboard Shortcuts") {
+                    router.isCheatsheetOpen = true
+                }
+                .keyboardShortcut("/", modifiers: [.command])
+            }
+            // Sprint 1 — Vibe (DJ Copilot, Sprint 4 feature) shortcut.
+            // Currently no-op until Sprint 4 wires the sheet; lives here
+            // so the shortcut is discoverable from day 1 of Sprint 1.
+            CommandGroup(after: .toolbar) {
+                Button("Open Vibe") {
+                    // router.isDJCopilotOpen = true — Sprint 4
+                }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
+                .disabled(true)
+            }
+            // Sprint 2 — VibeYTM-specific View menu items. Add to the
+            // existing View menu (which SwiftUI auto-creates with
+            // sidebar-toggle, etc.) rather than replacing it.
+            CommandGroup(after: .sidebar) {
+                Button("Show Now Playing") {
+                    router.isNowPlayingExpanded = true
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                Button("Show Lyrics") {
+                    router.isLyricsOpen.toggle()
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+                Button("Show Queue") {
+                    router.isQueueOpen.toggle()
+                }
+                .keyboardShortcut("q", modifiers: [.command, .shift])
+                Divider()
+            }
+            // Sprint 2 — replace the system About panel with a custom
+            // one that surfaces the version + build info (Sprint 5 ships
+            // a richer About window; for now this just ensures the menu
+            // item exists and is wired).
+            CommandGroup(replacing: .appInfo) {
+                Button("About VibeYTM") {
+                    NSApplication.shared.orderFrontStandardAboutPanel(
+                        options: [
+                            .applicationName: "VibeYTM",
+                            .applicationVersion: "2.0.0",
+                            NSApplication.AboutPanelOptionKey(rawValue: "Copyright"):
+                                "Native macOS YouTube Music client.",
+                        ]
+                    )
+                }
             }
         }
     }
@@ -81,6 +158,15 @@ final class AppBootstrap {
     private var bridge: BridgeHost?
     private var nowPlaying: NowPlayingIntegration?
     private var pipeline = BridgePipelineState()
+    /// Writes a cross-process snapshot to the App Group container on every
+    /// poll cycle. Sprint 4 widgets and Control Center extensions read it.
+    /// Sprint 0 just lands the writer — until widgets ship, the snapshot
+    /// file sits in the container as a forward-looking artifact.
+    private let sharedPlaybackSnapshotWriter = SharedPlaybackSnapshotWriter()
+    /// Sprint 5 — fires UN notifications on track change when the app is
+    /// backgrounded. Skips notifications when the app is active to avoid
+    /// duplicating the chrome's track display.
+    private let trackChangeNotifier = TrackChangeNotifier()
     /// The volume the user last pushed to YTM via IPC (or the persisted
     /// startup value). Drives `VolumeSettle`'s stored-vs-reported
     /// reconcile.
@@ -532,6 +618,8 @@ final class AppBootstrap {
             }
             playerStore.apply(next)
             nowPlaying?.apply(next)
+            sharedPlaybackSnapshotWriter.write(SharedPlaybackSnapshot(state: next))
+            trackChangeNotifier.onTrackChange(newTrack: next.track)
             pipeline = outcome.nextPipeline
             consumePendingResumeIfReady()
             persistIfMeaningful()
@@ -550,6 +638,7 @@ final class AppBootstrap {
             }
             playerStore.apply(next)
             nowPlaying?.apply(next)
+            sharedPlaybackSnapshotWriter.write(SharedPlaybackSnapshot(state: next))
             consumePendingResumeIfReady()
         }
     }

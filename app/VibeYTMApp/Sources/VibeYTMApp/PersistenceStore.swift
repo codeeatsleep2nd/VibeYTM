@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let persistenceLog = Logger(subsystem: "com.vibeytm.app", category: "Persistence")
+private let persistenceLog = Logger(subsystem: "com.vibeytm.dev", category: "Persistence")
 
 /// Snapshot persisted across launches. Holds just enough to restore the
 /// user's last session: the video they were playing, where they were in

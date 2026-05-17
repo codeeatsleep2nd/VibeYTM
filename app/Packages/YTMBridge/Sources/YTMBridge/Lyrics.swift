@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let lyricsLog = Logger(subsystem: "com.vibeytm.app", category: "Lyrics")
+private let lyricsLog = Logger(subsystem: "com.vibeytm.dev", category: "Lyrics")
 
 /// One synced lyric line. `timeSecs` is the offset from track start;
 /// `text` is the line as displayed. Empty `text` is allowed (instrumental

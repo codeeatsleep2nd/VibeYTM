@@ -85,6 +85,8 @@ struct BrowseDetailView: View {
                         }
                         .buttonStyle(.borderedProminent)
 
+                        // Glass-capsule action button — Liquid Glass
+                        // matching the chrome's visual language.
                         Button {
                             if let lead { bootstrap.shuffleAndPlay(item: lead) }
                         } label: {
@@ -93,16 +95,10 @@ struct BrowseDetailView: View {
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 8)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.plain)
+                        .glassEffect(in: .capsule)
 
                         // Save / Remove from Library (#54 / #55).
-                        // Prefers the playlistId extracted from the
-                        // page's own header (canonical for the album /
-                        // playlist / show), falling back to the lead
-                        // track's playlistId if the header parser
-                        // didn't surface one. Hidden for browseIds
-                        // that don't map to a saveable target (artist
-                        // pages, search shells).
                         if let pid = saveTargetPlaylistId, isLibrarySaveable {
                             Button {
                                 Task { await toggleSave(playlistId: pid) }
@@ -115,7 +111,8 @@ struct BrowseDetailView: View {
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 8)
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.plain)
+                            .glassEffect(in: .capsule)
                             .disabled(savePending)
                         }
                     }

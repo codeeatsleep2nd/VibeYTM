@@ -19,55 +19,56 @@ struct SearchView: View {
     @State private var filter: SearchFilter = .all
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField("Search artists, songs, albums, playlists", text: $query)
-                        .textFieldStyle(.plain)
-                        .font(.title3)
-                        .onSubmit { commit(query) }
-                        .onChange(of: query) { _, newValue in
-                            scheduleDebouncedSearch(for: newValue)
-                        }
-                    if !query.isEmpty {
-                        Button {
-                            query = ""
-                            shelves = []
-                            lastSubmitted = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.borderless)
+        VStack(spacing: 12) {
+            // Search field — Liquid Glass capsule.
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search artists, songs, albums, playlists", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.title3)
+                    .onSubmit { commit(query) }
+                    .onChange(of: query) { _, newValue in
+                        scheduleDebouncedSearch(for: newValue)
                     }
-                }
-
-                // Category filter chips (#18). Hidden until the user
-                // has searched something — empty-state Search shouldn't
-                // display irrelevant filter UI.
-                if !lastSubmitted.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(SearchFilter.allCases) { tab in
-                                FilterChip(
-                                    label: tab.label,
-                                    isSelected: filter == tab
-                                ) {
-                                    filter = tab
-                                    Task { await commit(lastSubmitted, force: true) }
-                                }
-                            }
-                        }
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                        shelves = []
+                        lastSubmitted = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(.thinMaterial)
+            .padding(.vertical, 10)
+            .glassEffect(in: .capsule)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
 
-            Divider()
+            // Category filter chips (#18). Hidden until the user has
+            // searched something — empty-state Search shouldn't show
+            // irrelevant filter UI. The chips themselves use the
+            // `glassEffect` capsule via `FilterChip` below.
+            if !lastSubmitted.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(SearchFilter.allCases) { tab in
+                            FilterChip(
+                                label: tab.label,
+                                isSelected: filter == tab
+                            ) {
+                                filter = tab
+                                Task { await commit(lastSubmitted, force: true) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
 
             content
         }
@@ -167,12 +168,18 @@ private struct FilterChip: View {
                 .font(.callout.weight(.medium))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
-                .background(
-                    isSelected ? Color.accentColor : Color.secondary.opacity(0.15),
-                    in: Capsule()
-                )
                 .foregroundStyle(isSelected ? .white : .primary)
         }
         .buttonStyle(.plain)
+        // Selected chip uses an accent-tinted capsule. Unselected
+        // chips use the system's Liquid Glass capsule for the
+        // frosted look that matches the rest of the chrome.
+        .background {
+            if isSelected {
+                Capsule().fill(Color.accentColor)
+            } else {
+                Capsule().fill(.clear).glassEffect(in: .capsule)
+            }
+        }
     }
 }

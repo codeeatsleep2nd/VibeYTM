@@ -8,25 +8,20 @@ import PlayerCore
 /// embedded webpage.
 struct RootView: View {
     @Environment(AppBootstrap.self) private var bootstrap
-    @State private var selection: SidebarSection
-    @State private var browseStack: [BrowseDestination] = []
-
-    init() {
-        // Read the persisted last sidebar selection from the bootstrap.
-        // We can't use @Environment here so we fall back to a property
-        // wrapper trick: assign in body's onAppear once the environment
-        // is available. Default to .home for the initial render.
-        _selection = State(initialValue: .home)
-    }
+    @Environment(AppRouter.self) private var router
 
     var body: some View {
+        // @Bindable lets us pass `$router.selection` / `$router.browseStack`
+        // bindings into NavigationSplitView / NavigationStack. Required
+        // because router is an @Observable class, not a value type.
+        @Bindable var router = router
         NavigationSplitView {
-            SidebarView(selection: $selection)
+            SidebarView(selection: $router.selection)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 340)
         } detail: {
             ZStack(alignment: .bottom) {
-                NavigationStack(path: $browseStack) {
-                    DetailContent(section: selection)
+                NavigationStack(path: $router.browseStack) {
+                    DetailContent(section: router.selection)
                         .navigationDestination(for: BrowseDestination.self) { dest in
                             BrowseDetailView(browseId: dest.browseId, title: dest.title)
                         }
@@ -45,16 +40,23 @@ struct RootView: View {
             // Reset the drill-down stack when the sidebar selection
             // changes — switching sections shouldn't preserve a stale
             // album-detail page from a previous section.
-            .onChange(of: selection) { _, newValue in
-                browseStack.removeAll()
+            .onChange(of: router.selection) { _, newValue in
+                router.browseStack = NavigationPath()
                 bootstrap.updatePersistedSidebar(newValue)
             }
         }
         .onAppear {
             // Restore the persisted sidebar selection on first appearance.
-            // Doing it here (vs. in init) gives us access to the
+            // Doing it here (vs. in router init) gives us access to the
             // bootstrap from the environment.
-            selection = bootstrap.initialSidebarSelection
+            router.selection = bootstrap.initialSidebarSelection
+        }
+        // Sprint 1 — keyboard-shortcut cheatsheet (⌘/). Sheet binding
+        // lives on RootView (not PlayerChrome) because the cheatsheet
+        // applies to the whole app, not just the player chrome's command
+        // surface.
+        .sheet(isPresented: $router.isCheatsheetOpen) {
+            ShortcutCheatsheet(onDismiss: { router.isCheatsheetOpen = false })
         }
     }
 }

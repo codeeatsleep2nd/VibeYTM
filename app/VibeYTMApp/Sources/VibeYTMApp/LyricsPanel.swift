@@ -6,9 +6,16 @@ import YTMBridge
 /// displays them with the active line highlighted. Auto-scrolls so the
 /// active line stays roughly centered as playback progresses.
 struct LyricsPanel: View {
+    /// Closure-based dismissal (Sprint 0 AppRouter migration). Caller
+    /// flips `router.isLyricsOpen = false` via this closure. Consistent
+    /// with the NowPlayingExpanded dismissal contract — keeps the
+    /// `.sheet(isPresented:)` binding and the explicit dismiss action
+    /// decoupled, so AppIntents can dismiss by flipping the router flag
+    /// from outside the view tree without bypassing user-driven dismissal.
+    let onDismiss: () -> Void
+
     @Environment(PlayerStore.self) private var store
     @Environment(AppBootstrap.self) private var bootstrap
-    @Environment(\.dismiss) private var dismiss
 
     @State private var lyrics: Lyrics = .empty
     @State private var loading = false
@@ -30,8 +37,12 @@ struct LyricsPanel: View {
                     }
                 }
                 Spacer()
-                Button("Done") { dismiss() }
+                Button("Done", action: onDismiss)
                     .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .glassEffect(in: .capsule)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
