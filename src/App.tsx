@@ -45,8 +45,8 @@ const App: FC = () => {
   const [isFocusTimerOpen, setIsFocusTimerOpen] = useState(false);
   // Sidebar visibility — persisted to localStorage so the choice survives
   // launches. Read once at mount; subsequent toggles persist via
-  // `toggleSidebar` below. Apple Music's ⌘\ shortcut is wired up alongside
-  // the other global shortcuts.
+  // `toggleSidebar` below. The ⌘B shortcut is wired up alongside the
+  // other global shortcuts.
   const [isSidebarVisible, setIsSidebarVisible] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     try {
@@ -350,10 +350,10 @@ const App: FC = () => {
           onActivate: () => goSidebar('settings'),
         },
         {
-          key: '\\',
+          key: 'b',
           meta: true,
           label: 'Toggle sidebar',
-          hint: '⌘\\',
+          hint: '⌘B',
           onActivate: toggleSidebar,
         },
         {

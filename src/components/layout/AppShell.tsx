@@ -92,13 +92,13 @@ export const AppShell: FC<AppShellProps> = ({
      *  clicks aren't swallowed by the drag region underneath. The icon
      *  flips orientation by state so the affordance reads at a glance —
      *  PanelLeftClose says "hide" while open, PanelLeftOpen says "show"
-     *  while collapsed. Apple Music uses ⌘\ as the keyboard equivalent;
-     *  matched in App.tsx. */}
+     *  while collapsed. Paired with ⌘B in App.tsx as the keyboard
+     *  equivalent. */}
     <button
       type="button"
       onClick={onToggleSidebar}
       aria-label={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
-      title={sidebarVisible ? 'Hide sidebar (⌘\\)' : 'Show sidebar (⌘\\)'}
+      title={sidebarVisible ? 'Hide sidebar (⌘B)' : 'Show sidebar (⌘B)'}
       style={{
         position: 'fixed',
         top: 8,
