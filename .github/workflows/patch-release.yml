@@ -79,6 +79,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Guard against the dev/release divergence pattern that gave us
+      # the "progress bar appears and disappears" bug — every
+      # `#[cfg(not(debug_assertions))]` branch must be either a single
+      # logging statement or explicitly opt-out tagged. See
+      # CLAUDE.md "Dev/release parity invariants".
+      - name: Lint cfg(debug_assertions) gates
+        run: bash scripts/check-cfg-debug-assertions.sh
+
       - name: Build DMG
         run: pnpm tauri build
 
