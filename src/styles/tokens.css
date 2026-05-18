@@ -147,3 +147,51 @@
   --duration-slow: 400ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+/* ─── Light theme overrides ─────────────────────────────────────────
+   Applied when `data-theme="light"` is set on the root element.
+   Only color tokens are overridden — typography, spacing, layout,
+   radius, motion, and --glass-recipe are inherited from :root.
+   --color-accent (YouTube red) is unchanged. */
+[data-theme="light"] {
+  /* Surfaces — high lightness, faint blue-gray tint */
+  --color-bg: oklch(97% 0.005 270);
+  --color-surface-1: oklch(94% 0.005 270);
+  --color-surface-2: oklch(91% 0.005 270);
+  --color-surface-3: oklch(88% 0.005 270);
+
+  /* Text — dark on light */
+  --color-text-primary: oklch(15% 0 0);
+  --color-text-secondary: oklch(35% 0 0);
+  --color-text-tertiary: oklch(50% 0 0);
+
+  /* Glass backgrounds — light-tinted translucent whites */
+  --glass-bg-chrome: oklch(100% 0.005 270 / 0.55);
+  --glass-bg-card: oklch(100% 0.005 270 / 0.45);
+
+  /* Glass rims — inverted: dark rims on light surfaces */
+  --glass-rim-bright: oklch(0% 0 0 / 0.15);
+  --glass-rim-mid: oklch(0% 0 0 / 0.10);
+  --glass-rim-dim: oklch(0% 0 0 / 0.06);
+
+  /* Glass shadows — lighter drop shadows for light mode */
+  --glass-plate-shadow: inset 0 1px 0 var(--glass-rim-bright),
+    0 24px 60px oklch(0% 0 0 / 0.18);
+  --glass-card-shadow: inset 0 1px 0 var(--glass-rim-bright),
+    0 2px 12px oklch(0% 0 0 / 0.08);
+
+  /* Glass tiles — dark tint on light background */
+  --glass-tile-bg: oklch(0% 0 0 / 0.06);
+  --glass-tile-bg-active: oklch(0% 0 0 / 0.10);
+  --glass-tile-shadow:
+    inset 0 1px 0 var(--glass-rim-bright),
+    inset 0 -1px 0 oklch(0% 0 0 / 0.05),
+    0 2px 6px oklch(0% 0 0 / 0.10);
+  --glass-tile-shadow-rest:
+    inset 0 1px 0 var(--glass-rim-mid),
+    0 1px 3px oklch(0% 0 0 / 0.08);
+
+  /* Ambient tints — higher lightness for light background */
+  --ambient-tint-1: oklch(88% 0.06 280);
+  --ambient-tint-2: oklch(86% 0.08 25);
+}

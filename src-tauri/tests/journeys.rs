@@ -14,7 +14,7 @@ use vibeytm_lib::events::types::{AppEvent, PlaybackCommand};
 use vibeytm_lib::state::player::{
     AccountInfo, PlaybackStatus, PlayerState, RepeatMode, TrackInfo,
 };
-use vibeytm_lib::state::settings::{AppSettings, GeneralSettings, IntegrationSettings, ShortcutSettings};
+use vibeytm_lib::state::settings::{AppSettings, GeneralSettings, IntegrationSettings, ShortcutSettings, ThemeMode};
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -191,6 +191,7 @@ fn settings_round_trip_with_modified_volume_and_toggles() {
             close_to_tray: false,
             background_playback: true,
             last_volume: 0.42,
+            theme: ThemeMode::Dark,
         },
         integrations: IntegrationSettings {
             notifications_enabled: false,

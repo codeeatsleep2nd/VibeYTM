@@ -308,6 +308,7 @@ pub fn run() {
                             close_to_tray: true,
                             background_playback: true,
                             last_volume: 1.0,
+                            theme: state::settings::ThemeMode::Dark,
                         });
                     // Flush the last-played session to disk right now so the
                     // next launch can restore it even when the user closes

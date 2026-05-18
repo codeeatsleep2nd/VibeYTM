@@ -2,6 +2,7 @@ import { type FC, type ReactNode, useEffect, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { aboutApi, cacheApi, settingsApi, ytmApi, type AboutInfo, type AppSettings, type CacheStats } from '../../lib/ipc';
 import { debug } from '../../lib/debug';
+import { notifyThemeChanged } from '../../lib/themeMutations';
 
 declare const __APP_VERSION__: string;
 // Fallback only — the real version is fetched at runtime via Tauri's getVersion()
@@ -166,7 +167,7 @@ const Divider: FC = () => (
   <div
     style={{
       height: '1px',
-      background: 'oklch(100% 0 0 / 0.06)',
+      background: 'var(--glass-tile-bg)',
       margin: 'var(--space-1) 0',
     }}
   />
@@ -189,6 +190,69 @@ const ShortcutBadge: FC<{ keys: string }> = ({ keys }) => (
     {keys}
   </span>
 );
+
+type ThemeOption = 'dark' | 'light' | 'system';
+
+interface SegmentedControlProps {
+  value: ThemeOption;
+  onChange: (value: ThemeOption) => void;
+  disabled?: boolean;
+}
+
+const THEME_OPTIONS: { value: ThemeOption; label: string }[] = [
+  { value: 'dark', label: 'Dark' },
+  { value: 'light', label: 'Light' },
+  { value: 'system', label: 'System' },
+];
+
+const SegmentedControl: FC<SegmentedControlProps> = ({ value, onChange, disabled = false }) => {
+  const [hovered, setHovered] = useState<ThemeOption | null>(null);
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        background: 'var(--color-surface-3)',
+        borderRadius: 'var(--radius-sm)',
+        padding: '2px',
+        gap: '2px',
+      }}
+    >
+      {THEME_OPTIONS.map((option) => {
+        const isActive = value === option.value;
+        const isHovered = hovered === option.value && !isActive;
+        return (
+          <button
+            key={option.value}
+            onClick={() => {
+              if (!disabled) onChange(option.value);
+            }}
+            onMouseEnter={() => setHovered(option.value)}
+            onMouseLeave={() => setHovered(null)}
+            style={{
+              fontSize: 'var(--text-sm)',
+              fontWeight: 500,
+              padding: 'var(--space-1) var(--space-3)',
+              borderRadius: 'calc(var(--radius-sm) - 2px)',
+              border: 'none',
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              opacity: disabled ? 0.4 : 1,
+              transition: `all var(--duration-fast) var(--ease-out)`,
+              background: isActive
+                ? 'var(--color-accent)'
+                : isHovered
+                  ? 'var(--glass-tile-bg)'
+                  : 'transparent',
+              color: isActive ? '#fff' : 'var(--color-text-secondary)',
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
 const OutlinedButton: FC<{ label: string; onClick: () => void }> = ({ label, onClick }) => (
   <button
@@ -321,6 +385,18 @@ export const SettingsPage: FC = () => {
       >
         Settings
       </h1>
+
+      {/* Appearance */}
+      <SectionHeading title="Appearance" />
+      <SettingsCard>
+        <SettingRow label="Theme" description="Choose the app's color scheme">
+          <SegmentedControl
+            value={settings?.general.theme ?? 'dark'}
+            disabled={!settings}
+            onChange={(v) => { updateGeneral({ theme: v }); notifyThemeChanged(v); }}
+          />
+        </SettingRow>
+      </SettingsCard>
 
       {/* General */}
       <SectionHeading title="General" />

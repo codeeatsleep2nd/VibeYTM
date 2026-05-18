@@ -234,6 +234,7 @@ export interface AppSettings {
      * `set_settings` without losing the volume.
      */
     lastVolume: number;
+    theme: 'dark' | 'light' | 'system';
   };
   integrations: {
     notificationsEnabled: boolean;

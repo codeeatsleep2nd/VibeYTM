@@ -33,10 +33,23 @@ const NEAR_BLACK_THRESHOLD = 28;
 const NEAR_WHITE_THRESHOLD = 232;
 const ALPHA_OPAQUE_THRESHOLD = 200;
 
-const FALLBACK: CoverColors = {
+const FALLBACK_DARK: CoverColors = {
   primary: 'oklch(22% 0.04 270)',
   secondary: 'oklch(14% 0.02 270)',
 };
+
+const FALLBACK_LIGHT: CoverColors = {
+  primary: 'oklch(90% 0.02 270)',
+  secondary: 'oklch(85% 0.04 270)',
+};
+
+function getFallback(): CoverColors {
+  if (typeof document !== 'undefined') {
+    const theme = document.documentElement.dataset.theme;
+    if (theme === 'light') return FALLBACK_LIGHT;
+  }
+  return FALLBACK_DARK;
+}
 
 interface BucketHit {
   /** Quantized 12-bit key (4 bits per RGB channel). */
@@ -49,7 +62,7 @@ interface BucketHit {
 
 /** Pull the dominant + secondary color out of a cover. Memoized per URL. */
 export async function extractCoverColors(url: string): Promise<CoverColors> {
-  if (!url) return FALLBACK;
+  if (!url) return getFallback();
   const hit = cache.get(url);
   if (hit) return hit;
   const pending = inflight.get(url);
@@ -61,8 +74,9 @@ export async function extractCoverColors(url: string): Promise<CoverColors> {
       cache.set(url, colors);
       return colors;
     } catch {
-      cache.set(url, FALLBACK);
-      return FALLBACK;
+      const fb = getFallback();
+      cache.set(url, fb);
+      return fb;
     } finally {
       inflight.delete(url);
     }
@@ -131,7 +145,7 @@ export function pickPalette(data: Uint8ClampedArray): CoverColors {
     }
   }
 
-  if (buckets.size === 0) return FALLBACK;
+  if (buckets.size === 0) return getFallback();
 
   const sorted = [...buckets.values()].sort((a, b) => b.count - a.count);
   const primaryHit = sorted[0];

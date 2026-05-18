@@ -16,11 +16,13 @@ import { ShortcutCheatsheet } from './components/ShortcutCheatsheet';
 import { Toast } from './components/Toast';
 import { AddToPlaylistPicker } from './components/contextMenu/AddToPlaylistPicker';
 import { useBootState } from './hooks/useBootState';
+import { useTheme, type ThemeMode } from './hooks/useTheme';
 import { useGlobalShortcuts, type ShortcutBinding } from './hooks/useGlobalShortcuts';
 import { useTauriEvent } from './hooks/useTauriEvent';
-import { ytmApi, playerApi } from './lib/ipc';
+import { ytmApi, playerApi, settingsApi } from './lib/ipc';
 import { clearAllBrowseCaches } from './lib/persistentCache';
 import { subscribeToLibraryMutations } from './lib/libraryMutations';
+import { subscribeToThemeChange } from './lib/themeMutations';
 import { registerOpenArtist, registerOpenPlaylist } from './lib/appNav';
 import { OverlayStateContext } from './lib/overlayState';
 import type { FocusTimerState } from './components/player/FocusTimer/useFocusTimerCountdown';
@@ -38,6 +40,57 @@ const App: FC = () => {
   // pins down each transition.
   const { phase, isSplashDone, markHomeReady, markManualLogin } =
     useBootState();
+
+  // Theme — seeded from localStorage for instant paint, then overridden
+  // by the authoritative Rust settings on first load. SettingsPage
+  // notifies via `notifyThemeChanged()` when the user picks a new mode;
+  // App subscribes below so `useTheme` re-applies immediately.
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    try {
+      const stored = localStorage.getItem('vibeytm:theme-mode');
+      if (stored === 'dark' || stored === 'light' || stored === 'system') {
+        return stored;
+      }
+    } catch {
+      // localStorage unavailable — fall through to default.
+    }
+    return 'dark';
+  });
+  useTheme(themeMode);
+
+  // Load authoritative theme from Rust settings on mount.
+  useEffect(() => {
+    settingsApi
+      .get()
+      .then((s) => {
+        const t = s.general.theme;
+        if (t === 'dark' || t === 'light' || t === 'system') {
+          setThemeMode(t);
+          try {
+            localStorage.setItem('vibeytm:theme-mode', t);
+          } catch {
+            // non-fatal
+          }
+        }
+      })
+      .catch(() => {
+        // Settings load failed — keep localStorage seed.
+      });
+  }, []);
+
+  // Subscribe to theme changes from SettingsPage (or any future mutator).
+  useEffect(() => {
+    return subscribeToThemeChange((mode: ThemeMode) => {
+      setThemeMode(mode);
+      try {
+        localStorage.setItem('vibeytm:theme-mode', mode);
+      } catch {
+        // non-fatal
+      }
+    });
+  }, []);
+
   const [currentPath, setCurrentPath] = useState('home');
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
