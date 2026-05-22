@@ -1,0 +1,67 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="512" y1="100" x2="512" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF5B60"/>
+      <stop offset="0.42" stop-color="#FF1E2D"/>
+      <stop offset="1" stop-color="#C00018"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="512" y1="100" x2="512" y2="600" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="fig" x1="512" y1="220" x2="512" y2="820" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EFEFF4"/>
+    </linearGradient>
+    <linearGradient id="note" x1="512" y1="380" x2="512" y2="650" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF2A38"/>
+      <stop offset="1" stop-color="#DE0C1E"/>
+    </linearGradient>
+    <filter id="figShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="20" flood-color="#54000A" flood-opacity="0.38"/>
+    </filter>
+    <filter id="noteShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#3A0006" flood-opacity="0.22"/>
+    </filter>
+    <clipPath id="squircle">
+      <rect x="100" y="100" width="824" height="824" rx="186" ry="186"/>
+    </clipPath>
+  </defs>
+
+  <!-- App squircle -->
+  <rect x="100" y="100" width="824" height="824" rx="186" ry="186" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" ry="186" fill="url(#gloss)"/>
+  <rect x="103" y="103" width="818" height="818" rx="183" ry="183" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="3"/>
+
+  <g clip-path="url(#squircle)">
+    <g filter="url(#figShadow)">
+      <!-- Head (1.3x larger) -->
+      <circle cx="512" cy="515" r="294" fill="url(#fig)"/>
+      <!-- Headphone band over the top -->
+      <path d="M 212 455 A 305 305 0 0 1 812 455" fill="none" stroke="url(#fig)" stroke-width="60" stroke-linecap="round"/>
+    </g>
+    <!-- Ear cups -->
+    <g filter="url(#figShadow)">
+      <rect x="139" y="413" width="146" height="255" rx="65" fill="url(#fig)"/>
+      <rect x="739" y="413" width="146" height="255" rx="65" fill="url(#fig)"/>
+    </g>
+
+    <!-- Musical smiling face, centered on the icon (features spread 1.2x apart) -->
+    <g fill="url(#note)" filter="url(#noteShadow)">
+      <!-- left eye: little eighth-note -->
+      <g transform="translate(-32 -24)">
+        <ellipse cx="448" cy="496" rx="30" ry="25" transform="rotate(-18 448 496)"/>
+        <rect x="472" y="430" width="11" height="66" rx="5"/>
+        <path d="M 483 430 q 30 7 25 40 q -3 -19 -25 -24 z"/>
+      </g>
+      <!-- right eye: little eighth-note -->
+      <g transform="translate(32 -24)">
+        <ellipse cx="576" cy="496" rx="30" ry="25" transform="rotate(-18 576 496)"/>
+        <rect x="600" y="430" width="11" height="66" rx="5"/>
+        <path d="M 611 430 q 30 7 25 40 q -3 -19 -25 -24 z"/>
+      </g>
+    </g>
+    <!-- smile -->
+    <path d="M 426 560 Q 512 658 598 560" fill="none" stroke="url(#note)" stroke-width="30" stroke-linecap="round" filter="url(#noteShadow)" transform="translate(0 28)"/>
+  </g>
+</svg>

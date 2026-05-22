@@ -1,4 +1,5 @@
 import { type FC, useEffect, useState } from 'react';
+import { AppIcon } from './AppIcon';
 
 interface WelcomeScreenProps {
   /** When true, start fading out; unmounts once the transition finishes. */
@@ -6,6 +7,8 @@ interface WelcomeScreenProps {
 }
 
 const FADE_MS = 450;
+/** Period of one full heartbeat (lub-dub + rest) on the splash mark. */
+const HEARTBEAT_MS = 1300;
 
 /**
  * Branded splash shown from the first paint of the window until the Home
@@ -17,9 +20,9 @@ const FADE_MS = 450;
  * - Background reuses the same dual-radial ambient washes the app body
  *   uses, so the splash feels continuous with the chrome that fades in
  *   underneath instead of arriving as a separate gradient.
- * - The logo mark is a real SVG eighth-note inside a soft glass pill;
- *   the previous Unicode `♪` rendered as a system emoji on some font
- *   stacks and broke the dark-luxury feel.
+ * - The logo mark is the actual app icon (`AppIcon`, source
+ *   `src-tauri/app-icon.svg`) so the splash matches the dock/Finder icon
+ *   instead of showing a separate brand mark.
  * - The pulse is now a breathing outer-glow opacity oscillation rather
  *   than a 1.06× transform — flatter motion, no perceptible scale jump,
  *   compositor-only.
@@ -91,11 +94,12 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ isDone }) => {
           position: 'relative',
         }}
       >
-        {/* Outer breathing glow. Sits behind the logo pill, opacity
-            oscillates so the mark feels like it's softly inhaling
-            without any transform jitter. Compositor-only via opacity +
-            filter blur. Bigger blur radius than the logo's drop shadow
-            so the bloom reads as ambient hue, not a hard edge. */}
+        {/* Accent bloom behind the mark. Its opacity flashes on each
+            heartbeat (synced to the same period as the icon's scale) so
+            the beat reads as a pulse of light, not just a size change.
+            Compositor-only via opacity + filter blur; bigger blur radius
+            than the icon's drop shadow so the bloom reads as ambient hue,
+            not a hard edge. */}
         <div
           aria-hidden
           style={{
@@ -109,72 +113,45 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ isDone }) => {
             background:
               'radial-gradient(circle, var(--color-accent) 0%, transparent 70%)',
             filter: 'blur(28px)',
-            opacity: 0.45,
+            opacity: 0.4,
             animation: reduceMotion
               ? undefined
-              : 'vibeytm-welcome-breathe 2400ms var(--ease-out) infinite',
+              : `vibeytm-welcome-heartbeat-glow ${HEARTBEAT_MS}ms ease-in-out infinite`,
             pointerEvents: 'none',
           }}
         />
 
-        {/* Logo pill — real SVG eighth-note inside a glass-tinted square
-            with a warm gradient. The pill carries the brand color; the
-            mark is white at full opacity so it reads against any blend
-            mode underneath. */}
+        {/* Logo mark — the actual app icon (see src-tauri/app-icon.svg).
+            The icon already carries its own glossy red squircle, so the
+            mark needs no background plate; the layered drop shadows
+            (close-and-dark for grounding, far-and-accent-tinted for
+            atmosphere) follow the squircle's alpha shape so the shadow is
+            rounded, not a square plate behind a rounded icon.
+
+            Wrapped in a div that runs the heartbeat scale (lub-dub)
+            animation. The wrapper (not the SVG) is animated so
+            transform-origin: center resolves against a definite box —
+            CSS transform-origin on inline SVG is unreliable in this
+            WKWebView build. The splash is aria-hidden and non-interactive,
+            so the ReloadOverlay transform/hit-testing rule does not apply
+            here. */}
         <div
           style={{
             position: 'relative',
-            width: 112,
-            height: 112,
-            borderRadius: 'var(--radius-xl)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background:
-              'linear-gradient(140deg, var(--color-accent-hover) 0%, var(--color-accent) 100%)',
-            // Layered drop shadows — close-and-dark for grounding, far-and-
-            // accent-tinted for atmosphere.
-            boxShadow:
-              '0 24px 56px oklch(63% 0.258 29 / 0.40), 0 2px 16px oklch(0% 0 0 / 0.45), inset 0 1px 0 oklch(100% 0 0 / 0.20)',
+            animation: reduceMotion
+              ? undefined
+              : `vibeytm-welcome-heartbeat ${HEARTBEAT_MS}ms ease-in-out infinite`,
+            willChange: reduceMotion ? undefined : 'transform',
           }}
         >
-          <svg
-            width="56"
-            height="56"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="oklch(100% 0 0)"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            {/* Beamed eighth-notes — two stems joined by a single beam.
-                Drawn freehand to match the SF Symbol `music.note` shape:
-                left and right note heads as small rounded rects rotated,
-                two stems rising to a horizontal beam at the top. Avoids
-                the Unicode `♪` glyph that resolved to system emoji on
-                some font stacks and read as a default-emoji rather than
-                a designed mark. */}
-            <ellipse
-              cx="6"
-              cy="17"
-              rx="2.4"
-              ry="1.8"
-              fill="oklch(100% 0 0)"
-              stroke="none"
-            />
-            <ellipse
-              cx="16"
-              cy="15"
-              rx="2.4"
-              ry="1.8"
-              fill="oklch(100% 0 0)"
-              stroke="none"
-            />
-            <path d="M8.4 17V6L18.4 4V15" />
-            <path d="M8.4 6L18.4 4" strokeWidth="2.2" />
-          </svg>
+          <AppIcon
+            size={112}
+            style={{
+              display: 'block',
+              filter:
+                'drop-shadow(0 18px 40px oklch(63% 0.258 29 / 0.45)) drop-shadow(0 2px 12px oklch(0% 0 0 / 0.45))',
+            }}
+          />
         </div>
 
         <div style={{ textAlign: 'center' }}>
@@ -204,9 +181,22 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ isDone }) => {
       </div>
 
       <style>{`
-        @keyframes vibeytm-welcome-breathe {
-          0%, 100% { opacity: 0.32; }
-          50%      { opacity: 0.65; }
+        /* Heartbeat: a quick double-thump (lub-dub) then a rest. The two
+           scale peaks at 10% and 32% are the two beats; everything after
+           46% is the diastolic pause before the next cycle. */
+        @keyframes vibeytm-welcome-heartbeat {
+          0%, 46%, 100% { transform: scale(1); }
+          10%           { transform: scale(1.12); }
+          20%           { transform: scale(0.98); }
+          32%           { transform: scale(1.09); }
+        }
+        /* Bloom flashes brighter on each of the two beats, synced to the
+           scale keyframes above. */
+        @keyframes vibeytm-welcome-heartbeat-glow {
+          0%, 46%, 100% { opacity: 0.30; }
+          10%           { opacity: 0.74; }
+          20%           { opacity: 0.42; }
+          32%           { opacity: 0.64; }
         }
       `}</style>
     </div>
