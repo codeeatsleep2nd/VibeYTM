@@ -1,7 +1,7 @@
 {
   "name": "vibeytm",
   "private": true,
-  "version": "1.20.0",
+  "version": "1.21.0",
   "type": "module",
   "packageManager": "pnpm@10.31.0",
   "engines": {
